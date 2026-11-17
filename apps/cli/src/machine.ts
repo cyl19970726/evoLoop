@@ -108,7 +108,8 @@ export async function machineCommand(words: string[], options: Map<string, strin
       hubPublicKeys: joined.hubPublicKeys, allowedRoots: roots, joinedAt: new Date().toISOString() });
     await writeCredentials(directory, credentials);
     return { joined: true, machineId: credentials.machineId, name: credentials.name, hub, allowedRoots: roots,
-      next: "Restart the coordinator so it connects to the Hub; the project directories in its configuration must be inside the allowed roots." };
+      credentialsDirectory: directory,
+      next: "Restart this machine's coordinator with EVOLOOP_MACHINE_DIR set to credentialsDirectory so it connects to the Hub (a coordinator without it does not read these credentials); the project directories in its configuration must be inside the allowed roots." };
   }
 
   if (!existing) return mode === "status" ? { joined: false } : { left: false, reason: "This machine has not joined a Hub." };

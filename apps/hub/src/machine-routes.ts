@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { authenticate, assertCsrf, type Principal } from "./auth.js";
 import type { HubConfig } from "./config.js";
 import { HubError } from "./errors.js";
-import type { Gateway } from "./gateway.js";
+import type { ConflictRecord, Gateway } from "./gateway.js";
 import { IDENTITY_TTL_SECONDS, bodyDigest, machineRequestMessage, signIdentity, targetDigest, verifyMachineSignature } from "./identity.js";
 import type { MachineRecord, MachineStore } from "./machines.js";
 import type { HubService } from "./service.js";
@@ -16,10 +16,13 @@ const SAFE_SEGMENT = /^[A-Za-z0-9._~%!$&'()*+,;=:@-]+$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const FORWARDED_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
 
-const publicMachine = (machine: MachineRecord, online: boolean, connectedAt: string | null) => ({
+const publicMachine = (machine: MachineRecord, online: boolean, connectedAt: string | null, conflict: ConflictRecord | null) => ({
   machineId: machine.machineId, name: machine.name, state: machine.state, online, connectedAt, allowedRoots: machine.allowedRoots, hostLabel: machine.hostLabel,
   createdAt: machine.createdAt, joinedAt: machine.joinedAt, removedAt: machine.removedAt, lastSeenAt: machine.lastSeenAt,
+  // Connections refused because another process was already connected as this machine, since the Hub started (null: none).
+  connectionConflicts: conflict ? { count: conflict.count, lastAt: conflict.lastAt } : null,
 });
+const INSTANCE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Normalise what follows `/api/projects/<id>/` into a path the Hub is willing to hand to a machine: plain segments only. No empty, `.` or `..`
@@ -69,7 +72,7 @@ export function registerMachineRoutes(app: FastifyInstance, deps: {
     const { machine, code, expiresAt } = await machines.create({ name, createdBy: admin.accountId, at: now });
     await store.audit(store.pool, { at: now, actorKind: "human", actorId: admin.actorId, action: "machine.created", subject: machine.machineId, detail: { name } });
     return reply.code(201).send({
-      machine: publicMachine(machine, false, null),
+      machine: publicMachine(machine, false, null, null),
       joinCode: code,
       expiresAt: expiresAt.toISOString(),
       joinCommand: `evoloop machine join --hub ${config.publicOrigin} --code <code> --workspace-root <allowed-root>`,
@@ -78,7 +81,7 @@ export function registerMachineRoutes(app: FastifyInstance, deps: {
 
   app.get("/api/admin/machines", async request => {
     await requireAdmin(request, false);
-    return { machines: (await machines.list()).map(machine => publicMachine(machine, gateway.online(machine.machineId), gateway.connectedAt(machine.machineId))) };
+    return { machines: (await machines.list()).map(machine => publicMachine(machine, gateway.online(machine.machineId), gateway.connectedAt(machine.machineId), gateway.conflictRecord(machine.machineId))) };
   });
 
   app.delete("/api/admin/machines/:machineId", async (request, reply) => {
@@ -120,6 +123,12 @@ export function registerMachineRoutes(app: FastifyInstance, deps: {
     return machine;
   };
   const rawBody = (request: FastifyRequest): string => (typeof request.body === "string" ? request.body : "");
+  /** The connector's per-process random ID (not a credential): which process of the machine a connection, a beat or an answer comes from. */
+  const instanceOf = (request: FastifyRequest): string | null => {
+    const value = request.headers["x-evoloop-machine-instance"];
+    const text = Array.isArray(value) ? value[0] : value;
+    return typeof text === "string" && INSTANCE.test(text) ? text.toLowerCase() : null;
+  };
 
   app.post("/api/machine/join", async (request, reply) => {
     const record = asRecord(request.body);
@@ -144,18 +153,23 @@ export function registerMachineRoutes(app: FastifyInstance, deps: {
   // The machine's long connection: it asks once, signed, and the answer never ends — frames, one JSON object per line, until either side closes.
   app.post("/api/machine/connect", async (request, reply) => {
     const machine = await machineFor(request, "connect", "");
-    reply.hijack();
-    const raw = reply.raw;
-    raw.writeHead(200, { "content-type": "application/x-ndjson", "cache-control": "no-store", "x-content-type-options": "nosniff", "x-accel-buffering": "no" });
-    const attached = gateway.attach(machine.machineId, raw);
+    const instance = instanceOf(request);
+    // A second live process is refused inside attach, before the stream is opened: the answer is an ordinary 409 the connector can read.
+    const attached = gateway.attach(machine.machineId, () => {
+      reply.hijack();
+      const raw = reply.raw;
+      raw.writeHead(200, { "content-type": "application/x-ndjson", "cache-control": "no-store", "x-content-type-options": "nosniff", "x-accel-buffering": "no" });
+      return raw;
+    }, instance);
     await machines.touch(machine.machineId, clock());
+    const raw = reply.raw;
     // The response closes when the connection does (the request stream may end sooner, so it is not the signal).
     raw.on("close", () => attached.detach());
   });
 
   app.post("/api/machine/heartbeat", async (request, reply) => {
     const machine = await machineFor(request, "heartbeat", rawBody(request));
-    const connected = gateway.beat(machine.machineId);
+    const connected = gateway.beat(machine.machineId, instanceOf(request));
     await machines.touch(machine.machineId, clock());
     return reply.send({ ok: true, connected });
   });
@@ -169,7 +183,7 @@ export function registerMachineRoutes(app: FastifyInstance, deps: {
     const status = typeof record.status === "number" && Number.isInteger(record.status) && record.status >= 100 && record.status <= 599 ? record.status : 0;
     if (!id || !status) throw new HubError(400, "INVALID_INPUT", "id and status are required.");
     const body = typeof record.body === "string" ? Buffer.from(record.body, "base64") : Buffer.alloc(0);
-    const accepted = gateway.respond(machine.machineId, { id, status, contentType: typeof record.contentType === "string" ? record.contentType : null, body });
+    const accepted = gateway.respond(machine.machineId, { id, status, contentType: typeof record.contentType === "string" ? record.contentType : null, body }, instanceOf(request));
     if (!accepted) throw new HubError(404, "REQUEST_NOT_PENDING", "No request with this ID is waiting on this machine.");
     return reply.code(204).send();
   });

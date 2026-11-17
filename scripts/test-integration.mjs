@@ -43,6 +43,7 @@ const requiredDatabase = new Map([
   ["schedule-managed-bridge.test.ts", "evoloop_schedule_bridge_test"],
   ["hub.test.ts", "evoloop_hub_test"],
   ["hub-machine.test.ts", "evoloop_hub_test"],
+  ["hub-machine-conflict.test.ts", "evoloop_hub_test"],
   ["hub-workbench.test.ts", "evoloop_hub_test"],
   ["hub-workbench-browser.test.ts", "evoloop_hub_test"],
 ]);

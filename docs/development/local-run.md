@@ -104,7 +104,7 @@ npm run start:hub
 evoloop machine join --hub https://hub.example --code <加入码> --workspace-root <允许的代码根目录>
 ```
 
-命令会列出要允许的根目录并要求在这台机器上确认一次（终端里回答 y；脚本里确认过后加 `--yes`）；密钥对在本机生成，只有公钥与根目录上传。凭据保存在 `~/.evoloop/machine/machine.json`（`EVOLOOP_MACHINE_DIR` 可改目录），权限 0600。**重启 coordinator**，它启动后自己向 Hub 建立长连接并保持心跳；Hub 的 `GET /api/admin/machines` 显示 `online`。本机配置里所有项目目录（运行授权、委派模板、仓库）必须在允许根目录下，否则 coordinator 拒绝加载这份配置。`evoloop machine status` 看状态，`evoloop machine leave` 退出（先通知 Hub 再删本机凭据；项目数据与 coordinator 不受影响）。Hub 管理员 `DELETE /api/admin/machines/{id}` 可从 Hub 一侧移除，凭据当场失效。
+命令会列出要允许的根目录并要求在这台机器上确认一次（终端里回答 y；脚本里确认过后加 `--yes`）；密钥对在本机生成，只有公钥与根目录上传。凭据保存在 `~/.evoloop/machine/machine.json`（`EVOLOOP_MACHINE_DIR` 可改目录），权限 0600。**这台机器自己的 coordinator 必须用 `EVOLOOP_MACHINE_DIR` 指向该目录启动**（`join` 的输出里 `credentialsDirectory` 就是它）；没设这个变量的 coordinator 不读任何机器凭据、也不连 Hub，别的实例（测试、隔离验收实例、本地第二个 coordinator）因此不会抢走正式机器的 Hub 连接，同一凭据的第二个存活连接也会被 Hub 拒绝（见 [Hub 架构](../architecture/hub.md)）。**发布提示：**之前靠默认位置读凭据的正式 coordinator，发布这个改动前要先在它的私有启动配置里加上 `EVOLOOP_MACHINE_DIR`，否则发布后它不再连 Hub（日志里会有一行说明）。**重启 coordinator**，它启动后自己向 Hub 建立长连接并保持心跳；Hub 的 `GET /api/admin/machines` 显示 `online`。本机配置里所有项目目录（运行授权、委派模板、仓库）必须在允许根目录下，否则 coordinator 拒绝加载这份配置。`evoloop machine status` 看状态，`evoloop machine leave` 退出（先通知 Hub 再删本机凭据；项目数据与 coordinator 不受影响）。Hub 管理员 `DELETE /api/admin/machines/{id}` 可从 Hub 一侧移除，凭据当场失效。
 
 核对机器没有新增对外监听：`lsof -nP -iTCP -sTCP:LISTEN` 里应只有原来的 `127.0.0.1` coordinator（连接器只向外连）。浏览器与 CLI 经 Hub 使用项目：`EVOLOOP_API_URL` 指向 Hub，`EVOLOOP_TOKEN` 用个人令牌或服务身份令牌（见[CLI 指南](agent-cli.md)）。
 

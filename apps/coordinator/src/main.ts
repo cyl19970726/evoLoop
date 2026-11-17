@@ -28,7 +28,7 @@ import { buildServer } from "./server.js";
 import { codexWorkInFlight } from "./runtime/codex-work.js";
 import { createChildDetailSink, createRefusalSink } from "./runtime/child-detail-log.js";
 import { HubConnector } from "./hub/connector.js";
-import { MachineCredentialSource } from "./hub/credentials.js";
+import { MachineCredentialSource, unusedDefaultCredentials } from "./hub/credentials.js";
 import { HubIdentityVerifier } from "./hub/identity.js";
 import { acquireCoordinatorLease, leaseFencedUnitOfWork } from "./lease.js";
 import { RuntimeWorkflowService } from "@evoloop/core/runtime";
@@ -1020,6 +1020,9 @@ const hubIdentity = { verifier: new HubIdentityVerifier({ credentials: () => mac
   localActorIds: () => new Set(credentials.map(entry => entry.actorId)) }),
   onRejected: (reason: string) => console.warn(`Hub identity rejected: ${reason}`) };
 const hubConnector = new HubConnector({ credentials: machineCredentials, coordinatorUrl: `http://127.0.0.1:${port}`, log: message => console.log(message) });
+// Machine credentials come only from the directory EVOLOOP_MACHINE_DIR names. Without it this coordinator is not a Hub machine, even where `evoloop machine join`
+// left credentials at the default location: a second coordinator (a test, an isolated instance) reading them would fight the real one for the machine's connection.
+if (unusedDefaultCredentials()) console.warn("Hub: machine credentials exist at the default location (~/.evoloop/machine) but EVOLOOP_MACHINE_DIR is not set, so this coordinator is NOT using them and does not connect to the Hub. The machine's own coordinator must be started with EVOLOOP_MACHINE_DIR naming that directory.");
 const app = await buildServer({ service, credentials, canWrite: lease.canWrite, ordinarySubmissions, hubIdentity,
   acceptanceRelay, milestones: { repoRoot: resolve(fileURLToPath(new URL("../../..", import.meta.url))), startedAt: new Date().toISOString() },
   drain: { control: drain, isMaintainer: principal => isInstanceMaintainer(pool, principal) },

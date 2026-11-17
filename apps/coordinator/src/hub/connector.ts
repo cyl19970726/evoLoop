@@ -47,7 +47,12 @@ export class HubConnector {
   private removedFor: string | null = null;
   private readonly fetchImpl: typeof fetch;
   private readonly log: (message: string) => void;
-  state: "stopped" | "idle" | "connecting" | "online" | "removed" = "stopped";
+  state: "stopped" | "idle" | "connecting" | "online" | "removed" | "conflict" = "stopped";
+  /** A random ID for this process's connector, sent with every machine request so the Hub can tell two processes on one credential apart. Not a secret. */
+  readonly instanceId = randomUUID();
+  /** Connections the Hub refused because another process was already connected as this machine, since this connector started. */
+  conflicts = 0;
+  private replacedAt: number[] = [];
 
   constructor(private readonly options: ConnectorOptions) {
     this.fetchImpl = options.fetchImpl ?? fetch;
@@ -89,6 +94,13 @@ export class HubConnector {
         if (reason === "MACHINE_REMOVED") {
           this.removedFor = credentials.machineId;
           this.log("The Hub says this machine was removed; not reconnecting until it joins again.");
+        } else if (reason === "MACHINE_CONNECTION_CONFLICT") {
+          // Not a link failure: another process holds the machine's connection. Do not take it over (the Hub would refuse anyway) and do not hammer: wait at the
+          // longest backoff, then ask again, so this process takes over once the other is gone and has been quiet for the Hub's allowance.
+          this.conflicts++; this.state = "conflict";
+          this.log(`Hub refused this coordinator's connection (conflict ${this.conflicts}): another process is already connected as this machine "${credentials.machineId}". `
+            + "Two coordinators must not share one machine directory: give each its own EVOLOOP_MACHINE_DIR, or stop the other one. This connection will not replace it; trying again later.");
+          delay = Math.max(delay, backoff.max);
         } else if (!this.stopped) this.log(`Hub connection lost (${reason}); retrying.`);
         if (Date.now() - started > 30_000) delay = backoff.initial;
       }
@@ -112,7 +124,7 @@ export class HubConnector {
     const timestamp = String(Date.now()), nonce = randomUUID();
     const digest = createHash("sha256").update(body).digest("base64url");
     const signature = sign(null, Buffer.from(machineRequestMessage(credentials.machineId, action, timestamp, nonce, digest)), createPrivateKey(credentials.privateKey));
-    return { "x-evoloop-machine": credentials.machineId, "x-evoloop-machine-time": timestamp, "x-evoloop-machine-nonce": nonce, "x-evoloop-machine-signature": signature.toString("base64url") };
+    return { "x-evoloop-machine-instance": this.instanceId, "x-evoloop-machine": credentials.machineId, "x-evoloop-machine-time": timestamp, "x-evoloop-machine-nonce": nonce, "x-evoloop-machine-signature": signature.toString("base64url") };
   }
 
   private async post(credentials: MachineCredentials, action: string, body: string, signal?: AbortSignal): Promise<Response> {
@@ -126,9 +138,10 @@ export class HubConnector {
     const controller = new AbortController();
     this.abort = controller;
     const response = await this.post(credentials, "connect", "", controller.signal);
-    if (response.status === 401) {
+    if (response.status === 401 || response.status === 409) {
       const code = (await response.json().catch(() => null) as { error?: { code?: string } } | null)?.error?.code;
-      throw new Error(code === "MACHINE_REMOVED" ? "MACHINE_REMOVED" : `Hub refused the connection (${code ?? 401})`);
+      if (code === "MACHINE_CONNECTION_CONFLICT") throw new Error("MACHINE_CONNECTION_CONFLICT");
+      throw new Error(code === "MACHINE_REMOVED" ? "MACHINE_REMOVED" : `Hub refused the connection (${code ?? response.status})`);
     }
     if (!response.ok || !response.body) throw new Error(`Hub answered ${response.status}`);
     let heartbeatMs = 15_000;
@@ -170,6 +183,7 @@ export class HubConnector {
             const work = this.handle(credentials, frame).finally(() => inflight.delete(work));
             inflight.add(work);
           } else if (frame.t === "bye") {
+            this.noteBye(typeof frame.reason === "string" ? frame.reason : "");
             return;
           }
         }
@@ -178,6 +192,16 @@ export class HubConnector {
       stopTimers();
       this.state = this.stopped ? "stopped" : "connecting";
     }
+  }
+
+  /** Say why the Hub ended the link. Being replaced again and again means another process is connecting as this machine (an older Hub replaces silently). */
+  private noteBye(reason: string): void {
+    if (this.stopped) return;
+    const now = Date.now();
+    if (reason !== "replaced" && reason !== "replaced_stale") { this.log(`Hub closed the connection (${reason || "no reason given"}).`); return; }
+    this.replacedAt = [...this.replacedAt.filter(at => now - at < 60_000), now];
+    this.log(`Hub replaced this connection with a newer one from this machine (${reason}).${this.replacedAt.length >= 3
+      ? ` It happened ${this.replacedAt.length} times within a minute: another process is probably connecting with this machine's credentials. Give each coordinator its own EVOLOOP_MACHINE_DIR.` : ""}`);
   }
 
   private async handle(credentials: MachineCredentials, frame: Frame): Promise<void> {
