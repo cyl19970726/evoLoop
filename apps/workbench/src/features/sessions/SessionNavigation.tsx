@@ -102,8 +102,9 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
       }))} />
       <IconButton label="连接或建立智能体" icon={<Plus size={16} />} compact onClick={() => setConnectOpen(true)} />
     </label>
-    <a href={href(projectId, "sessions")} onClick={onNavigate} aria-current={!selectedId ? "page" : undefined}
-      className={cn("flex items-center gap-2.5 rounded-lg px-3 py-2 text-text-secondary hover:bg-selected focus-visible:shadow-[var(--focus-ring)] outline-none", !selectedId && "bg-accent font-medium text-accent-strong hover:bg-accent")}>
+    {/* 统筹安排 is a team page now (Task 0f8c7a15): the directory only points to it. */}
+    <a href={href(projectId, "arrangement")} onClick={onNavigate} data-arrangement-entry=""
+      className={cn("flex items-center gap-2.5 rounded-lg px-3 py-2 text-text-secondary hover:bg-selected focus-visible:shadow-[var(--focus-ring)] outline-none")}>
       <LayoutDashboard size={18} aria-hidden="true" />统筹安排
       {totals && <span className="ml-auto text-caption text-muted-foreground" title="目录里的智能体总数，含历史与待归类">共 {totals.current + totals.historical + totals.unclassified} 个智能体</span>}
     </a>

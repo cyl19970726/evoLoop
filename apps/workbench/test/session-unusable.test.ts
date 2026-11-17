@@ -35,7 +35,7 @@ test("an unusable Session is not spare capacity: its load is `unusable`, it is n
 });
 
 const record = (id: string, extra: Record<string, unknown> = {}) => ({ projectId: "p", id, roleId: "r", state: "ready", createdAt: `2026-11-0${id.length}T00:00:00.000Z`, ...extra }) as never;
-test("分工与运行: a ready Session that cannot start a Run is not listed under 就绪; it is listed apart as 不可用 with its reason", () => {
+test("运行与接入: a ready Session that cannot start a Run is not listed under 就绪; it is listed apart as 不可用 with its reason", () => {
   const sessions = [record("a", { usable: false, unusable: [{ code: "BUSINESS_IDENTITY_UNBOUND", reason: "没有绑定业务身份" }] }), record("bb", { usable: true }), record("ccc"), record("dddd", { state: "closed", usable: false })];
   const groups = sessionGroups(sessions);
   const ids = (key: string) => groups.find(g => g.key === key)?.items.map((x: { id: string }) => x.id).sort();

@@ -1,6 +1,6 @@
-// 分工与运行 (docs/frontend/pages/team.md): the inner rail lists the project's managed agents (受管 Session); the
-// center shows the selected one, or with none selected the execution service, every agent, creating a new one, the
-// orchestration loop, queues and recorded runs. The right column holds the service facts and the selected agent's
+// 运行与接入 (docs/frontend/pages/team.md; was 运行与接入): the inner rail lists the project's managed agents (受管 Session); the
+// center shows the selected one, or with none selected the execution service, every agent, creating a new one and the
+// recorded runs. Who is free, the queues and the loops are arrangement and live only on 统筹安排 (Task 0f8c7a15). The right column holds the service facts and the selected agent's
 // identity. `/runtime?session={uuid}` selects an agent; that is also where the old deep link lands.
 import { useContext, useEffect, useRef, useState } from "react";
 import { hasDecisionAuthority } from "@evoloop/contracts";
@@ -17,8 +17,6 @@ import { ContextRailContent } from "../../shared/ui/ContextRail";
 import { FactList, PageSection, PanelSection, mutedText } from "../../shared/ui/PageParts";
 import { SectionBoundary } from "../../shared/ui/SectionBoundary";
 import { href } from "../../shared/ui/shared";
-import { OrchestrationPanel } from "../orchestration";
-import { ResidentQueuePanel } from "../workflow";
 import { AgentName } from "./AgentName";
 import { ManagedSessionCreate } from "./ManagedSessionCreate";
 import { ManagedSessionDetail, RoleLabel } from "./ManagedSessionDetail";
@@ -30,7 +28,7 @@ import { ErrorDetails } from "../../shared/ui/ErrorDetails";
 
 const stamp = (value: number) => new Date(value).toLocaleString("zh-CN", { hour12: false });
 
-export function ExecutionView({ context, refresh, sessionId }: { context: MutationContext; refresh: number; sessionId?: string }) {
+export function ExecutionView({ context, sessionId }: { context: MutationContext; refresh?: number; sessionId?: string }) {
   const { projectId } = context;
   const active = useContext(PageActive);
   const client = useQueryClient();
@@ -123,8 +121,8 @@ export function ExecutionView({ context, refresh, sessionId }: { context: Mutati
       : <>
         <header className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="text-title font-semibold text-foreground" tabIndex={-1}>分工与运行</h1>
-            <p className="mt-1 text-small text-text-secondary">本项目授权并由 evoLoop 创建的受管智能体、它们的队列与运行。对话与活动在“智能体”空间。</p>
+            <h1 className="text-title font-semibold text-foreground" tabIndex={-1}>运行与接入</h1>
+            <p className="mt-1 text-small text-text-secondary" data-page-role="">运行与接入：执行服务、连接、恢复，以及本项目授权并由 evoLoop 创建的受管智能体和它们的运行。安排看<a href={href(projectId, "arrangement")} className="text-primary hover:underline">统筹安排</a>；对话与活动在“智能体”空间。</p>
             <p className={cn(mutedText, "mt-1")} role="status">{readLine}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -167,11 +165,6 @@ export function ExecutionView({ context, refresh, sessionId }: { context: Mutati
               </li>;
             })}</ul>
           </div>)}
-        </PageSection>
-        <PageSection title="编排与队列">
-          <SectionBoundary label="编排"><OrchestrationPanel key={`${projectId}:${context.principal.actorId}`} projectId={projectId}
-            refresh={refresh + epoch} verifiedRuns={runsCurrent ? runs : null} /></SectionBoundary>
-          <SectionBoundary label="队列"><ResidentQueuePanel context={context} runs={runs} sessions={sessions} /></SectionBoundary>
         </PageSection>
         <PageSection title="运行记录" description="收到通知、读取材料、采用判断与真实效果分别留证；原生完成状态不会自动关闭任务。">
           {runsRead.isPending ? <LoadingState lines={2} label="正在读取运行" />

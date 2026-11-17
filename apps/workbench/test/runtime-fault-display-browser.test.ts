@@ -1,5 +1,5 @@
 // Built-app regression (task f2c9a6d1), two places where the page said something other than the facts:
-// 1. 分工与运行 › 执行服务 said only 已接通 while the service held an error and faults (`available` is true then). It now says both, lists the faults and links to the agent.
+// 1. 运行与接入 › 执行服务 said only 已接通 while the service held an error and faults (`available` is true then). It now says both, lists the faults and links to the agent.
 //    With no fault it reads as before.
 // 2. The 已验收 node detail of 统筹安排 › 动态 told the reader to pick “已关闭” in the task list, a filter that does not exist. It now names the real one (已完成) and links to it.
 // Over the screenshot fixture (scripts/frontend/fixture); the runtime read and the work board are answered by the test through page.route. Needs the built workbench and
@@ -91,7 +91,7 @@ test("执行服务 shows the faults behind 已接通 and the 已验收 detail po
     await page.route(new RegExp(`/api/projects/${projectId}/work-board/events`), route => route.fulfill({ status: 200, contentType: "application/json",
       body: JSON.stringify({ items: fixtureEvents, cursor: fixtureBoard.eventSeq, head: fixtureBoard.eventSeq }) }));
     await page.route(new RegExp(`/api/projects/${projectId}/work-board/stream`), route => route.fulfill({ status: 200, contentType: "text/event-stream", body: ": idle\n\n" }));
-    await signIn(page, `/p/${projectId}/sessions?view=flow`, fixture.base);
+    await signIn(page, `/p/${projectId}/arrangement?view=flow`, fixture.base);
     const node = page.locator('[data-node="station:已验收"]');
     await node.waitFor({ timeout: 30000 });
     await node.click();

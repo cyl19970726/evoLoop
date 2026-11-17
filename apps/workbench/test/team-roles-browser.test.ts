@@ -1,6 +1,6 @@
 // Opt-in built-app regression: build workbench, then set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE.
-// 职责 and 分工与运行: the directory selects a Role whose detail fills the center and whose trial facts, runtime and
-// skills fill the right column; decisions, external chats and history read and write from there. 分工与运行 lists the
+// 职责 and 运行与接入: the directory selects a Role whose detail fills the center and whose trial facts, runtime and
+// skills fill the right column; decisions, external chats and history read and write from there. 运行与接入 lists the
 // managed agents, names every close blocker, sends a close only when none is found, and old runtime links land in
 // their new place. Screenshots at 1440 / 1024 / 390 with EVOLOOP_TEAM_ROLES_SCREENSHOT_DIR.
 import assert from "node:assert/strict";
@@ -39,7 +39,7 @@ const runtimeView = { projectId, roleId: id(1), binding: null, history: [], prov
   missing: [], skillsReportedBy: "files", plugins: [], mcpServers: [], notes: [], observedAtUtc: stamp };
 const grant = { projectId, actorId: "lead", roleId: id(1), authorizationScope: "前端任务", cwd: "/work/repo", sandbox: "danger-full-access", approvalPolicy: "never", networkAccess: true, models: ["gpt-6-sol"] };
 
-test("职责 and 分工与运行 read and write in the shell layout, and old runtime links land in place", { skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE" }, async t => {
+test("职责 and 运行与接入 read and write in the shell layout, and old runtime links land in place", { skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE" }, async t => {
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
   const commands: Array<Record<string, unknown>> = [];
   let available = true, recovered = 0;
@@ -192,10 +192,10 @@ test("职责 and 分工与运行 read and write in the shell layout, and old run
   assert.equal(await noOverflow(), true, "no horizontal overflow at 390px on 职责");
   if (shots) await page.screenshot({ path: `${shots}/team-role-390.png`, fullPage: true });
 
-  // 分工与运行: agents listed; the busy one names its blocker; the idle one sends a close.
+  // 运行与接入: agents listed; the busy one names its blocker; the idle one sends a close.
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(hash => { location.hash = hash; }, `/p/${projectId}/runtime`);
-  await page.getByRole("heading", { name: "分工与运行", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "运行与接入", exact: true }).waitFor();
   const agents = page.getByRole("navigation", { name: "受管智能体" });
   await agents.getByRole("link", { name: /前端实现/ }).first().waitFor();
   assert.equal(await page.locator("[data-session-id]").count(), 2);
@@ -220,7 +220,7 @@ test("职责 and 分工与运行 read and write in the shell layout, and old run
   const close = commands.find(item => item.type === "runtime.session.close")!;
   assert.deepEqual([close.sessionId, close.expectedVersion], [id(12), 4]);
   await page.setViewportSize({ width: 390, height: 844 });
-  assert.equal(await noOverflow(), true, "no horizontal overflow at 390px on 分工与运行");
+  assert.equal(await noOverflow(), true, "no horizontal overflow at 390px on 运行与接入");
   if (shots) await page.screenshot({ path: `${shots}/team-agent-390.png`, fullPage: true });
   await page.setViewportSize({ width: 1440, height: 900 });
 

@@ -191,7 +191,7 @@ export function RunForm({ context, revision, conditionId, task, sessions, runs, 
     <h3 className="text-small font-semibold text-foreground">第 {nextOrdinal} 次尝试 / 重试</h3>
     {active && <Notice tone="waiting">共同任务已有运行中或结果未知的尝试。先核对同一运行，不能重发。</Notice>}
     {!fullExecution && <Notice>此历史定义保留旧执行权限，只供回读；新尝试请先另存完整权限的定义修订。</Notice>}
-    {fullExecution && !fresh.length && <p className="m-0 text-small text-text-secondary">没有符合冻结模型、授权与已激活执行配置的全新自有智能体。先在<a className={linkClass} href={`/p/${context.projectId}/runtime?view=execution`}>分工与运行</a>创建并核对激活；用过的智能体不可复用。</p>}
+    {fullExecution && !fresh.length && <p className="m-0 text-small text-text-secondary">没有符合冻结模型、授权与已激活执行配置的全新自有智能体。先在<a className={linkClass} href={`/p/${context.projectId}/runtime?view=execution`}>运行与接入</a>创建并核对激活；用过的智能体不可复用。</p>}
     {!active && fresh.length > 0 && <EvaluationForm key={`${revision.id}:${conditionId}:${task.task.version}`} permission="session" decision hold={hold}
       context={{ ...context, draftScope: `evaluation-run:${revision.id}:${conditionId}`, draftBaseline: `${revision.id}:${task.task.currentRevisionId}` }}
       title={`派发第 ${nextOrdinal} 次真实运行`} fields={[
