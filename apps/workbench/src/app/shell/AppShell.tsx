@@ -201,7 +201,7 @@ function SectionList({ items, route, projectId, onNavigate }: { items: readonly 
           {item.children.map(child => <li key={child.section}>
             <a href={href(projectId, child.section)} onClick={onNavigate} aria-current={leaf === child.section ? "page" : undefined}
               className={cn("block rounded-md px-2.5 py-1.5 text-small text-muted-foreground hover:bg-selected hover:text-foreground focus-visible:shadow-[var(--focus-ring)] outline-none",
-                leaf === child.section && "bg-accent font-medium text-accent-strong hover:bg-accent")}>{child.label}</a>
+                leaf === child.section && "bg-accent font-medium text-accent-strong hover:bg-accent")}>{child.label}{child.hint && <span className="block text-caption font-normal text-muted-foreground">{child.hint}</span>}</a>
           </li>)}
         </ul>}
       </li>;
