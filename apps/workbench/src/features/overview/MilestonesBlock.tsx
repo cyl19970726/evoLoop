@@ -11,7 +11,7 @@ const heading = "text-label font-semibold text-foreground";
 const toneClass = { done: "bg-done-soft text-done", progress: "bg-accent text-primary", partial: "bg-warning-soft text-warning", idle: "bg-field text-text-secondary", none: "border border-dashed border-border text-text-secondary" } as const;
 
 export function MilestonesBlock({ projectId, active }: { projectId: string; active: boolean }) {
-  const version = useProjectQuery(projectId, ["overview", "version"], signal => api().version(signal), { enabled: active, retry: false });
+  const version = useProjectQuery(projectId, ["overview", "version"], signal => api().version(signal, projectId), { enabled: active, retry: false });
   const milestones = useProjectQuery(projectId, ["overview", "milestones"], signal => api().milestones(projectId, signal), { enabled: active, retry: false });
   const v = versionView(version.data ?? null);
   const rows = milestoneRows(milestones.data ?? null);
