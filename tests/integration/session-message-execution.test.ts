@@ -25,7 +25,7 @@ test("disabled execution keeps ready owned message storage available and snapsho
     unknownProcessingOperationId=randomUUID();
   const actorId="message-owner",receiverActorId="message-receiver",token=randomUUID()+randomUUID(),readerToken=randomUUID()+randomUUID(),
     foreignToken=randomUUID()+randomUUID(),now="2026-10-27T00:00:00.000Z";
-  const principal={actorId,projectIds:[projectId],permissions:["read","write","review"] as Array<"read"|"write"|"review">};
+  const principal={actorId,projectIds:[projectId],permissions:["task", "document", "session", "management"], decisions: true};
   const hash=(value:string)=>createHash("sha256").update(value).digest("hex");
   const workflow=new WorkflowService({uow,clock:{now:()=>now},ids:{next:randomUUID},hasher:{hash}});
   const messages=new SessionMessageService({uow,clock:{now:()=>now},ids:{next:randomUUID},grantFor:async()=>null});
@@ -56,8 +56,8 @@ test("disabled execution keeps ready owned message storage available and snapsho
   const app=await buildServer({service:workflow,sessionWork:observation,sessionMessages:countedMessages,
     messageExecution:execution,credentials:[
       {token,...principal},
-      {token:readerToken,actorId:"reader",projectIds:[projectId],permissions:["read"]},
-      {token:foreignToken,actorId:"foreign",projectIds:[otherProjectId],permissions:["read","write"]},
+      {token:readerToken,actorId:"reader",projectIds:[projectId],permissions:[]},
+      {token:foreignToken,actorId:"foreign",projectIds:[otherProjectId],permissions:["task", "document", "session"]},
     ]});
   t.after(async()=>{await app.close();await pool.end();const admin=new pg.Client({connectionString:database});
     await admin.connect();try{await admin.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await admin.end();}});

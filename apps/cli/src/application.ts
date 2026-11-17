@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { describeRunActual } from "@evoloop/contracts/run-actual";
-import { readFile } from "node:fs/promises";
-import { commandSchema, idSchema } from "@evoloop/contracts";
+import { readFile, writeFile } from "node:fs/promises";
+import { commandSchema, idSchema, migrateLegacyAuthConfig } from "@evoloop/contracts";
 import { orchestrationCommandSchema } from "@evoloop/contracts/orchestration";
 import { ApiClient, CliApiError } from "./client.js";
 import { exportOriginal, readOriginal, readTaskContext, MaterialError } from "./materials.js";
@@ -10,9 +10,14 @@ import { prepareRequest, requestTypes, requestSchema, RequestInputError } from "
 import { sessionWorkPath } from "./session-work.js";
 import { briefAcceptanceOverview, briefIndex, briefRelays, briefTaskWithRelays } from "./brief.js";
 import { sessionStatus } from "./session-status.js";
+
+class IdentityFileError extends Error {
+  readonly code = "INVALID_IDENTITY_FILE";
+}
 import { allocationRelationsPath } from "./allocation-relations.js";
 import { fixedHash, materialAsset, materialBody, materialCatalog, materialHandoff, materialRunInput } from "./lightweight-materials.js";
 import { prepareSession } from "./session-preparation.js";
+import { MachineCommandError, machineCommand } from "./machine.js";
 import { MessageBodyError, parseSessionTarget, readMessageBody } from "./message-send.js";
 import { directInputOutcome, missingForInsert, queuedMessageOutcome } from "./session-input.js";
 
@@ -20,9 +25,9 @@ type Environment = Record<string, string | undefined>;
 interface IO { stdout(text: string): void; stderr(text: string): void; stdin?(): AsyncIterable<Uint8Array> }
 class UsageError extends Error { readonly code = "INVALID_INPUT"; }
 interface Args { words: string[]; options: Map<string, string | true> }
-const values = new Set(["project", "revision", "limit", "cursor", "turn-cursor", "messages-cursor", "source", "turn-id", "after", "wait-ms", "out", "file", "id", "receipt", "attempt", "task", "state", "phase", "signal", "waiting-on-kind", "waiting-on-id", "stage", "knowledge", "loop", "search", "membership", "importance", "role", "session", "discussion", "message", "kind", "hash", "asset-hash", "model", "effort", "color", "mark", "reason", "evidence-ref", "operation", "provider", "project-skills", "personal", "builtin", "add", "remove", "context-task", "context-revision", "reply-to", "message-id","mode","content","input", "wait", "from", "to", "category"]);
+const values = new Set(["hub", "code", "workspace-root", "project", "revision", "limit", "cursor", "turn-cursor", "messages-cursor", "source", "turn-id", "after", "wait-ms", "out", "file", "id", "receipt", "attempt", "task", "state", "phase", "signal", "waiting-on-kind", "waiting-on-id", "stage", "knowledge", "loop", "search", "membership", "importance", "role", "session", "discussion", "message", "kind", "hash", "asset-hash", "model", "effort", "color", "mark", "reason", "evidence-ref", "operation", "provider", "project-skills", "personal", "builtin", "add", "remove", "context-task", "context-revision", "reply-to", "message-id","mode","content","input", "wait", "from", "to", "category"]);
 const longPollTimeout = (configured: number, waitMs: number) => Math.max(configured, Math.min(300_000, waitMs + 5_000));
-const switches = ["help", "history", "graph", "events", "revisions", "result", "trace", "occurrences", "dispatch", "dispatches", "direct-list", "reviews", "handoffs", "bindings", "route", "hosts", "attempts", "recovery", "inputs", "observation", "documents", "closed", "brief", "stdin"];
+const switches = ["yes", "local-only", "help", "history", "graph", "events", "revisions", "result", "trace", "occurrences", "dispatch", "dispatches", "direct-list", "reviews", "handoffs", "bindings", "route", "hosts", "attempts", "recovery", "inputs", "observation", "documents", "closed", "brief", "stdin", "confirm-review-as-management"];
 function uuid(value: string | undefined, label: string): string {
   if (!idSchema.safeParse(value).success) throw new UsageError(`${label} must be a UUID.`);
   return value!;
@@ -75,7 +80,7 @@ const orchestrationReads: Record<string, { path: string; modes: string[] }> = {
 const allCommandSchemas = [...commandSchema.options, ...orchestrationCommandSchema.options];
 const help = {
   name: "evoLoop Agent CLI", output: "JSON stdout, diagnostic JSON stderr; no automatic POST retries",
-  commands: ["id", "session", "project UUID", `list ${[...Object.keys(listPaths), ...Object.keys(orchestrationLists)].join("|")} --project UUID [--loop UUID for inbox/dispatches] [--limit 1..100] [--cursor CURSOR]`,
+  commands: ["id", "identity migrate --input LEGACY_JSON [--out NEW_JSON --confirm-review-as-management] (converts read/write/review; prints a before/after table and refuses legacy review without explicit confirmation)", "session", "project UUID", `list ${[...Object.keys(listPaths), ...Object.keys(orchestrationLists)].join("|")} --project UUID [--loop UUID for inbox/dispatches] [--limit 1..100] [--cursor CURSOR]`,
     "list discussions --project UUID [--kind allocation|direction|task_collaboration] [--limit 1..100 --cursor UUID] (read only)",
     "allocations --project UUID (--role UUID | --session owned:UUID|external:UUID | --discussion UUID) [--limit 1..50 --cursor OPAQUE] (read only; does not assign a Task or Session)",
     "work list --project UUID [--limit 1..50 --cursor CURSOR --search TEXT --membership current|historical|unclassified|all]",
@@ -132,6 +137,7 @@ const help = {
     "knowledge UUID --project UUID [--revision UUID | --history | --graph]", "candidate UUID --project UUID", "operation UUID --project UUID",
     `read ${[...Object.keys(reads), ...Object.keys(orchestrationReads)].join("|")} UUID --project UUID [${readModes.map(name => `--${name}`).join(" | ")}] [--cursor ITEM_CURSOR --turn-cursor TURN_CURSOR for run --trace]`,
     "read schedule UUID --project UUID (--dispatch | --dispatches [--limit 1..100 --cursor CURSOR]); read role UUID --project UUID --direct-list",
+    "machine join --hub URL --code CODE --workspace-root DIR[,DIR] [--yes] | machine status | machine leave [--local-only] (this machine and a Hub; no coordinator token; roots are confirmed once)",
     "command types", "command schema TYPE", "command run JSON_FILE", "command JSON_FILE (legacy)", "request types", "request schema NAME",
     "request schema reference.task-decide (reviewed Run: kind=run, referenceId=Run ID, revision=source TaskRevision ID, contentHash=Run inputHash; read run ID --trace for native evidence)",
     "request NAME --project UUID --file JSON_FILE [--id UUID] [--receipt UUID for endpoints without server operation IDs]",
@@ -148,6 +154,26 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
   const action = args.words[0];
   if (!action || action === "help" || args.options.has("help")) return help;
   if (action === "id") { check(args, 1); return { id: randomUUID() }; }
+  if (action === "machine") {
+    // Local to this machine and the Hub: no coordinator token. join/leave/status read and write only the machine's own private credentials.
+    return machineCommand(args.words.slice(1), args.options, env, io);
+  }
+  if (action === "identity" && args.words[1] === "migrate") {
+    check(args, 2, ["input", "out", "confirm-review-as-management"]);
+    const input = option(args, "input");
+    if (!input) throw new UsageError("identity migrate requires --input LEGACY_JSON.");
+    let migration;
+    try {
+      migration = migrateLegacyAuthConfig(JSON.parse(await readFile(input, "utf8")), {
+        confirmReviewAsManagement: args.options.has("confirm-review-as-management"),
+      });
+    } catch (error) {
+      throw new IdentityFileError(error instanceof Error ? error.message : "Invalid legacy identity file.");
+    }
+    const out = option(args, "out");
+    if (out) await writeFile(out, `${JSON.stringify(migration.config, null, 2)}\n`, { mode: 0o600 });
+    return { output: out ?? null, changes: migration.changes, config: out ? undefined : migration.config };
+  }
   const project = () => uuid(option(args, "project") ?? env.EVOLOOP_PROJECT, "Project");
   const revision = () => option(args, "revision") ? uuid(option(args, "revision"), "Revision") : undefined;
   const store = new ReceiptStore(env.EVOLOOP_STATE_DIR);
@@ -691,12 +717,12 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
 export async function runCli(args: string[], env: Environment = process.env, io: IO = { stdout: text => process.stdout.write(text), stderr: text => process.stderr.write(text) }): Promise<number> {
   try { const result = await dispatch(parse(args), env, io); io.stdout(JSON.stringify(result) + "\n"); return record(result)?.status === "partial" ? 4 : 0; }
   catch (error) {
-    const invalid = error instanceof UsageError || error instanceof RequestInputError || error instanceof MessageBodyError || record(error)?.name === "ZodError" || error instanceof SyntaxError || error instanceof TypeError ||
+    const invalid = (error instanceof MachineCommandError && error.code === "INVALID_INPUT") || error instanceof UsageError || error instanceof RequestInputError || error instanceof MessageBodyError || record(error)?.name === "ZodError" || error instanceof SyntaxError || error instanceof TypeError ||
       error instanceof CliApiError && error.status === 0 && !error.unconfirmed && error.code.startsWith("INVALID_");
-    const code = invalid ? "INVALID_INPUT" : error instanceof CliApiError || error instanceof ReceiptError || error instanceof MaterialError ? error.code : "LOCAL_IO_ERROR";
+    const code = invalid ? "INVALID_INPUT" : error instanceof CliApiError || error instanceof ReceiptError || error instanceof MaterialError || error instanceof IdentityFileError || error instanceof MachineCommandError ? error.code : "LOCAL_IO_ERROR";
     const payload = error instanceof CliApiError ? { code, status: error.status, message: error.message, data: error.data }
       : error instanceof ReceiptError ? { code, message: error.message, data: error.data }
-      : error instanceof MaterialError || error instanceof MessageBodyError ? { code, message: error.message }
+      : error instanceof MaterialError || error instanceof MessageBodyError || error instanceof IdentityFileError || error instanceof MachineCommandError ? { code, message: error.message }
       : { code, message: invalid ? error instanceof UsageError || error instanceof RequestInputError ? error.message : "Input does not match CLI/schema; use help or command schema TYPE."
         : record(error)?.code === "ENOENT" ? "The input file or export parent directory is missing; preserve the requested path and create the parent before exporting."
         : "Local operation failed; preserve input and inspect the requested file/state path." };

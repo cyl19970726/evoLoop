@@ -38,10 +38,10 @@ const workflow = new WorkflowService(deps);
 const runtime = new RuntimeWorkflowService(deps);
 withPersistedResumeProfile(runtime,uow);
 const projectId = randomUUID();
-const owner: Principal = { actorId: "handoff-owner", projectIds: [projectId], permissions: ["read", "write", "review"] };
-const firstObserver: Principal = { actorId: "consumer-alpha", projectIds: [projectId], permissions: ["read", "write"] };
-const secondObserver: Principal = { actorId: "consumer-beta", projectIds: [projectId], permissions: ["read", "write"] };
-const readOnlyObserver: Principal = { actorId: "consumer-readonly", projectIds: [projectId], permissions: ["read"] };
+const owner: Principal = { actorId: "handoff-owner", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
+const firstObserver: Principal = { actorId: "consumer-alpha", projectIds: [projectId], permissions: ["task", "document", "session"] };
+const secondObserver: Principal = { actorId: "consumer-beta", projectIds: [projectId], permissions: ["task", "document", "session"] };
+const readOnlyObserver: Principal = { actorId: "consumer-readonly", projectIds: [projectId], permissions: [] };
 const issue = async (principal: Principal, data: Record<string, unknown>, operationId = randomUUID()): Promise<CommandResult> =>
   workflow.execute(principal, { ...data, projectId, operationId } as Command);
 const applied = (result: CommandResult) => {

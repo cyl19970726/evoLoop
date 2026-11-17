@@ -49,6 +49,8 @@ export const runtimeCommands = [
 export type RuntimeSessionState = "reserved" | "creating" | "ready" | "closing" | "unknown" | "closed";
 export type RuntimeRunState = "requested" | "dispatching" | "running" | "completed" | "failed" | "interrupted" | "unknown";
 export interface RuntimeSessionRecord {
+  /** Set by `list sessions` (the coordinator judges it): whether a Run can start now, and why not. `ready` is the stored lifecycle, not "can take work". Absent: an older server. */
+  usable?: boolean; unusable?: Array<{ code: string; reason: string }>;
   projectId: string; id: string; roleId: string; cwd: string; authorizationScope: string;
   model: string | null; sandbox: "read-only" | "workspace-write" | "danger-full-access"; approvalPolicy: "on-request" | "untrusted" | "never";
   /** Native thread/start acknowledgement. Null for historical Sessions without this observation. */

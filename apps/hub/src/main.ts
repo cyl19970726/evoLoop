@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { loadHubConfig } from "./config.js";
 import { buildHubApp } from "./server.js";
@@ -5,6 +7,11 @@ import { HubService } from "./service.js";
 import { HubStore } from "./store.js";
 
 const config = loadHubConfig();
+// The built workbench next to the Hub in a checkout; HUB_WEB_ROOT names another place. Without index.html the Hub serves only its API and plain pages.
+if (!config.webRoot) {
+  const bundled = fileURLToPath(new URL("../../workbench/dist/", import.meta.url));
+  if (existsSync(`${bundled}index.html`)) config.webRoot = bundled;
+}
 const pool = new pg.Pool({
   connectionString: config.databaseUrl,
   max: 10,

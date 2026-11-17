@@ -9,7 +9,7 @@ import type {
 export type { TaskTimingView, TaskTimingSeriesSummary, TaskTimingSeriesPage } from "@evoloop/contracts";
 export type { DocumentRevisionPage, DocumentRevisionState, DocumentRevisionSummary } from "@evoloop/contracts";
 import type { WorkTaskStatus } from "./workStatusPresentation";
-import { reportUnauthorized, requestAuth } from "./identity";
+import { authMode, reportUnauthorized, requestAuth, setCsrfToken } from "./identity";
 import { describeError } from "./errorPresentation";
 export { errorCode, errorDiagnostic } from "./errorPresentation";
 import type {
@@ -21,6 +21,14 @@ import type { ProjectCapabilitiesView, ProjectMembersView, ProjectRepositoriesVi
 export type {
   ProjectCapabilitiesView, ProjectCapability, ProjectMember, ProjectMembersView, ProjectRepositoriesView, ProjectRepository,
 } from "@evoloop/contracts/project-configuration";
+
+/** A project as the Hub lists it: where it runs, and whether that machine is connected now. Offline is a fact about the link, never about a Run. */
+export interface HubProject {
+  projectId: string; name: string; machineId: string | null; createdAt: string;
+  machine: { machineId: string; name: string; state: "pending" | "active" | "removed"; online: boolean } | null;
+}
+export type ProjectView = Project & { machine?: HubProject["machine"] };
+export const hubProjectView = (hub: HubProject): ProjectView => ({ id: hub.projectId, title: hub.name, createdAt: hub.createdAt, machine: hub.machine } as ProjectView);
 
 export interface Session {
   principal: Principal;
@@ -37,7 +45,7 @@ async function requestJson<T>(token: string, path: string, timeoutMs: number, in
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const auth = requestAuth(token);
+    const auth = requestAuth(token, init?.method ?? "GET");
     const response = await fetch(path, {
       ...init,
       credentials: auth.credentials,
@@ -49,9 +57,12 @@ async function requestJson<T>(token: string, path: string, timeoutMs: number, in
     catch { if (response.ok) throw new ApiError(0, "响应不完整，操作结果尚未确认"); }
     if (response.status === 401) reportUnauthorized();
     if (!response.ok) {
-      const details = body && typeof body === "object" ? body as { message?: unknown; error?: unknown } : {};
+      // The coordinator answers { code, message }; the Hub answers { error: { code, message } }. Both reach the page in the coordinator's shape.
+      const raw = body && typeof body === "object" ? body as { message?: unknown; error?: unknown; code?: unknown } : {};
+      const hubError = raw.error && typeof raw.error === "object" ? raw.error as { code?: unknown; message?: unknown } : null;
+      const details = hubError ? { message: hubError.message, error: undefined } : raw;
       const message = typeof details.message === "string" ? details.message : typeof details.error === "string" ? details.error : `请求失败（${response.status}）`;
-      throw new ApiError(response.status, message, body);
+      throw new ApiError(response.status, message, hubError && typeof hubError.code === "string" ? { code: hubError.code, message } : body);
     }
     if ((body === null && !allowNull) || body === undefined) throw new ApiError(0, "响应不完整，操作结果尚未确认");
     return body as T;
@@ -110,8 +121,24 @@ export function api(token = "", timeoutMs = 15000) {
     return checkedCommandResult(await call<unknown>(path, { method: "PUT", body: JSON.stringify(body) }), command.operationId);
   };
   return {
-    session: () => call<Session>("/api/session"),
-    project: (p: string) => call<Project>(projectPath(p)),
+    session: async () => {
+      const read = await call<Session & { csrfToken?: string | null }>("/api/session");
+      if (typeof read.csrfToken === "string") setCsrfToken(read.csrfToken);
+      return { principal: read.principal, capabilities: read.capabilities ?? {} } as Session;
+    },
+    /** Behind the Hub: sign in with the account. The Hub sets its cookie (the page cannot read it); the CSRF token it returns is kept in memory only. */
+    hubLogin: async (email: string, password: string) => {
+      const answer = await call<{ csrfToken?: string }>("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+      if (typeof answer.csrfToken === "string") setCsrfToken(answer.csrfToken);
+    },
+    hubLogout: async () => { await request<unknown>(token, "/api/auth/logout", timeoutMs, { method: "POST" }).catch(() => undefined); setCsrfToken(""); },
+    /** Behind the Hub: the project list with where each project runs and whether that machine is connected now. */
+    hubProjects: async (): Promise<HubProject[]> => (await call<{ projects: HubProject[] }>("/api/projects")).projects,
+    project: async (p: string): Promise<Project> => {
+      if (authMode() !== "hub") return call<Project>(projectPath(p));
+      const hub = (await call<{ project: HubProject }>(projectPath(p))).project;
+      return hubProjectView(hub);
+    },
     providerHolds: (p: string) => call<ProviderHoldListing>(`${projectPath(p)}/runtime/provider-holds`),
     /** Repositories configured for this project; `unavailable` is not "none". */
     projectRepositories: async (p: string) => checkedProjectView<ProjectRepositoriesView>(await call<unknown>(`${projectPath(p)}/repositories`), p),
@@ -204,8 +231,16 @@ export function api(token = "", timeoutMs = 15000) {
   };
 }
 
+/**
+ * A link to the workbench itself: this machine's own loopback (a pilot named another local port), or the address the page was opened at now (#219: behind the Hub the
+ * workbench has the Hub's address, and a delivery's deep link names it). Compared as a whole origin, so a look-alike host is not the page's own address.
+ */
+export function ownWorkbenchAddress(url: URL, currentOrigin: string | undefined = typeof window === "undefined" ? undefined : window.location.origin): boolean {
+  return ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) || (!!currentOrigin && url.origin === currentOrigin);
+}
+
 /** Only navigate to this project's known routes or ordinary web URLs. */
-export function safeArtifactHref(value: string, projectId: string): string | null {
+export function safeArtifactHref(value: string, projectId: string, currentOrigin?: string): string | null {
   const reference = value.trim();
   // Stored references use the former `#/p/…` form; path links are accepted too. Both open as a path.
   if (reference.startsWith("#/p/") || reference.startsWith("/p/")) {
@@ -222,12 +257,12 @@ export function safeArtifactHref(value: string, projectId: string): string | nul
     if ((url.protocol !== "http:" && url.protocol !== "https:") || !url.hostname || url.username || url.password) return null;
     // Pilot artifacts may name another local frontend port. Keep this project's
     // valid fixed deep link in the authenticated workbench; preserve the original text.
-    if (["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)
+    if (ownWorkbenchAddress(url, currentOrigin)
       && ["/", "/app/"].includes(url.pathname) && !url.search && url.hash.startsWith("#/p/")) {
       const local = safeArtifactHref(url.hash, projectId);
       if (local) return local;
     }
-    if (["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) && url.pathname.startsWith("/p/") && !url.hash) {
+    if (ownWorkbenchAddress(url, currentOrigin) && url.pathname.startsWith("/p/") && !url.hash) {
       const local = safeArtifactHref(`${url.pathname}${url.search}`, projectId);
       if (local) return local;
     }

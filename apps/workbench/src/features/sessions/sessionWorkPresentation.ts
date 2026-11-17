@@ -68,7 +68,7 @@ export interface NowView {
 
 /** What the agent is doing now. Every branch says something: a Task, a message, 空闲, or why it cannot be told. */
 export function nowWork({ session, work, assignments, relationLabel, timing, messageRunning, idleResult, questionCount, titleOf }: {
-  session: Pick<ObservedSession, "kind" | "runtimeState" | "busy" | "latestBusinessRun">;
+  session: Pick<ObservedSession, "kind" | "runtimeState" | "busy" | "latestBusinessRun" | "dispatch">;
   work: ObservedTask | null;
   assignments: Assignment[];
   /** currentWorkRelationLabel for `work`. */
@@ -107,6 +107,10 @@ export function nowWork({ session, work, assignments, relationLabel, timing, mes
     return { badge: "在途工作", tone: "waiting", task: null, summary: "有在途的运行或消息，还没有对应到任务；可在分工与运行里核对。", lines: [], ...plain, recent: null };
   if (session.kind === "external") return { badge: "外部接入", tone: "unknown", task: null,
     summary: "外部智能体的当前工作没有同步到这里；分派给它的任务列在下面。", lines: [], ...plain, recent: null };
+  // Not busy is not free: a Session the coordinator judged unable to start a Run (no business identity, no native thread, the judgement failing) is
+  // 不可用 with the reason, here as everywhere; "空闲" is only for one that could take work.
+  if (session.kind === "owned" && session.dispatch?.usable === false)
+    return { badge: "不可用", tone: "waiting", task: null, summary: `现在不能接活：${session.dispatch.reasons.map(r => r.reason).join("；") || "原因待核对"}`, lines: [], ...plain, recent: idleResult };
   if (session.busy === false) return { badge: "空闲", tone: "idle", task: null, summary: "没有正在做的任务或消息。", lines: [], ...plain, recent: idleResult };
   return { badge: "待核对", tone: "unknown", task: null, summary: "这个智能体是否在工作，暂时无法判断。", lines: [], ...plain, recent: null };
 }
@@ -223,7 +227,7 @@ export function nextWork({ kind, currentTaskId, line, queue, assignments, partia
     seen.add(item.task.id);
     const phase = phaseOf(item.task.id);
     // Delivered and waiting for someone else's acceptance: the agent has nothing more to do on it.
-    if (phase === "awaiting_acceptance" || phase === "closed" || phase === "cancelled") {
+    if (phase === "awaiting_acceptance" || phase === "awaiting_prerequisite" || phase === "awaiting_release" || phase === "awaiting_close" || phase === "closed" || phase === "cancelled") {
       ended.push({ item, label: phase === "awaiting_acceptance" ? "已交付，等验收" : phaseStatus[phase].label });
       continue;
     }

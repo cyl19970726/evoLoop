@@ -46,7 +46,7 @@ test("Session navigation retains order, pages and filters across selection, back
     if (url.pathname.startsWith("/api/")) {
       const root = `/api/projects/${projectId}`;
       let value: unknown = { items: [], nextCursor: null }, status = 200;
-      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: [] }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "目录回归项目", createdAt: stamp };
       else if (url.pathname === `${root}/session-work`) {
         const membership = url.searchParams.get("membership") ?? "current";

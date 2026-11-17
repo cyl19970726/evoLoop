@@ -69,9 +69,9 @@ const reasonText: Record<ProjectCapabilityReason, string> = {
 
 const callerText: Record<ProjectCallerReason, string> = {
   caller_has_no_grant: "你没有本项目的这项授权",
-  caller_lacks_write: "你有授权，但登录用的令牌缺写入权限",
-  caller_lacks_review: "你有授权，但登录用的令牌缺复核权限",
-  caller_lacks_write_and_review: "你有授权，但登录用的令牌缺写入和复核权限",
+  caller_lacks_write: "你有授权，但登录用的令牌缺这项能力所属的对象写权限",
+  caller_lacks_review: "你有授权，但登录用的令牌缺这项能力所属的决定权限",
+  caller_lacks_write_and_review: "你有授权，但登录用的令牌缺这项能力所属的对象写权限和决定权限",
   caller_not_current_writer: "你有授权，但身份文件现在不认你是写入者（每日复制要求）",
 };
 

@@ -88,7 +88,7 @@ function Column({ label, empty, children }: { label: string; empty: string; chil
 }
 
 const loadDot: Record<ArrangementRow["load"], string> = {
-  overloaded: "bg-destructive", busy: "bg-primary", idle: "bg-border", unknown: "bg-transparent shadow-[inset_0_0_0_1px_var(--border-strong)]",
+  overloaded: "bg-destructive", busy: "bg-primary", idle: "bg-border", unusable: "bg-warning", unknown: "bg-transparent shadow-[inset_0_0_0_1px_var(--border-strong)]",
 };
 
 const unreadText = (state: ReadState, what: string) => state === "loading" ? "正在读取" : state === "failed" ? `${what}未读取` : "—";
@@ -180,6 +180,7 @@ function ArrangementPanel({ projectId, board, reads, from, directoryComplete }: 
           </li>)}</ul> : muted(noFreeAgentText(capacity, directoryComplete))}
         {!unknownReason && !directoryComplete && capacity.free.length > 0 && muted("智能体目录没有读全，上面只是已读到的空闲智能体。")}
         {!unknownReason && capacity.unknown > 0 && capacity.unknown < capacity.others && muted(`另有 ${capacity.unknown} 个智能体的状态待核对，不算空闲。`)}
+        {capacity.unusable > 0 && muted(`另有 ${capacity.unusable} 个智能体不可用（没有绑定业务身份、没有原生线程等），不算空闲，见各自的状态行。`)}
       </PanelSection>
       <PanelSection title="截止临近" count={tasksShown ? board.dueSoon.length : undefined}>
         {tasksShown && board.dueSoon.length ? <ul className="flex flex-col gap-2">{board.dueSoon.map(task => <TaskLine key={task.taskId} projectId={projectId} task={task} from={from} stale={board.stale} />)}</ul>
@@ -196,7 +197,7 @@ function Stat({ label, value, note, tone, onClick }: { label: string; value: num
     <span className="text-caption text-muted-foreground">{label}{note && <span className="text-text-secondary"> · {note}</span>}</span>
   </>;
   const box = "flex min-w-0 flex-col gap-0.5 rounded-xl bg-field px-4 py-3 text-left";
-  return onClick ? <Button variant="row" onClick={onClick} className={cn(box, "items-stretch font-normal text-foreground hover:bg-selected hover:text-foreground")}>{body}</Button> : <div className={box}>{body}</div>;
+  return onClick ? <Button variant="row" onClick={onClick} className={cn(box, "items-stretch bg-card font-normal text-foreground shadow-sm hover:bg-accent hover:text-foreground")}>{body}</Button> : <div className={box}>{body}</div>;
 }
 
 /** Project-wide counts the agent directory reports, independent of how many agents were read. */
@@ -262,7 +263,7 @@ export function ArrangementPage({ context, refresh, flow }: { context: MutationC
     </header>
     <div role="tablist" aria-label="统筹安排的视图" className="-mt-2 flex gap-1">
       {([["board", "安排"], ["flow", "动态"]] as const).map(([id, label]) =>
-        <Button key={id} role="tab" size="compact" aria-selected={view === id} onClick={() => chooseView(id)} className={cn(view === id && "bg-selected font-medium")}>{label}</Button>)}
+        <Button key={id} role="tab" variant="tab" size="compact" aria-selected={view === id} onClick={() => chooseView(id)} className={cn(view === id && "font-medium")}>{label}</Button>)}
     </div>
     {view === "flow" ? <div role="tabpanel" aria-label="动态">
       {sessions.isPending ? <LoadingState label="正在读取智能体目录" lines={2} />

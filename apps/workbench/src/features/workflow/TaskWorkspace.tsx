@@ -4,6 +4,7 @@
 // refresh, Back and a shared link come back to the same list.
 import React from "react";
 import { Plus } from "lucide-react";
+import { hasDecisionAuthority } from "@evoloop/contracts";
 import { Button, cn } from "@evoloop/ui";
 import type { MutationContext } from "../../shared/ActionForm";
 import { currentPath, onNavigate, replaceQuietly } from "../../shared/navigation";
@@ -51,7 +52,7 @@ export function ViewSwitch({ detailHref, tableHref, current, narrow = false, lay
   detailHref: string | null; tableHref: string; current: "detail" | "table"; narrow?: boolean; layout?: NarrowTaskLayout;
 }) {
   const item = "rounded-full px-3 py-1 text-label text-muted-foreground no-underline outline-none transition-colors hover:text-foreground focus-visible:shadow-[var(--focus-ring)]";
-  const selected = "bg-raised font-medium text-foreground shadow-sm";
+  const selected = "bg-accent font-medium text-accent-strong";
   const listLink = (label: string, shows: boolean, choice?: NarrowTaskLayout) =>
     <a key={label} href={tableHref} aria-current={current === "table" && shows ? "page" : undefined} onClick={choice ? () => chooseLayout(choice) : undefined}
       className={cn(item, current === "table" && shows && selected)}>{label}</a>;
@@ -125,7 +126,7 @@ export function TaskWorkspace({ context, refresh, active, taskId, selectedRevisi
   if (taskId) return <>
     {rail}
     <TaskPage context={context} token={context.token} projectId={projectId} id={taskId} selectedRevision={selectedRevision} refresh={refresh}
-      canReview={principal.permissions.includes("review")} active={active}
+      canReview={hasDecisionAuthority(principal, projectId, "task")} active={active}
       viewSwitch={<ViewSwitch detailHref={detailHref} tableHref={tableHref} current="detail" narrow={narrow} layout={layout} />} linkForTab={tabLink(taskId)} />
   </>;
   return <>

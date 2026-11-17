@@ -1,4 +1,5 @@
-import type { Operation, Principal, RuntimeSessionRecord } from "@evoloop/contracts";
+import { hasDecisionAuthority, hasPermission, type Operation, type Principal, type RuntimeSessionRecord }
+  from "@evoloop/contracts";
 import { createHash } from "node:crypto";
 import type { RoleRecord } from "@evoloop/contracts/roles";
 import type { SessionMessageRecord } from "@evoloop/contracts/session-messages";
@@ -21,7 +22,7 @@ export interface LeaderResultRecipient {
 export interface LeaderResultNotice {
   projectId: string;
   id: string;
-  kind: "task_todo"|"delivery"|"observation"|"observation_used"|"observation_failed"|"line_entry_suspended"|"line_confirmation_returned"|"direct_dispatch_blocked"|"direct_circuit_open"|"schedule_skips_escalated"|"task_question"|"task_blocker"|
+  kind: "task_todo"|"delivery"|"observation"|"observation_used"|"observation_failed"|"line_entry_suspended"|"line_confirmation_returned"|"direct_dispatch_blocked"|"direct_circuit_open"|"schedule_skips_escalated"|"session_repeated_failure"|"task_question"|"task_blocker"|
     "run_without_submission"|"run_submission_blocked"|"task_attention"|"acceptance_blocked";
   sourceEventId: string;
   sourceSessionId: string | null;
@@ -81,7 +82,7 @@ export interface LeaderResultNoticePumpDeps {
   packetDebounceSeconds?: number;
 }
 
-const noticeLabel: Record<string,string> = {task_todo:"新 Task 待分诊",delivery:"已记录固定交付",observation:"已记录独立使用观察",observation_used:"独立使用观察：已使用",observation_failed:"独立使用观察：失败或未使用（需要处理）",line_entry_suspended:"Session 队伍项挂起（无法开始）",line_confirmation_returned:"Session 退回了执行确认",direct_dispatch_blocked:"定时直派受阻或等待过久",direct_circuit_open:"定时直派熔断，已退回交 Leader",schedule_skips_escalated:"定时任务连续跳过",
+const noticeLabel: Record<string,string> = {task_todo:"新 Task 待分诊",delivery:"已记录固定交付",observation:"已记录独立使用观察",observation_used:"独立使用观察：已使用",observation_failed:"独立使用观察：失败或未使用（需要处理）",line_entry_suspended:"Session 队伍项挂起（无法开始）",line_confirmation_returned:"Session 退回了执行确认",direct_dispatch_blocked:"定时直派受阻或等待过久",direct_circuit_open:"定时直派熔断，已退回交 Leader",session_repeated_failure:"Session 连续三次同一原因启动前失败（不可用，需处理原因）",schedule_skips_escalated:"定时任务连续跳过",
   task_question:"Task 接收者提了问题",task_blocker:"Task 接收者报告阻塞",run_without_submission:"终态 Run 没有已签提交",
   run_submission_blocked:"已签提交无法封存",task_attention:"Task 关注项需要 Leader 跟进",acceptance_blocked:"验收交接受阻"};
 /** One packet message carries at most this many bytes (design: 8 KB) and this many items. */
@@ -372,10 +373,8 @@ export class LeaderResultNoticePump {
     const target=config.targets.find(value=>value.projectId===projectId);
     if(!target)return {recipient:null,reason:"LEADER_TARGET_UNCONFIGURED"};
     if(target.senderActorId===target.receiverActorId)return {recipient:null,reason:"LEADER_ACTORS_IDENTICAL"};
-    const sender=principals.find(p=>p.actorId===target.senderActorId&&p.projectIds.includes(projectId)&&
-      p.permissions.includes("read")&&p.permissions.includes("write"));
-    const receiver=principals.find(p=>p.actorId===target.receiverActorId&&p.projectIds.includes(projectId)&&
-      p.permissions.includes("read")&&p.permissions.includes("write")&&p.permissions.includes("review"));
+    const sender=principals.find(p=>p.actorId===target.senderActorId&&hasPermission(p,projectId,"session"));
+    const receiver=principals.find(p=>p.actorId===target.receiverActorId&&hasDecisionAuthority(p,projectId,"session"));
     if(!sender)return {recipient:null,reason:"NOTICE_SENDER_UNAVAILABLE"};
     if(!receiver)return {recipient:null,reason:"LEADER_RECEIVER_UNAVAILABLE"};
     const roles=(await this.roles(sender,projectId)).filter(role=>role.proposal.templateKey==="lead"&&
@@ -484,8 +483,7 @@ export class LeaderResultNoticePump {
   }
 
   private sender(principals:Principal[],projectId:string,actorId:string):Principal|null{
-    return principals.find(p=>p.actorId===actorId&&p.projectIds.includes(projectId)&&
-      p.permissions.includes("read")&&p.permissions.includes("write"))??null;
+    return principals.find(p=>p.actorId===actorId&&hasPermission(p,projectId,"session"))??null;
   }
 
   private command(notice:LeaderResultNotice,recipient:LeaderResultRecipient){

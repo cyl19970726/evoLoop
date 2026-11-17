@@ -74,7 +74,7 @@ export function RolePresence({ context, role }: { context: MutationContext; role
         {host.host.kind === "external" && <p className={mutedText}>外部宿主仅按已核能力人工操作；这里不宣称可自动启动或写入。</p>}
         {host.host.kind === "external" && host.state === "registered" && actions.connect && current && <details className="text-small">
           <summary className="cursor-pointer text-primary">核实人工连接能力</summary>
-          <ActionForm context={context} review embedded {...verifyHostForm(role, host)} />
+          <ActionForm context={context} requiredPermissions={["management"]} embedded {...verifyHostForm(role, host)} />
         </details>}
       </li>)}
       {domains.map(domain => {
@@ -94,7 +94,7 @@ export function RolePresence({ context, role }: { context: MutationContext; role
     {actions.connect && <details className="text-small">
       <summary className="cursor-pointer text-primary">登记已有 Codex 聊天</summary>
       <p className={cn(mutedText, "mt-2")}>只登记原聊天引用；实际打开、读取和人工领取须另行核实。登记不表示会自动发送或启动。</p>
-      <ActionForm context={context} review embedded {...registerHostForm(role)} />
+      <ActionForm context={context} requiredPermissions={["management"]} embedded {...registerHostForm(role)} />
     </details>}
   </PageSection>;
 }

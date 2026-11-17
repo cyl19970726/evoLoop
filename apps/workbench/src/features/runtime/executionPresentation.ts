@@ -3,7 +3,7 @@
 import type { ResidentQueue } from "@evoloop/contracts/queues";
 import type { RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import type { StatusTone } from "@evoloop/ui";
-import type { ExecutionGrant } from "../../shared/runtimeClient";
+import type { ExecutionGrant, RuntimeStatus } from "../../shared/runtimeClient";
 
 export const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -13,6 +13,10 @@ export const sessionStateText: Record<RuntimeSessionRecord["state"], string> = {
 const sessionTone: Record<RuntimeSessionRecord["state"], StatusTone> = {
   reserved: "waiting", creating: "progress", ready: "idle", closing: "progress", unknown: "unknown", closed: "history",
 };
+/** The line under a Session in the rail: its state, or 不可用 with the first reason when it is ready but cannot start a Run. */
+export const sessionStateLine = (session: Pick<RuntimeSessionRecord, "state" | "usable" | "unusable">): string =>
+  session.state === "ready" && session.usable === false
+    ? `不可用 · ${(session.unusable?.[0]?.reason ?? "原因待核对").slice(0, 40)}` : sessionStateText[session.state];
 export const sessionStateTone = (state: RuntimeSessionRecord["state"]): StatusTone => sessionTone[state];
 
 export const runStateText: Record<RuntimeRunRecord["state"], string> = {
@@ -30,13 +34,15 @@ const permissionText: Record<string, string> = {
 };
 export const permissionsText = (sandbox: string, approval: string) => `${permissionText[sandbox] ?? sandbox} · ${permissionText[approval] ?? approval}`;
 
-export interface SessionGroup { key: "working" | "preparing" | "check" | "closed"; label: string; items: RuntimeSessionRecord[] }
+export interface SessionGroup { key: "working" | "unusable" | "preparing" | "check" | "closed"; label: string; items: RuntimeSessionRecord[] }
 
 /** Rail and overview groups: usable first, then those still being prepared, those needing a check, and closed ones. */
 export function sessionGroups(sessions: readonly RuntimeSessionRecord[]): SessionGroup[] {
   const byTime = [...sessions].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || a.id.localeCompare(b.id));
   const groups: SessionGroup[] = [
-    { key: "working", label: "就绪", items: byTime.filter(session => session.state === "ready") },
+    // "就绪" is the stored lifecycle; a Session the coordinator judged unable to start a Run is not ready to take work and is listed apart, with its reason.
+    { key: "working", label: "就绪", items: byTime.filter(session => session.state === "ready" && session.usable !== false) },
+    { key: "unusable", label: "不可用", items: byTime.filter(session => session.state === "ready" && session.usable === false) },
     { key: "preparing", label: "准备中", items: byTime.filter(session => session.state === "reserved" || session.state === "creating") },
     { key: "check", label: "需要核对", items: byTime.filter(session => session.state === "closing" || session.state === "unknown") },
     { key: "closed", label: "已关闭", items: byTime.filter(session => session.state === "closed") },
@@ -119,3 +125,33 @@ const messageKind: Record<string, string> = {
 /** Native thread history: turn states and item kinds as words; an unknown value is named as unknown, not shown raw. */
 export const turnStatusText = (status: string) => turnStatus[status] ?? "状态未识别";
 export const messageKindText = (type: string) => messageKind[type] ?? "其他记录";
+
+
+const faultPhaseText: Record<string, string> = {
+  project_scan: "读取项目运行状态", session_create: "创建智能体", session_name_sync: "同步智能体名称", session_close: "关闭智能体", profile_activation: "模型配置生效",
+  run_preflight: "运行前检查", business_profile_restore: "恢复业务配置", run_start: "启动运行", run_bind: "绑定运行", run_reconcile: "对账运行", approval_receipt: "审批回执",
+};
+const faultCategoryText: Record<string, string> = {
+  authorization: "授权问题", native_rejected: "原生服务拒绝", verification: "尚未核实", unavailable: "暂不可用", unknown_outcome: "结果未知",
+};
+export interface FaultLine { key: string; sessionId: string | null; title: string; text: string }
+
+/** The faults the service still holds, one line each, in the order read; the service's own sentence is kept as the explanation. */
+export function faultLines(status: Pick<RuntimeStatus, "faults">): FaultLine[] {
+  return (status.faults ?? []).map((fault, index) => ({
+    key: `${index}-${fault.phase}-${fault.sessionId ?? ""}`, sessionId: fault.sessionId,
+    title: `${faultPhaseText[fault.phase] ?? fault.phase} · ${faultCategoryText[fault.category] ?? fault.category}`,
+    text: fault.message ?? "",
+  }));
+}
+
+/**
+ * The one line for 执行服务. Reachable is not the same as healthy: a service that answers can still hold an error or faults (`available` stays true),
+ * and a reader who sees only 已接通 would take everything to be fine.
+ */
+export function serviceLine(status: Pick<RuntimeStatus, "available" | "error" | "faults">): string {
+  const faults = status.faults?.length ?? 0;
+  if (!status.available) return `未接通${status.error ? `：${status.error}` : ""}`;
+  if (faults) return `已接通，但有 ${faults} 条故障未清除`;
+  return status.error ? "已接通，但有提示" : "已接通";
+}

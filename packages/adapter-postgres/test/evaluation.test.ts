@@ -22,7 +22,7 @@ const pool = new pg.Pool({ connectionString, options: `-c search_path=${schema}`
 const uow = new PostgresUnitOfWork(pool);
 const actor = "evaluation-test", now = "2026-10-21T00:00:00.000Z";
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
-const principal = (projectId: string) => ({ actorId: actor, projectIds: [projectId], permissions: ["read","write","review"] as Array<"read"|"write"|"review"> });
+const principal = (projectId: string) => ({ actorId: actor, projectIds: [projectId], permissions: ["task","document","session","management"] as ("task"|"document"|"session"|"management")[], decisions: true });
 const workflow = new WorkflowService({ uow, clock: { now: () => now }, ids: { next: randomUUID }, hasher: { hash } });
 const runtime = new RuntimeWorkflowService({ uow, clock: { now: () => now }, ids: { next: randomUUID } });
 

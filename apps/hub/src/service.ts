@@ -14,6 +14,7 @@ import type {
   Project,
   ProjectMember,
   ProjectSummary,
+  ServiceGrant,
   ServiceIdentity,
 } from "./store.js";
 import {
@@ -347,6 +348,7 @@ export class HubService {
       ownerAccountId: string;
       purpose: string;
       projectIds: string[];
+      grant?: ServiceGrant;
     },
   ): Promise<{ token: string; identity: PublicServiceIdentity }> {
     const human = this.requireHubAdmin(principal);
@@ -382,6 +384,7 @@ export class HubService {
         createdBy: human.accountId,
         at: now,
         projectIds: input.projectIds,
+        grant: input.grant ?? { canTask: false, canDocument: false, canSession: false, sessionIds: [], decisions: false },
       });
       await this.store.audit(client, {
         at: now,
@@ -389,7 +392,7 @@ export class HubService {
         actorId: human.actorId,
         action: "service_identity.created",
         subject: created.serviceIdentityId,
-        detail: { actorId, ownerAccountId: owner.accountId, purpose: input.purpose, projectIds: input.projectIds },
+        detail: { actorId, ownerAccountId: owner.accountId, purpose: input.purpose, projectIds: input.projectIds, grant: input.grant ?? null },
       });
       return { ...created, ownerName: owner.displayName };
     });
@@ -824,9 +827,13 @@ export function parseServiceIdentityBody(body: unknown): {
   ownerAccountId: string;
   purpose: string;
   projectIds: string[];
+  grant: ServiceGrant;
 } {
   const record = asRecord(body);
+  const permissions = permissionsFrom(record, false);
   return {
+    grant: { canTask: permissions.canTask, canDocument: permissions.canDocument, canSession: permissions.canSession,
+      sessionIds: sessionIdsFrom(record.sessionIds), decisions: record.decisions === true },
     actorId: typeof record.actorId === "string" && record.actorId.trim() ? record.actorId.trim() : null,
     displayName: textField(record, "displayName", { min: 1, max: 120 }),
     ownerAccountId: uuidField(record, "ownerAccountId"),

@@ -11,6 +11,7 @@ import { ContextPanelContent } from "../../shared/ui/ContextPanel";
 import { date } from "../../shared/ui/shared";
 import { AllocationRelations } from "./AllocationRelationsPanel";
 import { canWrite, muted } from "./formParts";
+import { hasDecisionAuthority } from "@evoloop/contracts";
 import { discussionCopyEnvelope } from "./commands";
 import { readDocumentHead, readVerifiedPackage, type Choices } from "./discussionClient";
 import { DecisionForm, HandoffForm, LinkForm, targetChoices } from "./DiscussionForms";
@@ -149,7 +150,7 @@ export function DiscussionDetail({ context, record, events, choices, choicesLoad
   const ordinaryReason = unverifiedReason ?? (mismatch ? "文档当前版与讨论登记版不同，先在“决定”里对照两版并登记恢复。" : undefined);
   const rereading = checking || head.isFetching || current.isFetching;
   const targets = choices ? targetChoices(choices) : [];
-  const canReview = canWrite(context, "review");
+  const canReview = hasDecisionAuthority(context.principal, context.projectId, "task");
   const status = statusTag(record.status);
   const title = record.kind === "task_collaboration"
     ? `任务协作 · ${nameOr(choices?.tasks.find(task => task.id === record.task?.id)?.title, "任务", choicesLoading)}` : record.question;
@@ -233,11 +234,11 @@ export function DiscussionDetail({ context, record, events, choices, choicesLoad
     <Section title="交接">
       {handoffs.length > 0 ? <ol className="flex flex-col">{handoffs.map(event => <EventEntry key={event.id} event={event} record={record} choices={choices} projectId={projectId} corrected={false} />)}</ol>
         : <p className="text-small text-text-secondary">{record.status === "prepared" ? "还没有登记承接观察。" : "讨论记录里没有单独的承接条目。"}</p>}
-      {record.status === "prepared" && !canWrite(context, "write") && <p className={muted}>当前身份没有写入权限，不能登记承接观察。</p>}
-      {record.status === "prepared" && canWrite(context, "write") && (ordinaryReady
+      {record.status === "prepared" && !canWrite(context, "task") && <p className={muted}>当前身份没有任务写入权限，不能登记承接观察。</p>}
+      {record.status === "prepared" && canWrite(context, "task") && (ordinaryReady
         ? open !== "handoff" && <Button className="self-start" onClick={() => show("handoff")}>登记承接观察</Button>
         : open !== "handoff" && <p className={muted}>{ordinaryReason}</p>)}
-      {record.status === "prepared" && canWrite(context, "write") && formSlot("handoff",
+      {record.status === "prepared" && canWrite(context, "task") && formSlot("handoff",
         <HandoffForm context={context} record={record} notReady={ordinaryReason} rereading={rereading} onCancel={() => setOpen(null)} />)}
     </Section>
 

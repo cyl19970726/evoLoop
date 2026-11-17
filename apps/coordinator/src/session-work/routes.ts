@@ -18,9 +18,12 @@ const principalOf = (request: { principal: Principal | null }): Principal => {
 
 /** Read-only routes; the service enforces the same project and principal fence on each request. */
 export function registerSessionWorkRoutes(app: FastifyInstance, service: SessionObservationService,
-  present: (principal: Principal, session: ObservedSession) => ObservedSession = (_principal, session) => session,
+  present: (principal: Principal, projectId: string, session: ObservedSession) => ObservedSession =
+    (_principal, _projectId, session) => session,
   presentSnapshot: (principal: Principal, projectId: string, session: ObservedSession) => Promise<ObservedSession> = async (_principal, _projectId, session) => session,
-  enrichSnapshot: (principal: Principal, projectId: string, snapshot: SessionSnapshot) => Promise<SessionSnapshot> = async (_principal, _projectId, snapshot) => snapshot): void {
+  enrichSnapshot: (principal: Principal, projectId: string, snapshot: SessionSnapshot) => Promise<SessionSnapshot> = async (_principal, _projectId, snapshot) => snapshot,
+  /** Adds `dispatch` (can a Run start here now) to the owned Sessions of a directory page. */
+  dispatchOf: (projectId: string, sessions: ObservedSession[]) => Promise<ObservedSession[]> = async (_projectId, sessions) => sessions): void {
   app.get("/api/projects/:projectId/session-work", async request => {
     const { projectId } = z.strictObject({ projectId: id }).parse(request.params);
     const options = z.strictObject({ limit: limit50, cursor: cursor.optional(), search: z.string().trim().max(240).optional(),
@@ -29,7 +32,7 @@ export function registerSessionWorkRoutes(app: FastifyInstance, service: Session
     const page = await service.directory(principal, projectId, { limit: options.limit,
       ...(options.cursor ? { cursor: options.cursor } : {}), ...(options.search ? { search: options.search } : {}),
       ...(options.membership ? { membership: options.membership } : {}) });
-    return { ...page, items: page.items.map(session => present(principal, session)) };
+    return { ...page, items: await dispatchOf(projectId, page.items.map(session => present(principal, projectId, session))) };
   });
   app.get("/api/projects/:projectId/session-work/changes", request => {
     const { projectId } = z.strictObject({ projectId: id }).parse(request.params);
@@ -60,7 +63,7 @@ export function registerSessionWorkRoutes(app: FastifyInstance, service: Session
     const snapshot = await service.snapshot(principal, projectId, sessionKey);
     // Execution configuration is read only for the selected snapshot, never once per directory row.
     return enrichSnapshot(principal, projectId, { ...snapshot,
-      session: await presentSnapshot(principal, projectId, present(principal, snapshot.session)) });
+      session: await presentSnapshot(principal, projectId, present(principal, projectId, snapshot.session)) });
   });
   app.get("/api/projects/:projectId/tasks/:id/assignment/history", request => {
     const { projectId, id: taskId } = z.strictObject({ projectId: id, id }).parse(request.params);

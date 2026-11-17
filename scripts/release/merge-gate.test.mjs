@@ -442,3 +442,43 @@ test("hand mapping on a BEHIND PR pins the declared head: update succeeds only w
   assert.ok(!bad.log.some(call => call[0] === "merge"));
   assert.match(refused.result.reasons.join("\n"), /不在 PR 的更新链上.*不是合并提交/s);
 });
+
+// ---- Task b3f61c08: an accepted PR is still refused when another OPEN PR took the same migration number.
+const MIG = "packages/adapter-postgres/migrations", SCH = "packages/adapter-postgres/schema";
+const withMigrationState = (state, calls) => {
+  const prs = [pr({ files: [`${MIG}/111_mine.mjs`, `${SCH}/111_mine.sql`] })];
+  const adapter = adapterFor(prs, new Map([[T2, taskData(T2, [delivery()], [obs()])]]));
+  adapter.openMigrationState = () => { calls.push("read"); if (state instanceof Error) throw state; return state; };
+  return adapter;
+};
+const other = (number, title, n, name) => ({ number, title, isDraft: false, files: [{ path: `${MIG}/${n}_${name}.mjs` }, { path: `${SCH}/${n}_${name}.sql` }] });
+
+test("G1. an accepted PR is refused when another open PR holds its migration number, with both PRs named", async () => {
+  const calls = [];
+  const adapter = withMigrationState({ prs: [other(339, "mine", "111", "mine"), other(448, "ops alert", "111", "ops")], mainFiles: [] }, calls);
+  const { result } = await checkPr({ adapter, number: 339 });
+  assert.equal(result.verdict, "refuse");
+  assert.ok(result.accepted, "the acceptance itself was fine");
+  assert.match(result.reasons.join("\n"), /迁移号 111 同时被多个开放 PR 使用[\s\S]*PR #339[\s\S]*PR #448 ops alert/);
+  assert.deepEqual(result.migrationConflicts.map(item => item.number), ["111"]);
+});
+
+test("G2. no clash: allowed; a clash between two other PRs does not stop this one; a PR without migration files does not even read the open PRs", async () => {
+  const calls = [];
+  const clear = withMigrationState({ prs: [other(339, "mine", "111", "mine"), other(500, "x", "120", "x")], mainFiles: [] }, calls);
+  assert.equal((await checkPr({ adapter: clear, number: 339 })).result.verdict, "allow");
+  const apart = withMigrationState({ prs: [other(339, "mine", "111", "mine"), other(600, "p", "130", "p"), other(601, "q", "130", "q")], mainFiles: [] }, calls);
+  assert.equal((await checkPr({ adapter: apart, number: 339 })).result.verdict, "allow");
+  const none = adapterFor([pr({ files: ["scripts/x.mjs"] })], new Map([[T2, taskData(T2, [delivery()], [obs()])]]));
+  none.openMigrationState = () => { calls.push("should not be read"); return { prs: [], mainFiles: [] }; };
+  assert.equal((await checkPr({ adapter: none, number: 339 })).result.verdict, "allow");
+  assert.ok(!calls.includes("should not be read"));
+});
+
+test("G3. if the open PRs cannot be read, a PR that touches migrations is not let through", async () => {
+  const calls = [];
+  const adapter = withMigrationState(new Error("gh: HTTP 502"), calls);
+  const { result } = await checkPr({ adapter, number: 339 });
+  assert.equal(result.verdict, "refuse");
+  assert.match(result.reasons.join("\n"), /无法核对其他开放 PR 是否占用同一个迁移号\(gh: HTTP 502\)/);
+});

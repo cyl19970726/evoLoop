@@ -74,9 +74,9 @@ test("an empty project can bootstrap one trial Lead from its project.create oper
   const reviewer: Principal = {
     actorId: "onboarding-reviewer",
     projectIds: [projectId, otherProjectId],
-    permissions: ["read", "write", "review"],
+    permissions: ["task", "document", "session", "management"], decisions: true,
   };
-  const writer: Principal = { ...reviewer, actorId: "onboarding-writer", permissions: ["read", "write"] };
+  const writer: Principal = { ...reviewer, actorId: "onboarding-writer", permissions: ["task", "document", "session"] };
   const service = new WorkflowService({
     uow: new PostgresUnitOfWork(pool),
     clock: { now: () => now },
@@ -87,8 +87,8 @@ test("an empty project can bootstrap one trial Lead from its project.create oper
   const app = await buildServer({
     service,
     credentials: [
-      { token: reviewerToken, actorId: reviewer.actorId, projectIds: [projectId, otherProjectId], permissions: ["read", "write", "review"] },
-      { token: writerToken, actorId: writer.actorId, projectIds: [projectId, otherProjectId], permissions: ["read", "write"] },
+      { token: reviewerToken, actorId: reviewer.actorId, projectIds: [projectId, otherProjectId], permissions: ["task", "document", "session", "management"], decisions: true },
+      { token: writerToken, actorId: writer.actorId, projectIds: [projectId, otherProjectId], permissions: ["task", "document", "session"] },
     ],
   });
   const origin = await app.listen({ host: "127.0.0.1", port: 0 });

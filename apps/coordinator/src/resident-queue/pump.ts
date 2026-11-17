@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import type { Principal, ResidentQueue, ResidentQueueEntry } from "@evoloop/contracts";
+import { hasDecisionAuthority, isProjectMember, type Principal, type ResidentQueue, type ResidentQueueEntry }
+  from "@evoloop/contracts";
 import type { WorkflowService } from "@evoloop/core";
 import { DomainError } from "@evoloop/contracts/ports";
 
@@ -30,12 +31,11 @@ export class ResidentQueuePump {
     const credentials=await this.deps.credentials();
     const projects=new Set(credentials.flatMap(p=>p.projectIds));
     for(const projectId of projects){
-      const reader=credentials.find(p=>p.projectIds.includes(projectId)&&p.permissions.includes("read"));
+      const reader=credentials.find(p=>isProjectMember(p,projectId));
       if(!reader)continue;
       const queues=await this.deps.workflow.listResidentQueues(reader,projectId);
       for(const queue of queues)if(queue.adoptedVersion===queue.version){
-        const lead=credentials.find(p=>p.actorId===queue.actorId&&p.projectIds.includes(projectId)&&
-          ["read","write","review"].every(permission=>p.permissions.includes(permission as "read"|"write"|"review")));
+        const lead=credentials.find(p=>p.actorId===queue.actorId&&hasDecisionAuthority(p,projectId,"management"));
         if(lead)await this.advance(queue,lead);
       }
     }

@@ -101,7 +101,7 @@ test("待我处理 lists what waits for my use and counts every part, or says it
     let value: unknown = { items: [], nextCursor: null }, status = 200;
     const fail = (what: string) => { if (failing.has(what)) { status = 503; value = { message: `${what} 暂不可读（夹具）` }; return true; } return false; };
     const task = all.find(f => path.startsWith(`${root}/tasks/${taskId(f)}`) || path === `${root}/work-management/tasks/${taskId(f)}`);
-    if (path === "/api/session") value = { principal: { actorId: me, projectIds: [projectId], permissions: ["read", "write"], identityKind: "human" }, capabilities: {} };
+    if (path === "/api/session") value = { principal: { actorId: me, projectIds: [projectId], permissions: ["task", "document", "session"], identityKind: "human" }, capabilities: {} };
     else if (path === root) value = { id: projectId, title: "使用者夹具", createdAt: stamp };
     else if (path === `${root}/acceptance-relay/mine`) { if (!fail("acceptance")) value = { items: [{ projectId, relayId: id(30), taskId: taskId(fixtures.others),
       taskRevisionId: revision(fixtures.others), deliveryId: deliveryId(fixtures.others), stage: "candidate", scopeKey: "shots", scopeDescription: "核对三张截图",

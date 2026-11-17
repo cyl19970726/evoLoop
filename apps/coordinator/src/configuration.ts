@@ -7,6 +7,8 @@ import type { Principal } from "@evoloop/contracts";
 import type { TaskCollaborationPayload } from "@evoloop/contracts/discussions";
 import { directInputConfigurationSchema } from "./direct-input/configuration.js";
 import { credentialGrants, type AuthConfig } from "./auth.js";
+import { MachineCredentialSource } from "./hub/credentials.js";
+import { realPathInsideRoots } from "./hub/roots.js";
 
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, item: unknown) => item && typeof item === "object" && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
 export const delegationTemplateHash = (template: DelegationTemplate): string => createHash("sha256").update(canonical(template)).digest("hex");
@@ -101,6 +103,13 @@ const integrationSchema = z.strictObject({
     grants: z.array(z.strictObject({ projectId: z.uuid(), sessionId: z.uuid(), senderActorId: z.string().min(1).max(100),
       receiverActorId: z.string().min(1).max(100),
       receiverRoleId: z.string().min(1).max(4000), cwd: absolute, maxTurns: z.number().int().positive().safe().optional(), enabled: z.boolean(),
+      /**
+       * Who the sender is. `local` (default): an identity of this machine's token file, which must also be a current writer there. `hub`: the sender is a Hub
+       * account (its actor ID arrives in a request the Hub signed and this coordinator verified, never in the token file); this explicit entry is what lets it send,
+       * on top of the Session permission the signed identity carries. A Hub account without such an entry is refused as before, and nothing here maps a Hub account to
+       * a local identity (#219, Task 9ea06625).
+       */
+      senderKind: z.enum(["local", "hub"]).default("local"),
     })).max(200).refine(values => new Set(values.map(g => `${g.projectId}:${g.sessionId}:${g.senderActorId}`)).size === values.length,
       "Ordinary conversation grants must be unique per project, recipient Session and sender"),
     /** Separate from full-access ordinary grants; each entry names one reviewed conversation route. */
@@ -115,6 +124,19 @@ const integrationSchema = z.strictObject({
   messageConnectors: z.strictObject({
     enabled: z.boolean().default(false), pollIntervalMs: z.number().int().min(500).max(60000).default(2000),
     gateway: z.strictObject({executable:absolute,configPath:absolute}),
+  }).optional(),
+  /**
+   * Alerts that leave the workbench (Task 5da8b6d9): a provider pause opened or lifted, and a stall (no new Run for `stallMinutes` while work waits).
+   * One general outlet; which channel a person reads is chosen here, in private configuration: `webhook` POSTs the alert as JSON to the URL (headers may carry
+   * a credential), `command` runs the executable with the alert as JSON on its standard input (no shell, an empty environment apart from PATH).
+   */
+  alerts: z.strictObject({
+    enabled: z.boolean(), pollIntervalMs: z.number().int().min(1000).max(300000).default(15000),
+    stallMinutes: z.number().int().min(1).max(10080).default(30),
+    outlet: z.discriminatedUnion("kind", [
+      z.strictObject({ kind: z.literal("webhook"), url: z.url({ protocol: /^https?$/ }), headers: z.record(z.string().min(1).max(100), z.string().max(2000)).default({}), timeoutMs: z.number().int().min(500).max(60000).default(5000) }),
+      z.strictObject({ kind: z.literal("command"), argv: z.array(z.string().min(1).max(4096)).min(1).max(32).refine(value => value[0]!.startsWith("/"), "The alert command must be an absolute executable path"), timeoutMs: z.number().int().min(500).max(120000).default(10000) }),
+    ]),
   }).optional(),
   leaderResultNotices: z.strictObject({
     enabled: z.boolean(), pollIntervalMs: z.number().int().min(500).max(60000).default(2000),
@@ -265,10 +287,10 @@ export const isTaskTimingScope = (scopeId: string): boolean =>
 /** The schedule grants of one actor in one project while scheduling is enabled (schedule.create authorization). */
 export const schedulingGrantsFor = (configuration: SchedulingConfiguration | undefined, projectId: string, actorId: string) =>
   configuration?.enabled ? configuration.grants.filter(grant => grant.projectId === projectId && grant.actorId === actorId) : [];
-/** Daily-copy grants the scheduling pump acts on: enabled, and held by an actor with read, write and review. */
+/** Daily-copy grants the scheduling pump acts on: enabled, and held by an actor with Task write and decision authority. */
 export const activeTaskTimingGrants = (configuration: SchedulingConfiguration | undefined, identities: AuthConfig) =>
   configuration?.enabled ? configuration.taskTimingGrants.filter(grant =>
-    credentialGrants(identities, grant.projectId, grant.actorId, ["read", "write", "review"])) : [];
+    credentialGrants(identities, grant.projectId, grant.actorId, ["task"], { decisions: true })) : [];
 /** The external knowledge backend serves this project. */
 export const knowledgeServesProject = (knowledge: IntegrationFile["knowledge"], projectId: string): boolean =>
   !!knowledge?.enabled && knowledge.projectIds.includes(projectId);
@@ -315,12 +337,25 @@ export function hasExactEngineeringActionGrant(grants:EngineeringActionGrant[],p
     g.inputHash===action.inputHash&&Date.parse(g.expiresAt)>=Date.parse(action.expiresAt)&&Date.parse(g.expiresAt)>nowMs&&
     g.paths.length===action.scope.paths.length&&g.paths.every((p,i)=>p===action.scope.paths[i]));
 }
-export async function loadIntegrations(path?: string) {
+/**
+ * @param options.allowedRoots the code roots this machine confirmed when it joined a Hub (`evoloop machine join`); by default read from the machine's own
+ * credentials, and none when it has not joined. Every project directory the configuration binds — runtime grants, delegation templates, repositories —
+ * must then be inside one of them, or the configuration is refused as a whole (DEC-048 item 6). The exact-path and realpath rules below stay as they were.
+ */
+export async function loadIntegrations(path?: string, options: { allowedRoots?: readonly string[] | null } = {}) {
   let configuration: z.infer<typeof integrationSchema>;
   try { configuration = integrationSchema.parse(path ? JSON.parse(await readFile(path, "utf8")) : {}); }
   catch { throw new Error("Invalid integration configuration: check the external file and schema; values are not logged."); }
   const runtime = configuration.runtime;
   const grants = runtime?.enabled ? runtime.grants : [];
+  const roots = options.allowedRoots !== undefined ? options.allowedRoots : new MachineCredentialSource().current()?.allowedRoots ?? null;
+  if (roots) {
+    const bound = [...grants.map(g => g.cwd), ...(runtime?.enabled ? runtime.delegationTemplates.map(t => t.cwd) : []), ...configuration.repositories.map(r => r.root)];
+    for (const directory of bound) {
+      if (!await realPathInsideRoots(roots, directory))
+        throw new Error("Invalid integration configuration: a project directory is outside the roots this machine allowed when it joined the Hub.");
+    }
+  }
   const allowedRuntimeCwds = (projectId: string): string[] => [...new Set(grants.filter(g => g.projectId === projectId).map(g => g.cwd))];
   const hasRuntimeGrant = (scope: RuntimeGrant): boolean => grants.some(g =>
     g.projectId === scope.projectId && g.actorId === scope.actorId && g.roleId === scope.roleId &&
@@ -330,16 +365,19 @@ export async function loadIntegrations(path?: string) {
   const allowedRuntimeCwd = async (projectId: string, cwd: string): Promise<boolean> => {
     if (!allowedRuntimeCwds(projectId).includes(cwd) &&
       !(runtime?.enabled && runtime.delegationTemplates.some(t => t.projectId === projectId && t.cwd === cwd))) return false;
-    try { return await realpath(cwd) === cwd; } catch { return false; }
+    try { if (await realpath(cwd) !== cwd) return false; } catch { return false; }
+    // Every start and resume asks again: a directory outside the machine's allowed roots is never used, whatever the configuration says.
+    return roots ? await realPathInsideRoots(roots, cwd) !== null : true;
   };
   const getDelegationTemplate = async (projectId: string, templateId: string) => {
     const template = runtime?.enabled ? runtime.delegationTemplates.find(value => value.projectId === projectId && value.id === templateId) : undefined;
     if (!template) return null;
     try { if (await realpath(template.cwd) !== template.cwd) return null; } catch { return null; }
+    if (roots && await realPathInsideRoots(roots, template.cwd) === null) return null;
     return { template, hash: delegationTemplateHash(template) };
   };
   return { runtime, sessionMessages: configuration.sessionMessages, directInputs: configuration.directInputs,
-    messageConnectors: configuration.messageConnectors, leaderResultNotices: configuration.leaderResultNotices,
+    messageConnectors: configuration.messageConnectors, leaderResultNotices: configuration.leaderResultNotices, alerts: configuration.alerts,
     residentQueue: configuration.residentQueue, orchestration: configuration.orchestration,
     repositories: configuration.repositories, feishu: configuration.feishu, knowledge: configuration.knowledge,
     scheduling: configuration.scheduling, allowedRuntimeCwds, allowedRuntimeCwd, hasRuntimeGrant,

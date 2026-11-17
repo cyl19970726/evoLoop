@@ -2,12 +2,13 @@
 // it, and its members. Every judgment calls the same check the service runs when it acts (named beside each one), over
 // the same snapshot: what it loaded at start, or the file it reads again on use.
 import { isValidRepositoryRegistration, repositoryRegistrationProblem } from "@evoloop/adapter-git-documents";
-import type { Principal } from "@evoloop/contracts";
+import { hasDecisionAuthority, hasPermission, isProjectMember, principalFromAuthEntry,
+  type Permission, type Principal } from "@evoloop/contracts";
 import type {
   ProjectCallerReason, ProjectCapability, ProjectCapabilityJudgment, ProjectCapabilityKey, ProjectCapabilityReason,
   ProjectCapabilityScope, ProjectConfigurationReadAt, ProjectIdentityFileState, ProjectMember, ProjectRepository,
 } from "@evoloop/contracts/project-configuration";
-import { credentialGrants, hasCurrentStudyReviewer, isProjectWriter, type AuthConfig } from "../auth.js";
+import { credentialGrants, type AuthConfig } from "../auth.js";
 import { activeTaskTimingGrants, hasFeishuActorGrant, isTaskTimingScope, knowledgeServesProject, schedulingGrantsFor,
   type loadIntegrations } from "../configuration.js";
 import { collaborationPrincipal } from "../collaboration/runner.js";
@@ -27,7 +28,7 @@ interface Situation {
   use: Snapshot;
   projectId: string;
   /** The calling identity: its actor, and the permissions of the token it signed in with. */
-  caller: Pick<Principal, "actorId" | "permissions">;
+  caller: Principal;
   nowUtc: string;
   /** The runtime answered as available; null when not judged (after a restart). */
   runtimeAvailable: boolean | null;
@@ -48,11 +49,10 @@ type CallerJudgment = ProjectCallerReason | null;
  * The caller's actor must hold a grant, and the token it signed in with must carry what the request needs: the
  * server rejects the request on the token's own permissions before any grant is consulted.
  */
-const callerMay = (s: Situation, holdsGrant: boolean, needs: readonly ("write" | "review")[]): CallerJudgment => {
+const callerMay = (s: Situation, holdsGrant: boolean, permission: Permission, decision = false): CallerJudgment => {
   if (!holdsGrant) return "caller_has_no_grant";
-  const missing = needs.filter(permission => !s.caller.permissions.includes(permission));
-  return missing.length === 0 ? null : missing.length === 2 ? "caller_lacks_write_and_review" :
-    missing[0] === "write" ? "caller_lacks_write" : "caller_lacks_review";
+  if (!hasPermission(s.caller, s.projectId, permission)) return "caller_lacks_write";
+  return !decision || hasDecisionAuthority(s.caller, s.projectId, permission) ? null : "caller_lacks_review";
 };
 
 interface CapabilitySpec {
@@ -118,7 +118,8 @@ const specs: CapabilitySpec[] = [
     return grants.some(grant => scheduleGrantCredential(loaded, grant)) ? on() : off("grant_holder_not_authorized");
   },
   // server.ts schedule.create: the token needs review, and callerSchedulingGrants (the grants loaded at start).
-  caller: s => callerMay(s, schedulingGrantsFor(config(s.start).scheduling, s.projectId, s.caller.actorId).length > 0, ["review"]) },
+  caller: s => callerMay(s, schedulingGrantsFor(config(s.start).scheduling, s.projectId, s.caller.actorId).length > 0,
+    "management", true) },
   { key: "taskTiming", scope: "project", readAt: "start_and_use", judge: s => {
     // SchedulingPump: enabled() loaded at start. It copies under schedule grants loaded at start whose scope names one
     // Task timing (isTaskTimingScope, as hasTaskTimingGrant), and under taskTimingGrants() read again on use, where
@@ -143,8 +144,8 @@ const specs: CapabilitySpec[] = [
     const scheduling = config(s.use).scheduling, actorId = s.caller.actorId;
     const holds = !!scheduling?.enabled && (scheduling.taskTimingGrants.some(grant => grant.projectId === s.projectId && grant.actorId === actorId) ||
       scheduling.grants.some(grant => grant.projectId === s.projectId && grant.actorId === actorId && isTaskTimingScope(grant.scopeId)));
-    return callerMay(s, holds, ["write", "review"]) ??
-      (isProjectWriter(identities(s.use), s.projectId, actorId) ? null : "caller_not_current_writer");
+    return callerMay(s, holds, "task", true) ??
+      (credentialGrants(identities(s.use), s.projectId, actorId, ["task"]) ? null : "caller_not_current_writer");
   } },
   { key: "orchestration", scope: "project", readAt: "start", judge: async s => {
     // setupManagedLoops, over the configuration and identities loaded at start: the controller (managedLoopController)
@@ -181,7 +182,8 @@ const specs: CapabilitySpec[] = [
   // server.ts runtime.session.reserve: the token needs review; then the caller's own static grant, or, as the
   // controller, a template (authorizeDynamicSession).
   caller: async s => callerMay(s, !!config(s.start).runtime?.enabled && ((await staticRuntimeGrants(s, s.caller.actorId)).accepted > 0 ||
-    (await usableTemplates(s).then(value => value?.controllerActorId === s.caller.actorId && value.count > 0))), ["review"]) },
+    (await usableTemplates(s).then(value => value?.controllerActorId === s.caller.actorId && value.count > 0))),
+    "session", true) },
   { key: "feishu", scope: "project", readAt: "start", judge: s => {
     // CollaborationRunner.status(projectId).configured over `feishu` and the identities loaded at start: a connector
     // exists while enabled, and collaborationPrincipal finds a read-write credential whose actor holds the grant.
@@ -193,7 +195,7 @@ const specs: CapabilitySpec[] = [
   },
   // collaboration/routes.ts: acting (poll, review, retry, reconcile) needs write and review on the token, and main.ts
   // hasFeishuGrant, which every collaboration request checks.
-  caller: s => callerMay(s, hasFeishuActorGrant(config(s.start).feishu, s.projectId, s.caller.actorId), ["write", "review"]) },
+  caller: s => callerMay(s, hasFeishuActorGrant(config(s.start).feishu, s.projectId, s.caller.actorId), "task", true) },
   { key: "wechat", scope: "project", readAt: "start_and_use", judge: s => {
     // main.ts builds the gateway client only when `messageConnectors` is present at start, and its ingress only with
     // the runtime. qualifyStandardConnectorRoute then reads the file again: every switch (standardReceiverSwitchOff)
@@ -234,7 +236,7 @@ const sameJudgment = (a: ProjectCapabilityJudgment, b: ProjectCapabilityJudgment
 export async function projectCapabilities(input: {
   loaded: { integrations: Integrations; identities: AuthConfig };
   current: Snapshot;
-  projectId: string; caller: Pick<Principal, "actorId" | "permissions">; nowUtc: string; runtimeAvailable: boolean; documents: boolean;
+  projectId: string; caller: Principal; nowUtc: string; runtimeAvailable: boolean; documents: boolean;
 }): Promise<ProjectCapability[]> {
   const base = { projectId: input.projectId, caller: input.caller, nowUtc: input.nowUtc, documents: input.documents };
   const effect: Situation = { ...base, start: input.loaded, use: input.current, runtimeAvailable: input.runtimeAvailable };
@@ -267,7 +269,8 @@ export function projectRepositories(repositories: Integrations["repositories"], 
 /** What the identity file says about this project, without tokens: per actor, its kind and each credential's permissions. */
 const projectIdentities = (credentials: AuthConfig, projectId: string) => JSON.stringify(
   credentials.filter(entry => entry.projectIds.includes(projectId))
-    .map(entry => [entry.actorId, entry.identityKind ?? "agent", [...entry.permissions].sort()] as const)
+    .map(entry => [entry.actorId, entry.identityKind ?? "agent", [...entry.permissions].sort(),
+      entry.decisions === true, [...(entry.sessionIds ?? [])].sort()] as const)
     .sort((a, b) => JSON.stringify(a) < JSON.stringify(b) ? -1 : 1));
 
 /**
@@ -283,22 +286,37 @@ const projectIdentities = (credentials: AuthConfig, projectId: string) => JSON.s
  */
 export function projectMembers(loaded: AuthConfig, current: AuthConfig | null, projectId: string):
   { identityFile: ProjectIdentityFileState; items: ProjectMember[] } {
-  const kind = (credentials: AuthConfig | null, actorId: string) => {
-    const entry = credentials?.find(value => value.actorId === actorId && value.projectIds.includes(projectId));
-    return entry ? entry.identityKind ?? "agent" : undefined;
+  const members = (credentials: AuthConfig | null, actorId: string) => credentials
+    ? credentials.filter(entry => entry.actorId === actorId && entry.projectIds.includes(projectId))
+      .map(entry => principalFromAuthEntry(entry))
+    : [];
+  const abilities = (principals: Principal[], unreadable = false) => {
+    const permissions = [...new Set(principals.flatMap(principal => principal.permissions))];
+    const projectIds = [...new Set(principals.flatMap(principal => principal.projectIds))];
+    const scopedSessions = principals.map(principal => principal.sessionIds);
+    const sessionIds = scopedSessions.some(ids => !ids?.length)
+      ? []
+      : [...new Set(scopedSessions.flatMap(ids => ids ?? []))];
+    return {
+      identityKind: principals[0]?.identityKind ?? "agent",
+      canRead: principals.some(principal => isProjectMember(principal, projectId)),
+      permissions,
+      decisions: principals.length > 0 && principals.every(principal =>
+        principal.identityKind === "human" || principal.decisions === true),
+      projectIds: projectIds.length ? projectIds : [projectId],
+      sessionIds,
+      canWrite: unreadable ? null : principals.some(principal => ["task", "document", "session"].some(permission =>
+        hasPermission(principal, projectId, permission as Permission))),
+      canReview: principals.length > 0 && principals.every(principal =>
+        hasDecisionAuthority(principal, projectId, "management")),
+    };
   };
   const actors = new Set([...loaded, ...(current ?? [])].filter(entry => entry.projectIds.includes(projectId)).map(entry => entry.actorId));
   const items = [...actors].sort((a, b) => a < b ? -1 : a > b ? 1 : 0).map((actorId): ProjectMember => {
-    const identityKind = kind(loaded, actorId) ?? kind(current, actorId) ?? "agent";
-    const canRead = credentialGrants(loaded, projectId, actorId, ["read"]);
-    const canWrite = !isProjectWriter(loaded, projectId, actorId) ? false : current ? isProjectWriter(current, projectId, actorId) : null;
-    const canReview = hasCurrentStudyReviewer(loaded, projectId, actorId);
-    const after = current ? { identityKind: kind(current, actorId) ?? identityKind,
-      canRead: credentialGrants(current, projectId, actorId, ["read"]), canWrite: isProjectWriter(current, projectId, actorId),
-      canReview: hasCurrentStudyReviewer(current, projectId, actorId) } : null;
-    return { actorId, identityKind, canRead, canWrite, canReview,
-      pending: after && (after.identityKind !== identityKind || after.canRead !== canRead || after.canWrite !== canWrite ||
-        after.canReview !== canReview) ? after : null };
+    const before = abilities(members(loaded, actorId), !current);
+    const after = current ? abilities(members(current, actorId)) : null;
+    const changed = after && JSON.stringify(after) !== JSON.stringify(before);
+    return { actorId, ...before, pending: changed ? after : null };
   });
   return { identityFile: !current ? "unreadable" : projectIdentities(loaded, projectId) === projectIdentities(current, projectId)
     ? "unchanged" : "changed", items };

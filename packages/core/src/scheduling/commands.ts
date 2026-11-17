@@ -1,4 +1,4 @@
-import type { AppliedResult, Principal } from "@evoloop/contracts";
+import { hasPermission, type AppliedResult, type Principal } from "@evoloop/contracts";
 import type { ScheduleCommand, ScheduleDefinition, ScheduleRevision, SchedulingTransaction } from "@evoloop/contracts/scheduling";
 import { DomainError } from "@evoloop/contracts/ports";
 import { validateScheduleRevision } from "./due.js";
@@ -19,7 +19,7 @@ const sameTemplate = (a: ScheduleRevision["template"], b: ScheduleRevision["temp
 
 /** Called by the shared command journal inside the project transaction. */
 export async function applySchedule(tx: SchedulingTransaction, principal: Principal, command: ScheduleCommand, now: string) {
-  if (!principal.projectIds.includes(command.projectId) || !principal.permissions.includes("review")) throw new DomainError("FORBIDDEN", "Schedule authorization requires project review permission");
+  if (!hasPermission(principal, command.projectId, "management")) throw new DomainError("FORBIDDEN", "Schedule authorization requires project management permission");
   if (command.authorization.authorizedBy !== principal.actorId) throw new DomainError("FORBIDDEN", "Schedule authorization must identify the authenticated reviewer");
   if (!command.template.managedTarget && command.template.acceptanceMode === "human_required" && !command.template.consumer)
     throw new DomainError("ACCEPTANCE_POLICY", "human-required scheduled Tasks need the exact human consumer actor");

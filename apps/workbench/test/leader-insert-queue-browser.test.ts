@@ -63,7 +63,7 @@ test("the Leader's page offers 插入当前这一轮 and 排队 while it works, 
       let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
       const body = async () => { let text = ""; for await (const chunk of req) text += String(chunk); return JSON.parse(text) as Record<string, unknown>; };
       const sessionOf = (path: string) => path.includes(leaderId) ? leaderId : workerId;
-      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "发送方式测试项目", createdAt: stamp };
       else if (url.pathname === "/api/commands" && req.method === "POST") {
         const command = await body(); commands.push(command);

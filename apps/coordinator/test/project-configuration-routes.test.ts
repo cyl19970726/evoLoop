@@ -1,4 +1,4 @@
-// Project configuration reads: the caller needs read permission on the project, sees only that project's
+// Project configuration reads: any member of the project may read them, sees only that project's
 // repositories, capabilities and members, never a server path, token or secret, and every conclusion is the one the
 // service's own check reaches on the same configuration.
 import test from "node:test";
@@ -28,16 +28,16 @@ const missingProject = "00000000-0000-4000-8000-00000000000c";
 const roleId = "00000000-0000-4000-8000-0000000000e1";
 const token = (letter: string) => letter.repeat(40);
 const identities = authConfigSchema.parse([
-  { token: token("a"), actorId: "owner", projectIds: [projectA, projectB], permissions: ["read", "write", "review"], identityKind: "human" },
-  { token: token("b"), actorId: "reader", projectIds: [projectA], permissions: ["read"] },
+  { token: token("a"), actorId: "owner", projectIds: [projectA, projectB], permissions: ["task", "document", "session", "management"], decisions: true, identityKind: "human" },
+  { token: token("b"), actorId: "reader", projectIds: [projectA], permissions: [] },
   // Rotation: the same actor with an older, narrower credential for project A only.
-  { token: token("c"), actorId: "rotating", projectIds: [projectA, projectB], permissions: ["read", "write", "review"] },
-  { token: token("d"), actorId: "rotating", projectIds: [projectA], permissions: ["read"] },
-  { token: token("e"), actorId: "outsider", projectIds: [projectB], permissions: ["read", "write", "review"], identityKind: "human" },
-  { token: token("f"), actorId: "writer-only", projectIds: [projectA], permissions: ["write"] },
-  { token: token("g"), actorId: "ghost", projectIds: [missingProject], permissions: ["read"] },
-  { token: token("h"), actorId: "loop-controller", projectIds: [projectA], permissions: ["read", "write", "review"] },
-  { token: token("i"), actorId: "no-review", projectIds: [projectA], permissions: ["read", "write"] },
+  { token: token("c"), actorId: "rotating", projectIds: [projectA, projectB], permissions: ["task", "document", "session", "management"], decisions: true },
+  { token: token("d"), actorId: "rotating", projectIds: [projectA], permissions: [] },
+  { token: token("e"), actorId: "outsider", projectIds: [projectB], permissions: ["task", "document", "session", "management"], decisions: true, identityKind: "human" },
+  { token: token("f"), actorId: "writer-only", projectIds: [projectA], permissions: ["task", "document", "session"] },
+  { token: token("g"), actorId: "ghost", projectIds: [missingProject], permissions: [] },
+  { token: token("h"), actorId: "loop-controller", projectIds: [projectA], permissions: ["task", "document", "session", "management"], decisions: true },
+  { token: token("i"), actorId: "no-review", projectIds: [projectA], permissions: ["task", "document", "session"] },
 ]);
 const auth = (letter: string) => ({ authorization: `Bearer ${token(letter)}` });
 const later = "2099-01-01T00:00:00.000Z";
@@ -109,7 +109,7 @@ async function capabilities(fixture: Fixture, projectId: string, caller = "a",
 const brief = (item: ProjectCapability) => [item.state, item.reason,
   ...(item.callerGranted === undefined ? [] : [item.callerGranted, item.callerReason])];
 
-test("project configuration reads require read permission on an existing project", async () => {
+test("project configuration reads require membership in an existing project", async () => {
   await withFixture(same, async fixture => {
     const app = await server(sourceFor(fixture));
     try {
@@ -118,8 +118,8 @@ test("project configuration reads require read permission on an existing project
         const outsider = await app.inject({ url: `/api/projects/${projectA}/${view}`, headers: auth("e") });
         assert.equal(outsider.statusCode, 403, `another project's member cannot read ${view}`);
         assert.equal(outsider.json().code, "FORBIDDEN");
-        assert.equal((await app.inject({ url: `/api/projects/${projectA}/${view}`, headers: auth("f") })).statusCode, 403,
-          `${view} needs read, not only write`);
+        assert.equal((await app.inject({ url: `/api/projects/${projectA}/${view}`, headers: auth("f") })).statusCode, 200,
+          `an object writer is a project member and reads ${view}`);
         assert.equal((await app.inject({ url: `/api/projects/${missingProject}/${view}`, headers: auth("g") })).statusCode, 404);
         assert.equal((await app.inject({ url: `/api/projects/not-a-project/${view}`, headers: auth("a") })).statusCode, 400);
         assert.equal((await app.inject({ url: `/api/projects/${projectA}/${view}`, headers: auth("b") })).statusCode, 200,
@@ -279,7 +279,8 @@ test("orchestration and runtime count only grants and templates the controller c
       ["configured", "runtime_unavailable", true, null]));
   // The controller's permissions show only in projects the controller is in.
   await withFixture(same, async fixture => {
-    const weak = identities.map(entry => entry.actorId === "loop-controller" ? { ...entry, permissions: ["read", "write"] as typeof entry.permissions } : entry);
+    const weak = identities.map(entry => entry.actorId === "loop-controller"
+      ? { ...entry, permissions: ["task", "document", "session"] as typeof entry.permissions, decisions: false } : entry);
     assert.deepEqual(brief((await capabilities(fixture, projectA, "a", { loadedIdentities: weak })).orchestration!), ["not_configured", "controller_not_authorized"]);
     assert.deepEqual(brief((await capabilities(fixture, projectB, "a", { loadedIdentities: weak })).orchestration!), ["not_configured", "controller_not_in_project"]);
   });
@@ -289,12 +290,12 @@ test("scheduling, daily copies, Feishu and knowledge agree with the checks the s
   const store = { listActive: async () => [], listQueued: async () => [] } as never;
   const pumpState = async (grants: Array<{ projectId: string; actorId: string; scopeId: string; roleId: string }>) =>
     (await new SchedulingPump({ store, canWrite: () => true, credentials: () => identities, grants: () => grants, enabled: () => true }).tickOnce()).state;
-  // A schedule grant whose holder lacks review: the pump has no authority, and the capability says why.
+  // A schedule grant whose holder lacks management decision authority: the pump has no authority, and the capability says why.
   await withFixture(base => ({ ...base, scheduling: { ...base.scheduling, grants: [{ projectId: projectA, actorId: "no-review", scopeId: "daily", roleId }] } }),
     async fixture => {
       assert.equal(await pumpState(fixture.loaded.scheduling!.grants), "no-authority");
       assert.deepEqual(brief((await capabilities(fixture, projectA, "i")).scheduling!),
-        ["not_configured", "grant_holder_not_authorized", false, "caller_lacks_review"]);
+        ["not_configured", "grant_holder_not_authorized", false, "caller_lacks_write"]);
     });
   await withFixture(same, async fixture => {
     assert.equal(await pumpState(fixture.loaded.scheduling!.grants), "completed");
@@ -314,10 +315,10 @@ test("scheduling, daily copies, Feishu and knowledge agree with the checks the s
       const timing = (await capabilities(fixture, projectA)).taskTiming!;
       assert.deepEqual([timing.state === "configured", timing.callerGranted], [counted, counted], scopeId);
     });
-  // A daily-copy grant whose actor no longer has read, write and review in the identity file is not acted on.
+  // A daily-copy grant whose actor is no longer a current project writer is not acted on.
   await withFixture(base => ({ ...base, scheduling: { enabled: true, grants: [], taskTimingGrants: [{ projectId: projectA, actorId: "rotating", roleId }] } }),
     async fixture => {
-      const now = identities.filter(entry => !(entry.actorId === "rotating" && entry.permissions.includes("review")));
+      const now = identities.filter(entry => !(entry.actorId === "rotating" && entry.permissions.includes("management")));
       assert.deepEqual(brief((await capabilities(fixture, projectA, "c", { identities: now })).taskTiming!),
         ["not_configured", "grant_holder_not_authorized", false, "caller_not_current_writer"]);
       assert.equal((await capabilities(fixture, projectA, "c")).taskTiming!.state, "configured");
@@ -340,7 +341,7 @@ test("scheduling, daily copies, Feishu and knowledge agree with the checks the s
 });
 
 test("a caller holding a grant still needs the token permissions the request requires", async () => {
-  // no-review signs in with a read-write token; reader with a read-only one.
+  // no-review signs in with task/document/session writes but no management decision authority; reader is read-only.
   await withFixture(base => ({ ...base,
     scheduling: { enabled: true, grants: [{ projectId: projectA, actorId: "no-review", scopeId: "daily", roleId }],
       taskTimingGrants: [{ projectId: projectA, actorId: "no-review", roleId }] },
@@ -348,12 +349,13 @@ test("a caller holding a grant still needs the token permissions the request req
     feishu: { ...base.feishu, grants: [{ projectId: projectA, actorId: "no-review", scope: "project" }, { projectId: projectA, actorId: "reader", scope: "project" }] },
   }), async fixture => {
     const asNoReview = await capabilities(fixture, projectA, "i");
-    // schedule.create and runtime.session.reserve need review (server.ts, before any grant); daily copies (core execute)
-    // and Feishu actions (collaboration routes) need write and review.
-    for (const key of ["scheduling", "runtime", "taskTiming", "feishu"])
-      assert.deepEqual([asNoReview[key]!.callerGranted, asNoReview[key]!.callerReason], [false, "caller_lacks_review"], key);
+    // schedule.create needs management decision authority, runtime.reserve needs Session decision authority, and daily
+    // copies and Feishu actions need task decision authority.
+    for (const [key, reason] of [["scheduling", "caller_lacks_write"], ["runtime", "caller_lacks_review"],
+      ["taskTiming", "caller_lacks_review"], ["feishu", "caller_lacks_review"]] as const)
+      assert.deepEqual([asNoReview[key]!.callerGranted, asNoReview[key]!.callerReason], [false, reason], key);
     const asReader = await capabilities(fixture, projectA, "b");
-    assert.deepEqual([asReader.feishu!.callerGranted, asReader.feishu!.callerReason], [false, "caller_lacks_write_and_review"]);
+    assert.deepEqual([asReader.feishu!.callerGranted, asReader.feishu!.callerReason], [false, "caller_lacks_write"]);
     assert.deepEqual([asReader.scheduling!.callerGranted, asReader.scheduling!.callerReason], [false, "caller_has_no_grant"]);
   });
 });
@@ -401,13 +403,19 @@ test("members say what each actor may do by the service's own checks, and never 
     try {
       const a = await app.inject({ url: `/api/projects/${projectA}/members`, headers: auth("b") });
       assert.deepEqual(a.json(), { projectId: projectA, status: "available", source: "local_identities", identityFile: "unchanged", items: [
-        { actorId: "loop-controller", identityKind: "agent", canRead: true, canWrite: true, canReview: true, pending: null },
-        { actorId: "no-review", identityKind: "agent", canRead: true, canWrite: true, canReview: false, pending: null },
-        { actorId: "owner", identityKind: "human", canRead: true, canWrite: true, canReview: true, pending: null },
-        { actorId: "reader", identityKind: "agent", canRead: true, canWrite: false, canReview: false, pending: null },
+        { actorId: "loop-controller", identityKind: "agent", canRead: true, permissions: ["task", "document", "session", "management"], decisions: true,
+          projectIds: [projectA], sessionIds: [], canWrite: true, canReview: true, pending: null },
+        { actorId: "no-review", identityKind: "agent", canRead: true, permissions: ["task", "document", "session"], decisions: false,
+          projectIds: [projectA], sessionIds: [], canWrite: true, canReview: false, pending: null },
+        { actorId: "owner", identityKind: "human", canRead: true, permissions: ["task", "document", "session", "management"], decisions: true,
+          projectIds: [projectA, projectB], sessionIds: [], canWrite: true, canReview: true, pending: null },
+        { actorId: "reader", identityKind: "agent", canRead: true, permissions: [], decisions: false,
+          projectIds: [projectA], sessionIds: [], canWrite: false, canReview: false, pending: null },
         // Rotation to a narrower token: one credential still reads and writes; review needs every credential complete.
-        { actorId: "rotating", identityKind: "agent", canRead: true, canWrite: true, canReview: false, pending: null },
-        { actorId: "writer-only", identityKind: "agent", canRead: false, canWrite: false, canReview: false, pending: null },
+        { actorId: "rotating", identityKind: "agent", canRead: true, permissions: ["task", "document", "session", "management"], decisions: false,
+          projectIds: [projectA, projectB], sessionIds: [], canWrite: true, canReview: false, pending: null },
+        { actorId: "writer-only", identityKind: "agent", canRead: true, permissions: ["task", "document", "session"], decisions: false,
+          projectIds: [projectA], sessionIds: [], canWrite: true, canReview: false, pending: null },
       ] });
       const b = await app.inject({ url: `/api/projects/${projectB}/members`, headers: auth("e") });
       assert.deepEqual(b.json().items.map((item: { actorId: string }) => item.actorId), ["outsider", "owner", "rotating"]);
@@ -416,7 +424,7 @@ test("members say what each actor may do by the service's own checks, and never 
           assert.equal(body.includes(entry.token), false);
           assert.equal(body.includes(entry.token.slice(0, 8)), false, "no token prefix");
         }
-        assert.equal(/token|projectIds/i.test(body), false);
+        assert.equal(/token/i.test(body), false);
       }
       assert.equal(a.body.includes("outsider") || a.body.includes("ghost"), false, "another project's member is not listed");
     } finally { await app.close(); }
@@ -427,7 +435,7 @@ test("members say what each actor may do by the service's own checks, and never 
     const tokens = identities.filter(entry => entry.actorId === member.actorId).map(entry => entry.token);
     assert.equal(member.canRead, tokens.some(value => {
       const principal = authenticate(`Bearer ${value}`, identities);
-      return !!principal && principal.projectIds.includes(projectA) && principal.permissions.includes("read");
+      return !!principal && principal.projectIds.includes(projectA);
     }), `${member.actorId} sign-in`);
     // Unchanged file: the loaded token and currentProjectWriter agree.
     assert.equal(member.canWrite, isProjectWriter(identities, projectA, member.actorId), `${member.actorId} currentProjectWriter`);
@@ -438,34 +446,42 @@ test("members say what each actor may do by the service's own checks, and never 
 test("a changed identity file is marked, with what is in effect now and what a restart changes", async () => {
   const now = authConfigSchema.parse([
     ...identities.filter(entry => entry.actorId !== "reader" && entry.token !== token("d")),
-    { token: token("j"), actorId: "newcomer", projectIds: [projectA], permissions: ["read", "write", "review"], identityKind: "human" },
+    { token: token("j"), actorId: "newcomer", projectIds: [projectA], permissions: ["task", "document", "session", "management"], decisions: true, identityKind: "human" },
   ]);
   const view = projectMembers(identities, now, projectA);
   assert.equal(view.identityFile, "changed");
   const by = Object.fromEntries(view.items.map(item => [item.actorId, item]));
-  assert.deepEqual(by.newcomer, { actorId: "newcomer", identityKind: "human", canRead: false, canWrite: false, canReview: false,
-    pending: { identityKind: "human", canRead: true, canWrite: true, canReview: true } }, "no token yet: nothing before a restart");
-  assert.deepEqual(by.reader, { actorId: "reader", identityKind: "agent", canRead: true, canWrite: false, canReview: false,
-    pending: { identityKind: "agent", canRead: false, canWrite: false, canReview: false } }, "removed: still signs in until a restart");
-  assert.deepEqual(by.rotating!.pending, { identityKind: "agent", canRead: true, canWrite: true, canReview: true }, "the narrower token is gone");
+  assert.deepEqual(by.newcomer, { actorId: "newcomer", identityKind: "agent", canRead: false, permissions: [], decisions: false,
+    projectIds: [projectA], sessionIds: [], canWrite: false, canReview: false,
+    pending: { identityKind: "human", canRead: true, permissions: ["task", "document", "session", "management"], decisions: true,
+      projectIds: [projectA], sessionIds: [], canWrite: true, canReview: true } }, "no token yet: nothing before a restart");
+  assert.deepEqual(by.reader, { actorId: "reader", identityKind: "agent", canRead: true, permissions: [], decisions: false,
+    projectIds: [projectA], sessionIds: [], canWrite: false, canReview: false,
+    pending: { identityKind: "agent", canRead: false, permissions: [], decisions: false,
+      projectIds: [projectA], sessionIds: [], canWrite: false, canReview: false } }, "removed: still signs in until a restart");
+  assert.deepEqual(by.rotating!.pending, { identityKind: "agent", canRead: true,
+    permissions: ["task", "document", "session", "management"], decisions: true,
+    projectIds: [projectA, projectB], sessionIds: [], canWrite: true, canReview: true },
+  "removing the narrower token lets the remaining broad credential act");
   assert.equal(by.owner!.pending, null);
   // Rotating a token without changing what it grants is not a change for this view.
   const rotated = identities.map(entry => entry.actorId === "owner" ? { ...entry, token: token("k") } : entry);
   assert.equal(projectMembers(identities, rotated, projectA).identityFile, "unchanged");
   const unreadable = projectMembers(identities, null, projectA);
   assert.equal(unreadable.identityFile, "unreadable");
-  assert.ok(unreadable.items.every(item => item.pending === null &&
-    item.canWrite === (isProjectWriter(identities, projectA, item.actorId) ? null : false)),
-    "without a loaded write token the answer is no; with one, the writer check reads the file and cannot answer");
+  assert.ok(unreadable.items.every(item => item.pending === null && item.canWrite === null),
+    "the current identity file cannot say whether any writer remains accepted");
   // Write added only in the file: the token signed in with still lacks it, so a write (such as recording acceptance)
   // is refused until a restart.
-  const acceptorLoaded = authConfigSchema.parse([{ token: token("x"), actorId: "acceptor", projectIds: [projectA], permissions: ["read"], identityKind: "human" }]);
-  const acceptorNow = authConfigSchema.parse([{ token: token("x"), actorId: "acceptor", projectIds: [projectA], permissions: ["read", "write"], identityKind: "human" }]);
+  const acceptorLoaded = authConfigSchema.parse([{ token: token("x"), actorId: "acceptor", projectIds: [projectA], permissions: [], identityKind: "human" }]);
+  const acceptorNow = authConfigSchema.parse([{ token: token("x"), actorId: "acceptor", projectIds: [projectA], permissions: ["task", "document", "session"], identityKind: "human" }]);
   const acceptor = projectMembers(acceptorLoaded, acceptorNow, projectA);
-  assert.equal(authenticate(`Bearer ${token("x")}`, acceptorLoaded)!.permissions.includes("write"), false);
+  assert.equal(authenticate(`Bearer ${token("x")}`, acceptorLoaded)!.permissions.length, 0);
   assert.equal(isProjectWriter(acceptorNow, projectA, "acceptor"), true, "currentProjectWriter alone would say yes");
-  assert.deepEqual(acceptor, { identityFile: "changed", items: [{ actorId: "acceptor", identityKind: "human", canRead: true, canWrite: false,
-    canReview: false, pending: { identityKind: "human", canRead: true, canWrite: true, canReview: false } }] });
+  assert.deepEqual(acceptor, { identityFile: "changed", items: [{ actorId: "acceptor", identityKind: "human", canRead: true,
+    permissions: [], decisions: true, projectIds: [projectA], sessionIds: [], canWrite: false, canReview: false,
+    pending: { identityKind: "human", canRead: true, permissions: ["task", "document", "session"], decisions: true,
+      projectIds: [projectA], sessionIds: [], canWrite: true, canReview: false } }] });
   await withFixture(same, async fixture => {
     const app = await server(sourceFor(fixture, async () => { throw new Error("identity file is not valid JSON"); }));
     try {

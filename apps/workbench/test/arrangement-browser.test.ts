@@ -92,7 +92,7 @@ async function serve(t: { after: (fn: () => unknown) => void }, fail = { tasks: 
       const root = `/api/projects/${projectId}`;
       let value: unknown = { items: [], nextCursor: null };
       if (url.pathname === "/api/session") value = {
-        principal: { actorId: "reader", projectIds: [projectId], permissions: ["read"] }, capabilities: {},
+        principal: { actorId: "reader", projectIds: [projectId], permissions: [] }, capabilities: {},
       };
       else if (url.pathname === "/api/projects") value = [{ id: projectId, title: "安排回归项目", createdAt: stamp }];
       else if (url.pathname === root) value = { id: projectId, title: "安排回归项目", createdAt: stamp };

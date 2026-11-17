@@ -4,7 +4,8 @@
 //   - a form nobody has typed into follows the latest content; a form with changes asks the person (keep the fields
 //     they changed, or refill from the latest content);
 //   - each submission gets a new operation ID; the command is checked by the shared schema (or the form's own).
-import { commandSchema, type Command, type Permission } from "@evoloop/contracts";
+import { commandSchema, hasDecisionAuthority, isProjectMember, type Command, type ExtraCommand, type Permission, type Principal }
+  from "@evoloop/contracts";
 import type { RecoverableCommand } from "./context";
 
 export const baselineChangedText = "打开表单后，这里的内容已被更新。请先查看最新内容，再按最新内容重新提交。";
@@ -22,11 +23,19 @@ export function overLimitText(value: string, max: number | undefined): string | 
   return max !== undefined && value.length > max ? `最多 ${max} 字，现在是 ${value.length} 字，请删减后再提交。` : null;
 }
 
+const permissionLabel: Record<Permission, string> = {
+  task: "任务", document: "文档", session: "Session", management: "项目管理",
+};
 /** Why the identity may not send this form, or null. */
-export function permissionText(permissions: readonly Permission[], needed: readonly Permission[]): string | null {
-  const missing = needed.find(permission => !permissions.includes(permission));
-  if (!missing) return null;
-  return `当前身份没有${missing === "review" ? "审阅" : missing === "write" ? "写入" : "这项"}权限。`;
+export function permissionText(principal: Principal, projectId: string, needed: readonly Permission[],
+  decision = false, extraCommand?: ExtraCommand | undefined): string | null {
+  if (!isProjectMember(principal, projectId)) return "当前身份不是本项目成员。";
+  const missing = needed.find(permission => !principal.permissions.includes(permission));
+  if (missing) return `当前身份没有${permissionLabel[missing]}类写入权限。`;
+  if (decision && !(extraCommand && principal.extraCommands?.includes(extraCommand)) &&
+    !needed.every(permission => hasDecisionAuthority(principal, projectId, permission)))
+    return "当前身份没有这些对象类别的决定权限。";
+  return null;
 }
 
 /** The fixed inputs a form was opened on. Values are compared exactly; key order does not matter. */

@@ -1,4 +1,4 @@
-import type { Principal } from "@evoloop/contracts";
+import { hasPermission, mayAccessSession, type Principal } from "@evoloop/contracts";
 import { ordinaryMessageBudget } from "@evoloop/contracts/session-messages";
 import type { RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import type { ObservedSession } from "@evoloop/contracts/session-observation";
@@ -10,6 +10,8 @@ export interface MessageExecutionReaderDeps {
   runtimeAvailable():boolean;
   canExecuteSession(session:RuntimeSessionRecord):Promise<boolean>;
   isProjectWriter(projectId:string,actorId:string):Promise<boolean>;
+  /** The sender alone; a Hub account with an explicit `senderKind:"hub"` grant counts. Absent: checked like the receiver. */
+  isSenderWriter?(projectId:string,actorId:string,origin?:"hub"|undefined):Promise<boolean>;
   readSession(projectId:string,sessionId:string):Promise<RuntimeSessionRecord|null>;
   turnsUsed(projectId:string,sessionId:string,senderActorId:string):Promise<number>;
   cwdIsCurrent(cwd:string):Promise<boolean>;
@@ -26,10 +28,10 @@ export function createMessageExecutionReader(deps:MessageExecutionReaderDeps){
     }catch{observedAt=new Date().toISOString();}
     const result=(state:OrdinaryMessageExecutionCapability["state"],reasonCode:string,reason:string):OrdinaryMessageExecutionCapability=>
       ({state,reasonCode,reason,observedAt});
-    if(!principal.projectIds.includes(projectId)||!principal.actorId.trim()||!principal.permissions.includes("read"))
+    if(!principal.actorId.trim()||!hasPermission(principal,projectId,"session"))
       return result("blocked","FORBIDDEN","当前身份不能读取此项目的会话执行状态。");
-    if(!principal.permissions.includes("write"))
-      return result("blocked","WRITE_REQUIRED","当前身份没有此项目的消息写入权限。");
+    if(observed.target.kind==="owned"&&!mayAccessSession(principal,projectId,observed.target.sessionId))
+      return result("blocked","FORBIDDEN","当前身份没有此 Session 的消息写入权限。");
     if(observed.target.kind==="external"||observed.kind==="external") {
       if(observed.capabilities.send.available&&observed.capabilities.send.mode==="manual-handoff")
         return result("manual","MANUAL_HANDOFF","外部会话需要由宿主手工转交消息。");
@@ -64,7 +66,7 @@ export function createMessageExecutionReader(deps:MessageExecutionReaderDeps){
         item.receiverRoleId===session.roleId&&item.cwd===session.cwd&&
         !!item.receiverActorId.trim()&&item.receiverActorId!==principal.actorId&&
         (item.maxTurns===undefined||Number.isSafeInteger(item.maxTurns)&&item.maxTurns>=1));
-      if(!grant||!await deps.isProjectWriter(projectId,principal.actorId)||
+      if(!grant||!await (deps.isSenderWriter??deps.isProjectWriter)(projectId,principal.actorId,principal.origin)||
         !await deps.isProjectWriter(projectId,grant.receiverActorId))
         return result("blocked","MESSAGE_GRANT_MISSING","当前发送人与接收会话没有完整的精确授权。");
       if(!await deps.cwdIsCurrent(session.cwd))

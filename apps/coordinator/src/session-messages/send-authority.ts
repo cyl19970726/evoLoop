@@ -8,21 +8,25 @@ export interface SendGrantProblem { code: "MESSAGE_GRANT_MISSING"; message: stri
 
 export function ordinaryMessageGrantProblem(input: {
   projectId: string; senderActorId: string;
+  /** Where the sender's principal came from (`Principal.origin`): `hub` only for an identity the Hub signed. Passed on to `isSenderWriter`. */
+  senderOrigin?: "hub" | undefined;
   session: { id: string; roleId: string; cwd: string; authorizationScope: string };
   sessionMessages: { enabled: boolean; grants: OrdinaryMessageGrant[] } | undefined;
   isProjectWriter(actorId: string): Promise<boolean> | boolean;
+  /** The sender alone: a Hub account with an explicit `senderKind: "hub"` grant counts (Task 9ea06625). Absent: the sender is checked like the receiver. */
+  isSenderWriter?(actorId: string, origin?: "hub" | undefined): Promise<boolean> | boolean;
 }): Promise<SendGrantProblem | null> {
   return check(input);
 }
 
-async function check({ projectId, senderActorId, session, sessionMessages, isProjectWriter }: Parameters<typeof ordinaryMessageGrantProblem>[0]): Promise<SendGrantProblem | null> {
+async function check({ projectId, senderActorId, senderOrigin, session, sessionMessages, isProjectWriter, isSenderWriter = isProjectWriter }: Parameters<typeof ordinaryMessageGrantProblem>[0]): Promise<SendGrantProblem | null> {
   if (session.authorizationScope.startsWith("connector-receiver:")) return null;
   const fail = (message: string): SendGrantProblem => ({ code: "MESSAGE_GRANT_MISSING", message });
   const example = `{"enabled":true,"projectId":"${projectId}","sessionId":"${session.id}","senderActorId":"${senderActorId}","receiverActorId":"<接收方 Session 的业务身份>","receiverRoleId":"${session.roleId}","cwd":"${session.cwd}"}`;
   if (!sessionMessages?.enabled)
     return fail("没有发送这条消息的授权：服务的私有配置里 sessionMessages 没有启用（sessionMessages.enabled）。消息没有保存。");
-  if (!await isProjectWriter(senderActorId))
-    return fail(`没有发送这条消息的授权：发送者身份 ${senderActorId} 在身份文件里对本项目没有 read 与 write。消息没有保存。`);
+  if (!await isSenderWriter(senderActorId, senderOrigin))
+    return fail(`没有发送这条消息的授权：发送者身份 ${senderActorId} 在身份文件里对本项目没有 read 与 write（经 Hub 来的账号需要 sessionMessages.grants 里写明 "senderKind":"hub" 的授权）。消息没有保存。`);
   const forSession = sessionMessages.grants.filter(grant => grant.enabled && grant.projectId === projectId && grant.sessionId === session.id && grant.senderActorId === senderActorId);
   const exact = forSession.find(grant => grant.receiverRoleId === session.roleId && grant.cwd === session.cwd);
   if (!exact) {

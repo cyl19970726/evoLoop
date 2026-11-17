@@ -25,7 +25,7 @@ export const TabsTrigger = React.forwardRef<React.ComponentRef<typeof TabsPrimit
   <TabsPrimitive.Trigger
     ref={ref}
     className={cn(
-      "h-7 cursor-pointer whitespace-nowrap rounded-full border-0 bg-transparent px-3 text-label text-muted-foreground outline-none transition-[background-color,color,box-shadow] duration-150 focus-visible:outline-solid focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary data-[state=active]:bg-raised data-[state=active]:font-medium data-[state=active]:text-foreground data-[state=active]:shadow-sm",
+      "h-7 cursor-pointer whitespace-nowrap rounded-full border-0 bg-transparent px-3 text-label text-muted-foreground outline-none transition-[background-color,color,box-shadow] duration-150 focus-visible:outline-solid focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary data-[state=active]:bg-accent data-[state=active]:font-medium data-[state=active]:text-accent-strong data-[state=active]:shadow-sm",
       className,
     )}
     {...props}
@@ -60,7 +60,7 @@ DropdownMenuContent.displayName = "DropdownMenuContent";
 export const DropdownMenuItem = React.forwardRef<React.ComponentRef<typeof DropdownPrimitive.Item>, React.ComponentPropsWithoutRef<typeof DropdownPrimitive.Item> & { danger?: boolean }>(({ className, danger, ...props }, ref) => (
   <DropdownPrimitive.Item
     ref={ref}
-    className={cn("flex cursor-pointer select-none items-center gap-2 rounded-md px-2.5 py-1.5 text-small outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[highlighted]:bg-selected [&_svg]:size-4", danger && "text-destructive", className)}
+    className={cn("flex cursor-pointer select-none items-center gap-2 rounded-md px-2.5 py-1.5 text-small outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[highlighted]:bg-accent [&_svg]:size-4", danger && "text-destructive", className)}
     {...props}
   />
 ));

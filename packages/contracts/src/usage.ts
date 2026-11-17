@@ -9,6 +9,12 @@ export interface UsageTotals {
   costUsd: number | null;
   /** True only when every token-bearing record in this bucket also carried a provider cost. */
   costReported: boolean;
+  /**
+   * What the cost covers. `all_turns`: every Turn of the day, Runs and message Turns alike, as the tokens do. `runs_only`: the day was recorded before cost
+   * included message Turns (migration 112), so its cost covers Runs only while its tokens cover all Turns; the history is not rewritten. A total over several
+   * buckets is `runs_only` as soon as one of them is.
+   */
+  costScope: "all_turns" | "runs_only";
 }
 
 export interface UsageDay extends UsageTotals {
@@ -81,6 +87,7 @@ export interface UsageBucketRow {
   cachedInputTokens: number;
   costUsd: number;
   costReported: boolean;
+  costScope: "all_turns" | "runs_only";
 }
 
 export interface UsageContextRow {

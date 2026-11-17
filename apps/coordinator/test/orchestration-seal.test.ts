@@ -6,8 +6,8 @@ import type { OrchestrationDispatch, OrchestrationSubmission, OrchestrationWorke
 import { createWorkerSealer, type WorkerSealerDependencies } from "../src/orchestration/seal.js";
 
 const projectId = randomUUID(), loopId = randomUUID(), taskId = randomUUID(), runId = randomUUID(), sessionId = randomUUID(), roleId = "builder";
-const worker: Principal = { actorId: "worker-signed", projectIds: [projectId], permissions: ["read", "write"] };
-const controller: Principal = { actorId: "controller", projectIds: [projectId], permissions: ["read", "write", "review"] };
+const worker: Principal = { actorId: "worker-signed", projectIds: [projectId], permissions: ["task", "document", "session"] };
+const controller: Principal = { actorId: "controller", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
 const signedAt = "2026-10-23T09:01:00.000Z";
 const dispatch: OrchestrationDispatch = { projectId, id: randomUUID(), version: 4, loopId, inboxId: randomUUID(), sourceEventId: randomUUID(),
   taskId, taskVersion: 2, parentDispatchId: null, recipientRoleId: roleId, purpose: "build", authorizationScopeId: "scope",

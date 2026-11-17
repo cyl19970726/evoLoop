@@ -45,7 +45,7 @@ async function startFixture(t: { after(fn: () => unknown): void }) {
       const p = `/api/projects/${projectId}`;
       const current = task(taskId, title, version);
       let value: unknown = {items:[],nextCursor:null};
-      if (url.pathname === "/api/session") value = {principal:{actorId:"developer",projectIds:[projectId],permissions:["read"]},capabilities:{}};
+      if (url.pathname === "/api/session") value = {principal:{actorId:"developer",projectIds:[projectId],permissions:[]},capabilities:{}};
       else if (url.pathname === p) value = {id:projectId,title:"项目",createdAt};
       else if (url.pathname === `${p}/tasks`) {
         const cursor = url.searchParams.get("cursor");

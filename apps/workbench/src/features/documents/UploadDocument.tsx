@@ -78,7 +78,8 @@ export function UploadDocument({ context, mode = "create", documentId, expectedV
   }
 
   const heading = mode === "create" ? "导入过程文档" : "上传新修订";
-  return <CommandFrame context={context} command={command} label={heading} submitLabel={mode === "create" ? "导入原件" : "保存新修订"} dirty={dirty}
+  return <CommandFrame context={context} command={command} label={heading} submitLabel={mode === "create" ? "导入原件" : "保存新修订"}
+    dirty={dirty} permission="document"
     onSubmit={() => void submit()} paused={reading ? "正在读取并核验文件…" : null}
     onKeep={() => command.rebase()} onRefill={() => { command.rebase(); clear(); }}
     keepNote="保留我的修改：所选文件和理由不变，按读回的最新版本提交；先看上方读回的新内容，确认这份原件仍然适用。">

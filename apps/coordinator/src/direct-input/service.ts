@@ -1,4 +1,4 @@
-import type { Principal } from "@evoloop/contracts";
+import { hasDecisionAuthority, hasPermission, mayAccessSession, type Principal } from "@evoloop/contracts";
 import type { DirectInputCommand, DirectInputGrant, DirectInputReceipt, DirectInputRecord, DirectInputCapability } from "@evoloop/contracts/direct-input";
 import { publicDirectInput } from "@evoloop/contracts/direct-input";
 import type { RuntimeBinding, RuntimeCapabilities, RuntimePage, RuntimeTurn } from "@evoloop/contracts/runtime";
@@ -61,8 +61,8 @@ export class DirectInputService {
   async capability(principal:Principal,projectId:string,sessionId:string):Promise<DirectInputCapability>{
     const result=(available:boolean,mode:DirectInputCapability["mode"],expectedTurnId:string|null,reasonCode:string,detail?:string):DirectInputCapability=>
       ({available,mode,expectedTurnId,reasonCode,observedAt:new Date().toISOString(),...(detail?{detail}:{})});
-    if(!principal.projectIds.includes(projectId)||!principal.permissions.includes("read")||
-      !principal.permissions.includes("write"))return result(false,null,null,"FORBIDDEN");
+    if(!hasPermission(principal,projectId,"session")||!mayAccessSession(principal,projectId,sessionId))
+      return result(false,null,null,"FORBIDDEN");
     let runtime:Native;
     try{runtime=this.deps.runtime();if(!this.deps.canWrite()||!runtime.isReady())
       return result(false,null,null,"NATIVE_UNAVAILABLE");}
@@ -117,16 +117,15 @@ export class DirectInputService {
     return publicDirectInput(record);
   }
   async list(principal:Principal,projectId:string,sessionId:string,limit:number,cursor?:string){
-    if(!principal.projectIds.includes(projectId)||!principal.permissions.includes("read"))
-      throw new DomainError("FORBIDDEN","Project read permission required");
+    if(!hasPermission(principal,projectId,"session")||!mayAccessSession(principal,projectId,sessionId))
+      throw new DomainError("FORBIDDEN","Session input permission required");
     const page=await this.deps.store.list(projectId,sessionId,limit,cursor,
-      principal.permissions.includes("review")?undefined:principal.actorId);
+      hasDecisionAuthority(principal,projectId,"session")?undefined:principal.actorId);
     return {...page,items:page.items.map(publicDirectInput)};
   }
   async submit(principal:Principal,projectId:string,sessionId:string,command:DirectInputCommand):Promise<DirectInputReceipt>{
-    if(!principal.projectIds.includes(projectId)||!principal.permissions.includes("write")||
-      !principal.permissions.includes("read")||!this.deps.canWrite())
-      throw new DomainError("FORBIDDEN","Current project writer is unavailable");
+    if(!hasPermission(principal,projectId,"session")||!mayAccessSession(principal,projectId,sessionId)||!this.deps.canWrite())
+      throw new DomainError("FORBIDDEN","Current Session writer is unavailable");
     const key=`${projectId}\u0000${command.inputId}`;
     const prior=await this.deps.store.get(projectId,command.inputId);
     const retrying=!!prior&&prior.state==="attempted"&&this.provedUnsent.has(key);
@@ -212,8 +211,7 @@ export class DirectInputService {
   }
   /** Read only: a crash or lost reply never causes a second native send. */
   async reconcile(principal:Principal,projectId:string,inputId:string):Promise<DirectInputReceipt>{
-    if(!principal.permissions.includes("write")||!this.deps.canWrite())
-      throw new DomainError("FORBIDDEN","Current writer is required to reconcile direct input");
+    if(!this.deps.canWrite())throw new DomainError("FORBIDDEN","Current writer is required to reconcile direct input");
     const record=await this.deps.store.get(projectId,inputId);
     if(!record)throw new DomainError("NOT_FOUND","Direct input was not found");
     this.requireReader(principal,record);
@@ -294,8 +292,8 @@ export class DirectInputService {
     return first.nextCursor?(await runtime.listTurns(binding,first.nextCursor)).data.find(x=>x.id===id)??null:null;
   }
   private requireReader(principal:Principal,record:DirectInputRecord){
-    if(!principal.projectIds.includes(record.projectId)||!principal.permissions.includes("read")||
-      record.actorId!==principal.actorId&&!principal.permissions.includes("review"))
+    if(!hasPermission(principal,record.projectId,"session")||!mayAccessSession(principal,record.projectId,record.sessionId)||
+      record.actorId!==principal.actorId&&!hasDecisionAuthority(principal,record.projectId,"session"))
       throw new DomainError("FORBIDDEN","Input belongs to another actor");
   }
   private requireSameIntent(principal:Principal,sessionId:string,command:DirectInputCommand,old:DirectInputRecord){

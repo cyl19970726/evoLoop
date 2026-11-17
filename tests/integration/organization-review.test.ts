@@ -31,7 +31,7 @@ test("organization reviews are ordinary fixed Documents with native type, period
     const cleanup = new pg.Client({ connectionString: database }); await cleanup.connect();
     try { await cleanup.query(`DROP SCHEMA "${schema}" CASCADE`); } finally { await cleanup.end(); }
   });
-  const projectId = randomUUID(), principal: Principal = { actorId: "review-author", projectIds: [projectId], permissions: ["read", "write", "review"] };
+  const projectId = randomUUID(), principal: Principal = { actorId: "review-author", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
   const workflow = new WorkflowService({ uow, clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID }, hasher: { hash } });
   await workflow.execute(principal, { type: "project.create", projectId, operationId: randomUUID(), title: "Review test" });
   const blobs = new LocalBlobStore(root, async () => true, payload => uow.read(payload.projectId, async reader => !!await reader.getRegisteredBlob(payload.id)));
@@ -105,8 +105,8 @@ test("organization reviews are ordinary fixed Documents with native type, period
 
   const token = randomUUID(), otherToken = randomUUID();
   const app = await buildServer({ service: workflow, credentials: [
-    { token, actorId: principal.actorId, projectIds: [projectId], permissions: ["read"] },
-    { token: otherToken, actorId: "other-project-reader", projectIds: [randomUUID()], permissions: ["read"] },
+    { token, actorId: principal.actorId, projectIds: [projectId], permissions: [] },
+    { token: otherToken, actorId: "other-project-reader", projectIds: [randomUUID()], permissions: [] },
   ], documents: { uow, blobsForPrincipal: () => blobs } });
   t.after(() => app.close());
   const headers = { authorization: `Bearer ${token}` };

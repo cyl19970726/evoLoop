@@ -76,6 +76,10 @@ test("the track counts are the snapshot's own; what the stream does not carry is
   assert.equal(by["已合并"], null); assert.equal(by["已发布"], null);
   const unread = stationCounts({ ...fixtureBoard, graph: { ...fixtureBoard.graph, counts: {} } }, null);
   assert.equal(unread.find(c => c.station === "队伍")!.count, null, "a count the snapshot does not give is unread, not zero");
+  // 待验收 is pendingAcceptance (Tasks without a consumer conclusion); the relay count has its own name and is never added to it.
+  const acceptance = counts.find(c => c.station === "待验收")!;
+  assert.equal(acceptance.count, 1); assert.equal(acceptance.note, "接力未回复 3");
+  assert.equal(unread.find(c => c.station === "待验收")!.note, undefined, "no relay count in the snapshot, no note");
 });
 
 test("stuck spots come only from the snapshot: a held entry, a closed gate, a held provider", () => {

@@ -2,10 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   commandsOfLine, configIdentity, day, declaredStage, dominantActor, expandLoops, ghMergeNumber, jsonKeyDiff, mentionsCandidate, mentionsFormalReadback as rawMentionsFormalReadback,
-  mentionsNear, mergeInvocations, mergeRows, parseTrainLog,
-  MERGE_OK, configProblems, evidencePhraseIsClean, exitCodeFor, hasCompletionEvidence as rawHasCompletionEvidence, humanWriteProblem, judgeClosure as rawJudgeClosure, mentionsAnywhere, mentionsFile, targetLabel, truncationProblem,
+  mentionsNear, mergeInvocations, mergeRows as rawMergeRows, parseTrainLog,
+  MERGE_OK, badLineProblem, inspectLine, missingMergeTimeProblem, configProblems, evidencePhraseIsClean, exitCodeFor, hasCompletionEvidence as rawHasCompletionEvidence, humanWriteProblem, judgeClosure as rawJudgeClosure, mentionsAnywhere, mentionsFile, targetLabel, truncationProblem,
 } from "./boundary-check.mjs";
-import { format, loadConfig } from "../ops/boundary-check.mjs";
+import { format, loadConfig, readTranscripts, transcriptFiles } from "../ops/boundary-check.mjs";
+import { mkdirSync, mkdtempSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // The observation these tests are read against: written 2026-11-14 12:00Z. A commit resolves only if it is one of these, an id exists only if it is one of these.
 const OBSERVED = Date.parse("2026-11-14T12:00:00Z");
@@ -14,6 +17,9 @@ const V = { observedAtMs: OBSERVED, commitExists: hex => COMMITS.some(known => k
 const mentionsFormalReadback = text => rawMentionsFormalReadback(text, V);
 const judgeClosure = args => rawJudgeClosure({ ...args, verifier: V });
 const hasCompletionEvidence = phrase => rawHasCompletionEvidence(phrase, V);
+
+// Merge commands in these fixtures started a minute before the PR was merged (07:00:00Z) and succeeded, unless a test says otherwise.
+const mergeRows = args => rawMergeRows({ ...args, transcripts: args.transcripts.map(t => ({ ...t, merges: t.merges.map(m => ({ at: "2026-11-12T06:59:00Z", ok: true, ...m })) })) });
 
 const codexLine = (at, cmd) => JSON.stringify({ timestamp: at, type: "response_item", payload: { type: "function_call", name: "exec_command", arguments: JSON.stringify({ cmd }) } });
 const claudeLine = (at, command) => JSON.stringify({ timestamp: at, message: { content: [{ type: "tool_use", input: { command } }] } });
@@ -28,7 +34,8 @@ test("transcript lines: Codex function_call and Claude tool_use give commands wi
   assert.deepEqual(commandsOfLine(codexLine("2026-11-12T06:48:51.000Z", "node /tmp/merge-gate.mjs merge --pr 382 --execute")), [{ at: "2026-11-12T06:48:51.000Z", command: "node /tmp/merge-gate.mjs merge --pr 382 --execute" }]);
   assert.deepEqual(commandsOfLine(claudeLine("2026-11-12T06:48:51.000Z", "ls")), [{ at: "2026-11-12T06:48:51.000Z", command: "ls" }]);
   assert.deepEqual(commandsOfLine(JSON.stringify({ timestamp: "2026-11-12T06:48:51.000Z", type: "event_msg", payload: { type: "agent_message", message: "function_call tool_use" } })), []);
-  assert.deepEqual(commandsOfLine("not json function_call"), []);
+  assert.deepEqual(commandsOfLine("not json function_call"), [], "the commands of a bad line are none, but the line is no longer silently dropped: see inspectLine");
+  assert.equal(inspectLine("not json function_call").defect, "JSON 无法解析");
 });
 
 test("dominant actor is the agent-cli identity the commands use most, with the counts of the others", () => {
@@ -60,8 +67,8 @@ test("merge rows: the train, one's own config, a borrowed config and no record a
   const merged = [382, 400, 401, 500].map(number => ({ number, mergedAt: "2026-11-12T07:00:00Z", mergedBy: { login: "someone" }, title: "t" }));
   const train = [{ pr: 401, at: "x", log: "merge-train-1.log" }];
   const transcripts = [
-    { id: "01a1befd", actor: { actor: "leader" }, merges: [{ pr: 382, at: "a", configIdentity: "requirements", via: "merge-gate", command: "SECRET-TOKEN" }] },
-    { id: "0b0b0b0b", actor: { actor: "requirements" }, merges: [{ pr: 400, at: "b", configIdentity: "requirements", via: "merge-gate" }] },
+    { id: "01a1befd", actor: { actor: "leader" }, merges: [{ pr: 382, configIdentity: "requirements", via: "merge-gate", command: "SECRET-TOKEN" }] },
+    { id: "0b0b0b0b", actor: { actor: "requirements" }, merges: [{ pr: 400, configIdentity: "requirements", via: "merge-gate" }] },
   ];
   const rows = mergeRows({ merged, train, transcripts });
   assert.deepEqual(rows.map(row => [row.pr, row.verdict]), [[382, "借用他人合并配置"], [400, "本人发起"], [401, "合并列车"], [500, "发起者无记录"]]);
@@ -284,8 +291,8 @@ test("R4. a Codex array-form command [bash, -lc, gh pr merge N] is read: the met
   const line = JSON.stringify({ timestamp: "2026-11-13T05:00:00Z", type: "response_item", payload: { type: "function_call", arguments: JSON.stringify({ command: ["bash", "-lc", "gh pr merge 505"] }) } });
   const commands = commandsOfLine(line);
   assert.deepEqual(mergeInvocations(commands).map(item => [item.pr, item.via, item.config]), [[505, "gh pr merge", null]]);
-  const merges = mergeInvocations(commands).map(item => ({ ...item, configIdentity: null }));
-  const rows = mergeRows({ merged: [merged(505)], train: [], transcripts: [{ id: "cx", actor: { actor: "codex-dev-agent", uses: 9, others: [] }, merges }] });
+  const merges = mergeInvocations(commands).map(item => ({ ...item, ok: true, configIdentity: null }));
+  const rows = mergeRows({ merged: [{ ...merged(505), mergedAt: "2026-11-13T23:00:00Z" }], train: [], transcripts: [{ id: "cx", actor: { actor: "codex-dev-agent", uses: 9, others: [] }, merges }] });
   assert.equal(rows[0].verdict, "绕过合并门");
   assert.match(rows[0].who, /codex-dev-agent 用 gh pr merge，没有经过合并门，不涉及合并配置（会话记录 cx）/);
   const scripted = commandsOfLine(JSON.stringify({ timestamp: "2026-11-13T05:00:00Z", type: "response_item", payload: { type: "function_call", arguments: JSON.stringify({ command: ["bash", "-lc", "echo hi\ngh pr merge --squash 506"] }) } }));
@@ -547,4 +554,163 @@ test("BETA is not ETA: English plan words match as whole words only, so a real c
   assert.equal(mentionsFormalReadback("候选通过；正式实例读回通过 SCHEDULED"), false);
   assert.equal(mentionsFormalReadback("候选通过；正式实例读回通过（2026-11-14 10:05Z，commit 530497b9），pending 之外"), false, "pending as a whole word");
   assert.equal(mentionsFormalReadback("候选通过；正式实例读回通过（2026-11-14 10:05Z，commit 530497b9），suspending 之外"), true, "suspending contains pending but is not the word");
+});
+
+// ---- Task ac254c1a, 2026-11-15 decision: input that is missing must not vanish silently; attribution checks the merge time and the command result.
+const codexCall = (at, cmd, callId) => JSON.stringify({ timestamp: at, type: "response_item", payload: { type: "function_call", call_id: callId, arguments: JSON.stringify({ cmd }) } });
+const codexOutput = (at, callId, output) => JSON.stringify({ timestamp: at, type: "response_item", payload: { type: "function_call_output", call_id: callId, output } });
+
+test("M1. a line that mentions a tool call but cannot be read is a defect, not an empty result: bad JSON, a call with no timestamp, a call with a timestamp that is not a time", () => {
+  assert.equal(inspectLine("{broken function_call").defect, "JSON 无法解析");
+  assert.equal(inspectLine(JSON.stringify({ type: "response_item", payload: { type: "function_call", arguments: JSON.stringify({ cmd: "ls" }) } })).defect, "缺时间戳或时间戳读不出");
+  assert.equal(inspectLine(codexCall("not-a-time", "ls", "c1")).defect, "缺时间戳或时间戳读不出", "an invalid time used to throw RangeError and lose the whole report");
+  assert.equal(inspectLine(codexCall("2026-11-12T06:59:00Z", "ls", "c1")).defect, null);
+  assert.deepEqual(inspectLine(JSON.stringify({ timestamp: "2026-11-12T06:48:51.000Z", type: "event_msg", payload: { type: "agent_message", message: "function_call tool_use" } })), { commands: [], results: [], defect: null }, "prose that mentions the words is not a defect");
+});
+
+test("M2. the result of a call is read: Codex exit code (0, non-zero, still running) and Claude tool_result is_error", () => {
+  const ok = inspectLine(codexOutput("2026-11-12T06:59:01Z", "c1", "Chunk ID: a\nProcess exited with code 0\nOutput:\n")).results;
+  const failed = inspectLine(codexOutput("2026-11-12T06:59:01Z", "c2", "Process exited with code 1\nOutput:\nboom")).results;
+  const running = inspectLine(codexOutput("2026-11-12T06:59:01Z", "c3", "Process running with session ID 55")).results;
+  assert.deepEqual([ok, failed, running], [[{ callId: "c1", ok: true }], [{ callId: "c2", ok: false }], [{ callId: "c3", ok: null }]]);
+  const claude = flag => inspectLine(JSON.stringify({ timestamp: "2026-11-12T06:59:01Z", message: { content: [{ type: "tool_result", tool_use_id: "t1", is_error: flag, content: "x" }] } })).results;
+  assert.deepEqual([claude(true), claude(false)], [[{ callId: "t1", ok: false }], [{ callId: "t1", ok: true }]]);
+  const call = inspectLine(JSON.stringify({ timestamp: "2026-11-12T06:59:00Z", message: { content: [{ type: "tool_use", id: "t1", input: { command: "ls" } }] } }));
+  assert.equal(call.commands[0].callId, "t1");
+});
+
+test("M3. unreadable lines are counted with the file and line, the report is incomplete and the exit code is not zero", () => {
+  const bad = [{ file: "a.jsonl", line: 3, why: "JSON 无法解析" }, { file: "b.jsonl", line: 9, why: "缺时间戳或时间戳读不出" }];
+  const problem = badLineProblem(bad);
+  assert.match(problem, /2 行无法解析：a\.jsonl:3（JSON 无法解析）、b\.jsonl:9（缺时间戳或时间戳读不出）/);
+  assert.equal(badLineProblem([]), null);
+  assert.match(badLineProblem(Array.from({ length: 12 }, (_, index) => ({ file: "x.jsonl", line: index + 1, why: "JSON 无法解析" }))), /共 12 行/);
+  assert.equal(exitCodeFor({ problems: [problem] }), 2);
+});
+
+test("M4. readTranscripts counts bad lines by file and line, and sets aside one unreadable file while the others are still read", async () => {
+  const root = mkdtempSync(join(tmpdir(), "bc-"));
+  mkdirSync(join(root, "p"));
+  const at = "2026-11-12T06:59:00Z";
+  writeFileSync(join(root, "p", "good.jsonl"), [codexCall(at, "node /x/merge-gate.mjs merge --pr 7 --execute", "c1"), codexOutput("2026-11-12T06:59:05Z", "c1", "Process exited with code 0\nOutput:\n"), "{truncated function_call", codexCall("nope", "ls", "c9")].join("\n") + "\n");
+  mkdirSync(join(root, "p", "dir.jsonl")); // a directory named like a transcript: it cannot be read as a file
+  const problems = [];
+  const transcripts = await readTranscripts([root], Date.parse("2026-11-12T00:00:00Z"), Date.parse("2026-11-13T00:00:00Z"), problems);
+  assert.equal(transcripts.length, 1, "the readable transcript is still read");
+  assert.equal(transcripts[0].commands[0].ok, true, "the result of the merge command is attached to it");
+  assert.match(problems.join("\n"), /good\.jsonl:3（JSON 无法解析）、good\.jsonl:4（缺时间戳或时间戳读不出）/);
+  assert.match(problems.join("\n"), /会话记录读不了（dir\.jsonl：[A-Z]+），只有这一个文件没有核对/);
+  assert.equal(exitCodeFor({ problems }), 2);
+});
+
+test("M5. a merge command counts as the initiator only if it started no later than the GitHub merge time and did not fail", () => {
+  const run = (extra, pr = merged(20)) => mergeRows({ merged: [pr], train: [], transcripts: [{ id: "t", actor: { actor: "leader", uses: 9, others: [] }, merges: [{ pr: 20, via: "merge-gate", configIdentity: "leader", ...extra }] }] })[0];
+  assert.equal(run({}).verdict, "本人发起");
+  assert.equal(run({ at: "2026-11-12T07:00:00.700Z" }).verdict, "本人发起", "within the same second as the merge");
+  const late = run({ at: "2026-11-12T07:00:05Z" });
+  assert.equal(late.verdict, "合并命令不能算发起");
+  assert.match(late.who, /晚于 GitHub 合并时间 07:00:00Z/);
+  assert.match(run({ ok: false }).who, /命令失败/);
+  assert.equal(run({ ok: false }).verdict, "合并命令不能算发起");
+  assert.match(run({ ok: null }).who, /命令结果记录缺失/);
+  assert.match(run({ at: "yesterday" }).who, /命令时间读不出/);
+  assert.equal(listed([late]).length, 1);
+});
+
+test("M6. a late or failed command next to a qualifying one does not hide the qualifying one; and a train merge is not undone by a late command", () => {
+  const two = mergeRows({ merged: [merged(21)], train: [], transcripts: [{ id: "t", actor: { actor: "leader", uses: 9, others: [] }, merges: [
+    { pr: 21, via: "merge-gate", configIdentity: "leader", at: "2026-11-12T06:50:00Z" }, { pr: 21, via: "merge-gate", configIdentity: "leader", at: "2026-11-12T07:30:00Z" }] }] })[0];
+  assert.equal(two.verdict, "本人发起");
+  assert.match(two.who, /不能算发起（命令时间 07:30:00Z 晚于/);
+  const train = mergeRows({ merged: [merged(22)], train: [{ pr: 22, at: "x", log: "merge-train-1.log" }], transcripts: [{ id: "t", actor: { actor: "leader", uses: 9, others: [] }, merges: [{ pr: 22, via: "merge-gate", configIdentity: "leader", at: "2026-11-12T07:30:00Z" }] }] })[0];
+  assert.equal(train.verdict, "合并列车");
+});
+
+test("M7. a merged PR with no merge time is listed, the report says so and the format does not fail on it", () => {
+  const rows = rawMergeRows({ merged: [{ number: 30, mergedAt: null, title: "t" }, merged(31)], train: [], transcripts: [] });
+  assert.equal(rows[0].verdict, "合并时间缺失");
+  assert.equal(listed(rows).length, 2);
+  const problem = missingMergeTimeProblem([{ number: 30, mergedAt: null }, { number: 31, mergedAt: "2026-11-12T07:00:00Z" }]);
+  assert.match(problem, /1 个已合并 PR 没有合并时间（#30）/);
+  assert.equal(missingMergeTimeProblem([merged(31)]), null);
+  const text = format({ window: { from: "2026-11-12T00:00:00Z", to: "2026-11-13T00:00:00Z" }, sources: {}, problems: [problem], merges: rows, privateFiles: [], humanWrites: [], closures: [] }, 0);
+  assert.match(text.split("\n")[0], /^⚠ 核对不完整：/);
+  assert.match(text, /时间未知 #30 合并时间缺失/);
+  assert.match(text, /判定依据：边界核对判定约定 7c58f1f4 修订 2/);
+  assert.equal(exitCodeFor({ problems: [problem] }), 2);
+});
+
+test("M8. one transcript whose stat fails is named and skipped alone: a dangling link, and a file that vanishes between the listing and the stat; the other files are still read", async () => {
+  const root = mkdtempSync(join(tmpdir(), "bcs-"));
+  const at = "2026-11-12T06:59:00Z";
+  writeFileSync(join(root, "good.jsonl"), `${codexLine(at, "node /x/merge-gate.mjs merge --pr 7 --execute")}\n`);
+  writeFileSync(join(root, "gone.jsonl"), `${codexLine(at, "ls")}\n`);
+  writeFileSync(join(root, "later.jsonl"), `${codexLine(at, "ls")}\n`);
+  symlinkSync(join(root, "does-not-exist.jsonl"), join(root, "dangling.jsonl"));
+  const fromMs = Date.parse("2026-11-12T00:00:00Z");
+  for (const name of ["good.jsonl", "gone.jsonl", "later.jsonl"]) utimesSync(join(root, name), new Date(), new Date()); // modified after the window started
+  // 1. the real file system: the dangling link
+  const problems = [];
+  const found = (await transcriptFiles([root], fromMs, problems)).map(path => path.split("/").pop()).sort();
+  assert.deepEqual(found, ["gone.jsonl", "good.jsonl", "later.jsonl"], "every other transcript is still listed");
+  assert.match(problems.join("\n"), /会话记录读不了（dangling\.jsonl：ENOENT），只有这一个文件没有核对/);
+  assert.doesNotMatch(problems.join("\n"), /会话记录目录读取出错/, "the directory as a whole is not given up on");
+  // 2. a file that disappears after the listing: the stat of that one name fails, the others succeed
+  const later = [];
+  const real = await import("node:fs/promises");
+  const statFn = async path => { if (path.endsWith("gone.jsonl")) { const error = new Error("vanished"); error.code = "ENOENT"; throw error; } return real.stat(path); };
+  const listed = (await transcriptFiles([root], fromMs, later, { statFn })).map(path => path.split("/").pop()).sort();
+  assert.deepEqual(listed, ["good.jsonl", "later.jsonl"]);
+  assert.match(later.join("\n"), /会话记录读不了（gone\.jsonl：ENOENT），只有这一个文件没有核对/);
+  assert.match(later.join("\n"), /dangling\.jsonl/);
+  // 3. end to end: readTranscripts still reads the good one, the report is incomplete, the exit code is not zero
+  const all = [];
+  const transcripts = await readTranscripts([root], fromMs, Date.parse("2026-11-13T00:00:00Z"), all);
+  assert.equal(transcripts.length, 3, "good, gone and later are all read; only the dangling link is not");
+  assert.ok(transcripts.some(item => item.commands.some(command => command.command.includes("merge-gate.mjs"))));
+  assert.match(all.join("\n"), /会话记录读不了（dangling\.jsonl：ENOENT）/);
+  assert.equal(exitCodeFor({ problems: all }), 2);
+});
+
+// ---- Task ac254c1a, 2026-11-16: the formal run on the deployed code said "核对不完整" for 1,157 lines that were all Claude `api-request-blob` records.
+// Real shape (from a session record): { type, hash, message: { role, content: [thinking, tool_use, …] }, sessionId } and NO timestamp, by design.
+const blobLine = (command, sessionId = "5f6ad90d-3021-4219-8384-1eb90b06d356") => JSON.stringify({ type: "api-request-blob", hash: "9f2c1d", sessionId,
+  message: { role: "assistant", content: [{ type: "thinking", thinking: "…" }, { type: "tool_use", id: "toolu_01blob", name: "Bash", input: { command } }] } });
+const assistantLine = (at, command, id = "toolu_01blob") => JSON.stringify({ type: "assistant", timestamp: at, sessionId: "5f6ad90d", message: { role: "assistant", content: [{ type: "tool_use", id, name: "Bash", input: { command } }] } });
+const assistantNoTime = command => JSON.stringify({ type: "assistant", sessionId: "5f6ad90d", message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_02", name: "Bash", input: { command } }] } });
+
+test("B1. an api-request-blob (a mirror of the API request, no timestamp by design) is neither a command nor a bad line; its neighbouring assistant line still gives the command with its time", () => {
+  const blob = inspectLine(blobLine("node /x/merge-gate.mjs merge --pr 9 --execute"));
+  assert.deepEqual(blob, { commands: [], results: [], defect: null });
+  const real = inspectLine(assistantLine("2026-11-12T07:00:00.000Z", "node /x/merge-gate.mjs merge --pr 9 --execute"));
+  assert.equal(real.defect, null);
+  assert.deepEqual(real.commands.map(item => [item.at, item.callId]), [["2026-11-12T07:00:00.000Z", "toolu_01blob"]]);
+  assert.deepEqual(commandsOfLine(blobLine("ls")), []);
+});
+
+test("B2. a call record that really has no time is still a defect: a Claude assistant line and a Codex function_call, and an unreadable time; bad JSON is still a defect", () => {
+  assert.equal(inspectLine(assistantNoTime("ls")).defect, "缺时间戳或时间戳读不出");
+  assert.equal(inspectLine(JSON.stringify({ type: "response_item", payload: { type: "function_call", call_id: "c", arguments: JSON.stringify({ cmd: "ls" }) } })).defect, "缺时间戳或时间戳读不出");
+  assert.equal(inspectLine(assistantLine("not-a-time", "ls")).defect, "缺时间戳或时间戳读不出");
+  assert.equal(inspectLine("{broken tool_use").defect, "JSON 无法解析");
+  // other records that mention tool_use without being calls: a tool_result in a user line, an attachment
+  assert.equal(inspectLine(JSON.stringify({ type: "user", timestamp: "2026-11-12T07:00:01Z", message: { content: [{ type: "tool_result", tool_use_id: "toolu_01blob", is_error: false, content: "ok" }] } })).defect, null);
+});
+
+test("B3. a transcript of real-shaped lines: blobs plus their assistant lines read clean (no 核对不完整, exit code 0); one real assistant line without a time makes it incomplete and is named by file and line", async () => {
+  const root = mkdtempSync(join(tmpdir(), "bcb-"));
+  const at = "2026-11-12T06:59:00Z";
+  const lines = [blobLine("node /x/merge-gate.mjs merge --pr 7 --execute"), assistantLine(at, "node /x/merge-gate.mjs merge --pr 7 --execute", "toolu_01a"), blobLine("ls"), assistantLine(at, "ls", "toolu_01b")];
+  writeFileSync(join(root, "real.jsonl"), `${lines.join("\n")}\n`);
+  const clean = [];
+  const transcripts = await readTranscripts([root], Date.parse("2026-11-12T00:00:00Z"), Date.parse("2026-11-13T00:00:00Z"), clean);
+  assert.deepEqual(clean, [], "1 blob per call: nothing is reported");
+  assert.equal(transcripts.length, 1);
+  assert.deepEqual(transcripts[0].commands.map(item => item.command), ["node /x/merge-gate.mjs merge --pr 7 --execute", "ls"], "each call once: the blobs add nothing");
+  assert.equal(exitCodeFor({ problems: clean }), 0);
+  writeFileSync(join(root, "real.jsonl"), `${[...lines, assistantNoTime("pwd")].join("\n")}\n`);
+  const dirty = [];
+  await readTranscripts([root], Date.parse("2026-11-12T00:00:00Z"), Date.parse("2026-11-13T00:00:00Z"), dirty);
+  assert.match(dirty.join("\n"), /会话记录有 1 行无法解析：real\.jsonl:5（缺时间戳或时间戳读不出）/);
+  assert.equal(exitCodeFor({ problems: dirty }), 2);
 });

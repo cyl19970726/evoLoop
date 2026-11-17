@@ -1,6 +1,7 @@
 import type { AppliedResult, Principal } from "@evoloop/contracts";
 import { DomainError, type Transaction } from "@evoloop/contracts/ports";
 import type { SessionLineCommand, SessionLineEntry } from "@evoloop/contracts/session-line";
+import { assertTaskDispatchAvailable } from "../task-dispatch-guard.js";
 
 type Effect = { kind: string; entityId: string; version: number };
 const TERMINAL_RUN = new Set(["completed", "failed", "interrupted"]);
@@ -15,7 +16,8 @@ const ok = (command: SessionLineCommand, entityId: string, version: number): App
  * pump's steps. Starting the Task, assigning it and reserving the Run are ordinary commands guarded by QUEUED_IN_SESSION_LINE.
  */
 export async function applySessionLine(tx: Transaction, principal: Principal, command: SessionLineCommand, now: string,
-  nextId: () => string): Promise<{ result: AppliedResult; effects: Effect[] }> {
+  nextId: () => string, businessActorForSession?: (projectId: string, sessionId: string) => Promise<string | null>):
+  Promise<{ result: AppliedResult; effects: Effect[] }> {
   const lines = tx.sessionLines ?? fail("CAPABILITY_UNAVAILABLE", "Session line storage is unavailable");
   const actorId = principal.actorId;
   const event = (sessionId: string, entry: SessionLineEntry | null, kind: string, detail: Record<string, unknown>) =>
@@ -46,16 +48,22 @@ export async function applySessionLine(tx: Transaction, principal: Principal, co
     if (task.version !== command.expectedTaskVersion) throw new DomainError("VERSION_CONFLICT", "Task changed", task.version);
     if (task.state === "done" || task.state === "cancelled") fail("TASK_NOT_OPEN", "a finished Task cannot wait in a line; reopen it first");
     if (task.owner !== session.roleId) fail("ROLE_MISMATCH", "Task owner must match the Session's Role");
+    await assertTaskDispatchAvailable(tx, task, command.operationId);
     if ((await tx.listRuntimeRuns(task.id)).some(run => !TERMINAL_RUN.has(run.state))) fail("TASK_BUSY", "resolve the Task's current Run before queueing it");
     if (command.source === "schedule" && !command.scheduleId) fail("SCHEDULE_REQUIRED", "a scheduled entry names its schedule");
     if (await lines.getLiveSessionLineEntryForTask(task.id)) fail("TASK_ALREADY_QUEUED", "This Task is already waiting in a Session line");
-    if (await lines.getSessionLine(session.id)) await touch(session.id);
+    const line = await lines.getSessionLine(session.id);
+    const businessActorId = await businessActorForSession?.(command.projectId, session.id) ?? null;
+    if (businessActorId === (line?.controllerActorId ?? actorId))
+      fail("SELF_SESSION_LINE_FORBIDDEN", `不能把 Task 排进控制者自己的 Session 队伍（${session.id}）；自己的 Task 直接执行，不经队伍`);
+    if (line) await touch(session.id);
     else
       await lines.insertSessionLine({ projectId: command.projectId, sessionId: session.id, controllerActorId: actorId, version: 1, createdAt: now, updatedAt: now });
     const entry = await lines.insertSessionLineEntry({ projectId: command.projectId, id: nextId(), sessionId: session.id, taskId: task.id,
       state: "queued", step: null, attempt: 0, stepTry: 0, assignOperationId: null, startOperationId: null, reassignOperationId: null,
       reserveOperationId: null, messageId: null, suspendReason: null, withdrawnReason: null, source: command.source, sourceActorId: actorId,
-      scheduleId: command.scheduleId ?? null, releaseRule: "run_end", runId: null, runEndedAt: null, version: 1, appendedAt: now, updatedAt: now });
+      reworkObservationId: null, reworkDeliveryId: null, scheduleId: command.scheduleId ?? null, releaseRule: "run_end",
+      runId: null, runEndedAt: null, version: 1, appendedAt: now, updatedAt: now });
     await event(session.id, entry, "entry.appended", { source: command.source, scheduleId: command.scheduleId ?? null, position: entry.position, reason: command.reason });
     return { result: ok(command, entry.id, entry.version), effects: [effect(entry)] };
   }
@@ -98,8 +106,16 @@ export async function applySessionLine(tx: Transaction, principal: Principal, co
   }
   if (command.type === "line.resume") {
     if (entry.state !== "suspended") fail("ENTRY_NOT_SUSPENDED", "only a suspended entry can be resumed");
+    let cancelled: { messageId: string; reason: string } | null = null;
+    const pending = entry.messageId ? await tx.sessionMessages?.getSessionMessage(entry.messageId) : null;
+    if (pending?.state === "queued" && pending.target.kind === "owned" && pending.target.sessionId === entry.sessionId) {
+      const reason = "SESSION_LINE_ATTEMPT_SUPERSEDED: 上一尝试的执行确认请求未送达，恢复后重新请求";
+      await tx.sessionMessages!.updateSessionMessage({ ...pending, state: "cancelled", blockedReason: reason,
+        version: pending.version + 1, updatedAt: now }, pending.version);
+      cancelled = { messageId: pending.id, reason };
+    }
     const next = await save(entry, { state: "queued", step: null, suspendReason: null });
-    await event(entry.sessionId, next, "entry.resumed", { reason: command.reason });
+    await event(entry.sessionId, next, "entry.resumed", { reason: command.reason, cancelledMessage: cancelled });
     return { result: ok(command, entry.id, next.version), effects: [effect(next)] };
   }
   if (command.type === "line.begin") {

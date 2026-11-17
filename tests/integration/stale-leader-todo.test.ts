@@ -26,7 +26,7 @@ test("a superseded queued Leader todo preserves history, frees the next message,
   });
   const projectId = randomUUID(), sessionId = randomUUID(), roleId = fixtureRoleId("stale-todo-leader");
   const actorId = "stale-todo-owner";
-  const principal = { actorId, projectIds: [projectId], permissions: ["read", "write", "review"] as Array<"read"|"write"|"review"> };
+  const principal = { actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
   const uow = new PostgresUnitOfWork(pool);
   const service = new WorkflowService({ uow, clock: { now: () => new Date().toISOString() },
     ids: { next: randomUUID }, hasher: { hash: (value: string) => createHash("sha256").update(value).digest("hex") } });

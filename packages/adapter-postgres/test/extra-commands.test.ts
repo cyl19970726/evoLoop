@@ -17,9 +17,9 @@ const pool = new pg.Pool({ connectionString, options: `-c search_path=${schema}`
 const workflow = new WorkflowService({ uow: new PostgresUnitOfWork(pool), clock: { now: () => new Date().toISOString() },
   ids: { next: randomUUID }, hasher: { hash: value => createHash("sha256").update(value).digest("hex") } });
 const projectId = randomUUID(), otherProject = randomUUID();
-const who = (permissions: Permission[], extraCommands?: ExtraCommand[], projects = [projectId]): Principal =>
-  ({ actorId: "docs-arch", projectIds: projects, permissions, ...(extraCommands ? { extraCommands } : {}) });
-const reviewer = who(["read", "write", "review"]);
+const who = (permissions: Permission[], extraCommands?: ExtraCommand[], projects = [projectId], decisions = false): Principal =>
+  ({ actorId: "docs-arch", projectIds: projects, permissions, decisions, ...(extraCommands ? { extraCommands } : {}) });
+const reviewer = who(["task", "document", "session", "management"], undefined, [projectId], true);
 
 before(async () => {
   await migrate(connectionString, schema);
@@ -33,7 +33,7 @@ after(async () => {
 
 async function sampleDocument(project = projectId) {
   const documentId = randomUUID();
-  const created = await workflow.execute(who(["read", "write", "review"], undefined, [project]), { type: "document.create", projectId: project, operationId: randomUUID(), documentId, title: "Sample", body: "# s", kind: "spec" });
+  const created = await workflow.execute(who(["document"], undefined, [project]), { type: "document.create", projectId: project, operationId: randomUUID(), documentId, title: "Sample", body: "# s", kind: "spec" });
   assert.equal(created.status, "applied");
   return documentId;
 }
@@ -42,24 +42,24 @@ const archive = (p: Principal, documentId: string, expectedVersion: number, proj
 
 test("an identity with write and the archive/restore extra commands can archive and restore, and nothing else needing review", async () => {
   const documentId = await sampleDocument();
-  const maintainer = who(["read", "write"], ["document.archive", "document.restore"]);
+  const maintainer = who(["document"], ["document.archive", "document.restore"]);
   const archived = await archive(maintainer, documentId, 1);
   assert.equal(archived.status, "applied", JSON.stringify(archived));
   const restored = await archive(maintainer, documentId, 2, projectId, "document.restore");
   assert.equal(restored.status, "applied", JSON.stringify(restored));
-  await assert.rejects(workflow.execute(maintainer, { type: "task.start", projectId, operationId: randomUUID(), taskId: randomUUID(), expectedVersion: 1, reason: "x" } as never), /Permission review is required/);
-  await assert.rejects(workflow.execute(maintainer, { type: "task.close", projectId, operationId: randomUUID(), taskId: randomUUID(), expectedVersion: 1, acceptanceResult: "met", acceptanceEvidence: "e", reason: "x" } as never), /Permission review is required/);
-  await assert.rejects(workflow.execute(maintainer, { type: "document.publish", projectId, operationId: randomUUID(), documentId, expectedVersion: 3, revisionId: randomUUID(), reason: "x" } as never), /Permission review is required/);
+  await assert.rejects(workflow.execute(maintainer, { type: "task.start", projectId, operationId: randomUUID(), taskId: randomUUID(), expectedVersion: 1, reason: "x" } as never), /Permission task is required/);
+  await assert.rejects(workflow.execute(maintainer, { type: "task.close", projectId, operationId: randomUUID(), taskId: randomUUID(), expectedVersion: 1, acceptanceResult: "met", acceptanceEvidence: "e", reason: "x" } as never), /Permission task is required/);
+  await assert.rejects(workflow.execute(maintainer, { type: "document.publish", projectId, operationId: randomUUID(), documentId, expectedVersion: 3, revisionId: randomUUID(), reason: "x" } as never), /Decision authority for document is required/);
 });
 
 test("each extra command grants only itself, and only with write in the project", async () => {
   const documentId = await sampleDocument();
-  assert.equal((await archive(who(["read", "write"], ["document.restore"]), documentId, 1).catch(e => e)).code, "FORBIDDEN", "restore does not allow archive");
-  assert.equal((await archive(who(["read", "write"]), documentId, 1).catch(e => e)).code, "FORBIDDEN", "without the list, review is still required");
-  assert.equal((await archive(who(["read"], ["document.archive"]), documentId, 1).catch(e => e)).code, "FORBIDDEN", "the list does not replace write");
+  assert.equal((await archive(who(["document"], ["document.restore"]), documentId, 1).catch(e => e)).code, "FORBIDDEN", "restore does not allow archive");
+  assert.equal((await archive(who(["document"]), documentId, 1).catch(e => e)).code, "FORBIDDEN", "without the list, decision authority is still required");
+  assert.equal((await archive(who([], ["document.archive"]), documentId, 1).catch(e => e)).code, "FORBIDDEN", "the list does not replace document permission");
   const other = await sampleDocument(otherProject);
-  assert.equal((await archive(who(["read", "write"], ["document.archive"]), other, 1, otherProject).catch(e => e)).code, "FORBIDDEN", "nor reach a project the identity does not belong to");
-  assert.equal((await archive(who(["read", "write"], ["document.archive"]), documentId, 1)).status, "applied");
-  assert.equal((await archive(who(["read", "write"], ["document.archive"]), documentId, 2, projectId, "document.restore").catch(e => e)).code, "FORBIDDEN", "an archiver cannot restore");
+  assert.equal((await archive(who(["document"], ["document.archive"]), other, 1, otherProject).catch(e => e)).code, "FORBIDDEN", "nor reach a project the identity does not belong to");
+  assert.equal((await archive(who(["document"], ["document.archive"]), documentId, 1)).status, "applied");
+  assert.equal((await archive(who(["document"], ["document.archive"]), documentId, 2, projectId, "document.restore").catch(e => e)).code, "FORBIDDEN", "an archiver cannot restore");
   assert.equal((await archive(reviewer, documentId, 2, projectId, "document.restore")).status, "applied", "a reviewer is unchanged");
 });
