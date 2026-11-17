@@ -13,6 +13,9 @@ const nextSteps: Record<LeaderWorkPhase, string> = {
   running: "等这次执行结束；执行结束不等于验收通过",
   awaiting_delivery: "等执行的智能体提交结果；没有交付前不推定结果",
   awaiting_acceptance: "等验收者核对交付与实际使用",
+  awaiting_prerequisite: "验收者已签 used，不需要再验收；等所列前置任务完成后关闭",
+  awaiting_release: "验收者已签 used，不需要再验收；等发布责任者发布后关闭",
+  awaiting_close: "验收者已签 used，不需要再验收；等负责关闭的责任者关闭",
   rework: "先核对失败的结果，再安排返工",
   blocked: "先解决依赖、待复核或暂停，再安排承接",
   unknown: "上次执行结果未知，先核对，不要重复派发",
@@ -118,8 +121,10 @@ export function blockedReasons(item: BlockFacts): string[] {
   return reasons;
 }
 
-/** The next step for one piece of work: blocked work names what holds it; every other phase uses `workNextStep`. */
-export function workItemNextStep(item: BlockFacts & Pick<LeaderWorkTask, "phase">): string {
+/** The next step for one piece of work: blocked work names what holds it, rework after the consumer's answer says so; every other phase uses `workNextStep`. */
+export function workItemNextStep(item: BlockFacts & Pick<LeaderWorkTask, "phase" | "consumerAnswer">): string {
+  // Rework that follows the declared consumer's answer is not "check a failed result": the delivery was judged, nobody is owed an acceptance (defect a29100df).
+  if (item.phase === "rework" && item.consumerAnswer) return `验收者已判 ${item.consumerAnswer}，不需要再验收；先在原任务安排返工并重新交付，新交付登记后才回到待验收`;
   const reasons = item.phase === "blocked" ? blockedReasons(item) : [];
   return reasons.length ? `${reasons.join("；")}；处理后再安排承接` : workNextStep(item.phase);
 }

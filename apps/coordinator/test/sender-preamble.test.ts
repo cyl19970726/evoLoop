@@ -5,7 +5,7 @@ import type { RuntimeSessionRecord } from '@evoloop/contracts';
 import type { SessionMessageRecord } from '@evoloop/contracts/session-messages';
 import type { SessionMessageService } from '@evoloop/core/session-messages';
 import { SessionMessagePump } from '../src/session-messages/pump.ts';
-import { legacyPreamble, senderPreamble, type SenderClass } from '../src/session-messages/sender.ts';
+import { createSenderClassOf, legacyPreamble, senderFromMessage, senderPreamble, type SenderClass } from '../src/session-messages/sender.ts';
 
 const claim = "Act within the user's request and project identity";
 const projectId = randomUUID();
@@ -31,8 +31,8 @@ test('only the user themself is said to be making the user\'s request', () => {
   assert.match(senderPreamble({ kind: 'unknown', actorId: 'u' }), /class is not recorded/);
 });
 
-const continued = async (sender: SenderClass | null, hashed: (op: string, m: SessionMessageRecord) => string) => {
-  const target = randomUUID(), m = { ...message(target), state: 'unknown' as SessionMessageRecord['state'] }, operationId = randomUUID();
+const continued = async (sender: SenderClass | ((m: SessionMessageRecord) => SenderClass) | null, hashed: (op: string, m: SessionMessageRecord) => string, edit: Partial<SessionMessageRecord> = {}) => {
+  const target = randomUUID(), m = { ...message(target), state: 'unknown' as SessionMessageRecord['state'], ...edit }, operationId = randomUUID();
   const expected = hashed(operationId, m);
   const p = { operationId, state: 'unknown', nativeTurnId: null, readOnlyPolicyFingerprint: 'a'.repeat(64),
     preTurnProof: { status: 'approved', inputHash: createHash('sha256').update(expected).digest('hex') } };
@@ -44,7 +44,7 @@ const continued = async (sender: SenderClass | null, hashed: (op: string, m: Ses
     startConversationTurn: async (_b: unknown, text: string) => { sent = text; return { id: 't', status: 'inProgress', completedAtUtc: null }; },
     listTurns: async () => ({ data: [{ id: 't', status: 'inProgress', completedAtUtc: null }], nextCursor: null }), listItems: async () => ({ data: [], nextCursor: null }) };
   const pump = new SessionMessagePump({ service, runtime: () => runtime, projects: async () => [projectId], canStart: async () => true, canWrite: () => true,
-    pollIntervalMs: 1000, onError: e => { throw e; }, ...(sender ? { senderClass: async () => sender } : {}) });
+    pollIntervalMs: 1000, onError: e => { throw e; }, ...(sender ? { senderClass: async (message: SessionMessageRecord) => typeof sender === 'function' ? sender(message) : sender } : {}) });
   await pump.tick(); await pump.tick();
   return { sent, expected };
 };
@@ -118,10 +118,29 @@ test('rework counter-examples: an agent with no stated senderClass, an unknown i
 
 test('rework: the identity file accepts senderClass, rejects an unknown class and two credentials of one actor that disagree, and authentication carries it', () => {
   const token = (n: string) => n.repeat(32).slice(0, 32);
-  const entry = (extra: Record<string, unknown>) => ({ token: token('a'), actorId: 'requirements-claude-agent', projectIds: [project], permissions: ['read', 'write'], ...extra });
+  const entry = (extra: Record<string, unknown>) => ({ token: token('a'), actorId: 'requirements-claude-agent', projectIds: [project], permissions: ['task', 'document', 'session'], ...extra });
   const ok = authConfigSchema.parse([entry({ senderClass: 'requirements' })]);
   assert.equal(authenticate(`Bearer ${token('a')}`, ok)?.senderClass, 'requirements');
   assert.equal(authenticate(`Bearer ${token('a')}`, authConfigSchema.parse([entry({})]))?.senderClass, undefined, 'no stated class: none is invented');
   assert.throws(() => authConfigSchema.parse([entry({ senderClass: 'product' })]));
   assert.throws(() => authConfigSchema.parse([entry({ senderClass: 'requirements' }), entry({ token: token('b'), senderClass: 'leader' })]), /same senderClass/);
+});
+
+// ---- Task bedd0ef3: a message stored with the Hub origin is opened by the class its Hub grant states ----
+test('the pump opens a Hub message by the class of its Hub grant, and a local message of the same actor by the identity file', async () => {
+  const grants = (session: string) => [{ enabled: true, projectId, sessionId: session, senderActorId: 'acct_alice', senderKind: 'hub' as const, senderClass: 'user' as const }];
+  const resolve = (m: SessionMessageRecord) => createSenderClassOf({ identities: [{ actorId: 'acct_alice', projectIds: [projectId], identityKind: 'agent' }], notices: () => null, grants: grants(m.target.kind === 'owned' ? m.target.sessionId : '') })(senderFromMessage(m));
+  const probe = async (edit: Partial<SessionMessageRecord>) => {
+    const seen: SessionMessageRecord[] = [];
+    const out = await continued(m => { seen.push(m); return resolve(m); },
+      (op, m) => line(senderPreamble(resolve(m)))(op, m), { senderActorId: 'acct_alice', ...edit });
+    return { ...out, seen };
+  };
+  const hub = await probe({ senderOrigin: 'hub' });
+  assert.equal(hub.sent, hub.expected, "the exact opening for the user's own Hub account");
+  assert.ok(hub.sent!.includes(claim) && hub.sent!.includes('Sender: acct_alice (the user themself)'));
+  assert.equal(hub.seen[0]!.senderOrigin, 'hub', 'the pump hands the stored origin to the class judgment');
+  const local = await probe({});
+  assert.equal(local.sent, local.expected);
+  assert.ok(!local.sent!.includes(claim) && local.sent!.includes('an identity whose class is not recorded'), 'the same actor ID without the Hub origin is not the user');
 });

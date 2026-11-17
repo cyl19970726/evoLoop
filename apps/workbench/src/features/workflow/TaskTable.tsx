@@ -2,6 +2,7 @@
 // reconciliation. Selecting a row shows its facts in the right column without leaving the table; the open link
 // goes to the task. The table scrolls sideways in its own region; the page never does. `stacked` is the compact list
 // phones get by default: one column whose rows carry the title, status, type, taker and latest progress.
+import { currentStageText, usedWaitResponsibility } from "../../shared/leaderWorkLoad";
 import React from "react";
 import { useQueries } from "@tanstack/react-query";
 import type { Task, TaskAttentionItem } from "@evoloop/contracts";
@@ -186,7 +187,7 @@ function TableRow({ task, list, projectId, selected, onSelect, linkFor, columns,
     <Button variant="link" aria-pressed={selected} onClick={() => onSelect(task.id)} className="min-w-0 flex-1 justify-start whitespace-normal text-left font-medium text-foreground">{title}</Button>
     <a href={linkFor(task.id)} aria-label={`打开任务：${task.title}`} title="打开任务" className="shrink-0 rounded-sm p-0.5 text-muted-foreground hover:bg-field hover:text-foreground"><ArrowUpRight size={15} aria-hidden="true" /></a>
   </div>;
-  const rowClass = cn("border-b border-border", selected ? "bg-selected" : "hover:bg-field/50");
+  const rowClass = cn("border-b border-border", selected ? "bg-accent" : "hover:bg-field/50");
   // The compact list: what a phone screen needs to pick a task, in one column; the six columns stay in 表格.
   if (stacked) return <tr className={rowClass} data-task-row={task.id}>
     <td className={cell}>
@@ -209,7 +210,7 @@ function TableRow({ task, list, projectId, selected, onSelect, linkFor, columns,
     <td className={cell}>
       <StatusTag tone={shown.tone} label={shown.label} />
       {taskStateNote && <span className="mt-1 block text-caption text-muted-foreground">{taskStateNote}</span>}
-      {projection?.timing && <span className="mt-0.5 block text-caption text-muted-foreground" data-stage-time="">{timingStageLabel[projection.timing.current.stage] ?? "阶段未知"} · 本阶段 {timingDuration(projection.timing.current.elapsedMs)} · {waitingText(projection.timing.current.waitingFor, projection.assignment)}</span>}
+      {projection?.timing && <span className="mt-0.5 block text-caption text-muted-foreground" data-stage-time="">{currentStageText(projection.timing.current.stage, projection.phase, timingStageLabel[projection.timing.current.stage] ?? "阶段未知")} · 本阶段 {timingDuration(projection.timing.current.elapsedMs)} · {usedWaitResponsibility(projection) ?? waitingText(projection.timing.current.waitingFor, projection.assignment)}</span>}
     </td>
     <td className={cell} data-owner-cell="">
       {agent ? <>{agent}

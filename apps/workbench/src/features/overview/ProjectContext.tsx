@@ -126,7 +126,7 @@ export function ProjectContext({ token, projectId, refresh, active }: { token: s
   </div>;
   const choose = (id: string) => setSelection({ scope, id });
   const stageButton = (item: Stage) => <Button variant="row" key={item.id} aria-pressed={stage?.id === item.id} onClick={() => choose(item.id)}
-    className="rounded-lg px-3 py-2 text-small aria-pressed:bg-raised aria-pressed:shadow-sm">
+    className="rounded-lg px-3 py-2 text-small aria-pressed:bg-accent aria-pressed:text-accent-strong">
     <span className="line-clamp-2">{item.deliverable}</span>
   </Button>;
   return <section data-ui="" className="project-context flex flex-col gap-3" aria-label="目标、当前取舍与使用反馈" aria-busy={reading}>
@@ -169,7 +169,7 @@ export function ProjectContext({ token, projectId, refresh, active }: { token: s
             {attention.review?.decision === "deferred" && <details className="text-small"><summary className="cursor-pointer text-text-secondary">已暂缓的原因</summary><p className="mt-1 text-text-secondary">{attention.review.reason}</p></details>}
             <a className="mt-auto flex w-fit items-center gap-1 text-small font-medium text-foreground hover:underline" href={`${href(projectId, "task", attention.taskId)}${attention.delivery ? "?tab=delivery" : ""}`}>{attention.delivery ? "核对交付与使用" : "查看当前工作"} <ArrowRight size={14} aria-hidden="true" /></a>
             <FullIdentifiers rows={[{ label: "任务", value: attention.taskId }, { label: "下一责任", value: attention.responsible.id }]} />
-          </> : <p className="text-small text-text-secondary">{!value || reading ? "正在核对当前工作…" : value.workProblem || !value.complete ? "已读范围尚不能确定当前需核对事项，请进入任务列表。" : "已读工作中没有未关闭的业务任务。"}</p>}
+          </> : <p className="text-small text-text-secondary">{!value || reading ? "正在核对当前工作…" : value.workProblem || !value.complete ? "已读范围尚不能确定当前需核对事项，请进入任务列表。" : "现在没有等你判断的事。"}</p>}
           {value?.workProblem && <details className={problem}><summary className="cursor-pointer">工作来源或使用回读存在缺项</summary>{value.workProblem}</details>}
           {value?.retainedWork && <p className={problem}>以上为上次工作，读于 {value.workObservedAt ? date(value.workObservedAt) : "上次读取"}，请回原任务核对当前状态。</p>}
         </section>

@@ -363,7 +363,8 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
   const activity = [...historyPages.flatMap(page => page.items), ...current.activity].filter((item, index, all) => all.findIndex(other => other.id === item.id) === index)
     .sort((a, b) => BigInt(a.sequence) === BigInt(b.sequence) ? 0 : BigInt(a.sequence) > BigInt(b.sequence) ? -1 : 1).slice(0, 300);
   const exactTiming = timing.data && !timing.isError ? timing.data.timing : null;
-  const queueHref = href(projectId, "runtime");
+  // The queue is arrangement (统筹安排); recovery facts are 运行与接入.
+  const queueHref = href(projectId, "arrangement"), recoveryHref = href(projectId, "runtime");
 
   const now = nowWork({ session, work, assignments: current.assignments, relationLabel, messageRunning, idleResult, titleOf,
     questionCount: discussionQuestionCount + nativeQuestionCount,
@@ -410,7 +411,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
   const nextSection = <section aria-label="接下来" className="flex min-w-0 flex-col gap-2">
     <div className={`session-next-work ${card}`}>
       <div className={cardHeading}><h2 className="text-label font-semibold text-foreground">接下来{next.items.length > 0 && <span className="ml-1.5 font-normal text-muted-foreground">{next.items.length} 项</span>}</h2>
-        <a className="text-caption text-primary hover:underline" href={queueHref}>在分工与运行中查看</a></div>
+        <a className="text-caption text-primary hover:underline" href={queueHref}>在统筹安排中查看</a></div>
       {next.items.length ? <ol className="session-task-summary flex min-w-0 flex-col gap-1.5">{next.items.slice(0, 3).map(nextRow)}</ol>
         : <p className="text-small text-text-secondary">{next.empty}</p>}
       {next.items.length > 3 && <CollapsibleRow summary={`还有 ${next.items.length - 3} 项`}><ol className="flex min-w-0 flex-col gap-1.5">{next.items.slice(3).map(nextRow)}</ol></CollapsibleRow>}
@@ -470,11 +471,11 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
       <section aria-label="资源观察" className="flex min-w-0 flex-col gap-2">
         <h3 className="text-label font-semibold">资源观察</h3>
         <p className={mutedText}>配置模型、实际模型和用量分别列出；没有可靠来源时写明原因，不填 0。</p>
-        {session.kind === "owned" && session.target.kind === "owned" && <SessionRecoveryResources read={recoveryRead} queueHref={queueHref} />}
+        {session.kind === "owned" && session.target.kind === "owned" && <SessionRecoveryResources read={recoveryRead} queueHref={recoveryHref} />}
         <FactList rows={([["configuredModel", "配置模型"], ["actualModel", "实际运行模型"], ["inputTokens", "输入用量（token）"], ["outputTokens", "输出用量（token）"], ["cost", "费用"], ["processMemory", "进程内存"]] as const)
           .map(([key, label]) => { const item = current.resources[key]; return [label, item.value === null ? `不可用 · ${item.unavailableReason ?? "没有可靠观察来源"}` : `${item.value}${item.unit ? ` ${item.unit}` : ""} · ${shortTime(item.observedAt)}`] as [string, ReactNode]; })} />
       </section>
-      {session.kind === "owned" && session.target.kind === "owned" && <SessionRecoveryOverview read={recoveryRead} runtimeState={session.runtimeState} queueHref={queueHref} />}
+      {session.kind === "owned" && session.target.kind === "owned" && <SessionRecoveryOverview read={recoveryRead} runtimeState={session.runtimeState} queueHref={recoveryHref} />}
       {session.kind === "owned" && session.target.kind === "owned" && <SessionExecutionFacts projectId={projectId} sessionId={session.target.sessionId} progress={observation.progress} currentRead={nativeReadCurrent && !observation.error} refreshKey={`${current.metadata.generatedAt}:${readAgain}`} />}
       {session.kind === "owned" && session.target.kind === "owned" && <NativeSessionPanel projectId={projectId} sessionId={session.target.sessionId} questions={native.questions} progress={observation.progress} progressError={observation.error} progressCurrentRead={nativeReadCurrent && !observation.error} readError={(snapshotRead.isError ? errorText(snapshotRead.error) : "") || native.error} replyBlockedReason={null} onAnswer={answerNative} taskHref={taskHref} section="diagnostics" />}
       <p className={mutedText}>工作区读于 {date(current.metadata.generatedAt)}。{current.metadata.partial || historyPages.some(page => page.metadata.partial) ? "来源只展示已读范围。" : ""}</p>
@@ -579,7 +580,7 @@ function OwnedQueue({ context, sessionId, enabled, queue }: { context: MutationC
     return items.filter(item => item.projectId === projectId);
   }, { enabled });
   if (!enabled) return null;
-  if (!queue) return <p className={mutedText}>这里暂时不能显示执行队列，请在“分工与运行”中查看。</p>;
+  if (!queue) return <p className={mutedText}>这里暂时不能显示执行队列，请在“统筹安排”中查看。</p>;
   return <>
     {(sessions.isError || runs.isError) && <p className={mutedText}>运行或智能体列表没有读回；队列里的运行状态暂无法判断。</p>}
     <Suspense fallback={<p role="status" className={mutedText}>正在打开执行队列…</p>}>{queue({ sessionId, runs: runs.data ?? [], sessions: sessions.data ?? [] })}</Suspense>
@@ -588,6 +589,7 @@ function OwnedQueue({ context, sessionId, enabled, queue }: { context: MutationC
 
 function SessionProfileForm({ context, snapshot, onApplied }: { context: MutationContext; snapshot: SessionSnapshot; onApplied(): void }) {
   const profile = snapshot.session.profile;
-  return <ActionForm context={{ ...context, draftScope: `session-profile:${snapshot.session.key}`, draftBaseline: `${profile?.version ?? 0}` }} review title="设置展示信息"
+  return <ActionForm context={{ ...context, draftScope: `session-profile:${snapshot.session.key}`, draftBaseline: `${profile?.version ?? 0}` }}
+    requiredPermissions={["session"]} decision title="设置展示信息"
     fields={sessionProfileFields(snapshot)} build={v => sessionProfileCommand(snapshot, v)} onApplied={onApplied} />;
 }

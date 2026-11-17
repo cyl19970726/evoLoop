@@ -45,7 +45,7 @@ async function open(t: import("node:test").TestContext, provider: "codex" | "cla
     const root = `/api/projects/${projectId}`;
     const json = (value: unknown, status = 200) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); };
     if (url.pathname.startsWith("/api/")) {
-      if (url.pathname === "/api/session") return json({ principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} });
+      if (url.pathname === "/api/session") return json({ principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} });
       if (url.pathname === root) return json({ id: projectId, title: "输入框测试项目", createdAt: stamp });
       if (url.pathname === "/api/commands" && req.method === "POST") { let text = ""; for await (const chunk of req) text += String(chunk); posted.push(JSON.parse(text)); return json({ status: "applied" }); }
       if (url.pathname === `${root}/roles/${roleId}/runtime`) return mode === "fails" ? json({ code: "RUNTIME_UNAVAILABLE", message: "运行时视图读取失败" }, 500) : json(runtimeView(provider, mode));

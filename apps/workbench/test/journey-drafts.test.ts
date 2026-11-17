@@ -16,7 +16,7 @@ const stageId = "43000003-0000-4000-8000-000000000003";
 const [reviewOne, reviewTwo] = ["43000004", "43000005"].map(prefix => `${prefix}-0000-4000-8000-000000000000`);
 const stamp = "2026-11-10T00:00:00.000Z";
 const context: MutationContext = {
-  token: "", projectId, blocked: false, principal: { actorId: "writer", projectIds: [projectId], permissions: ["read", "write", "review"] } as MutationContext["principal"],
+  token: "", projectId, blocked: false, principal: { actorId: "writer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true } as MutationContext["principal"],
   onAttempt: async () => true, onKnown: () => undefined, onChanged: () => undefined,
 };
 const goal = (version: number, outcome: string): Goal => ({ projectId, id: goalId, version, outcome, constraints: "约束", consumer: "试用团队",

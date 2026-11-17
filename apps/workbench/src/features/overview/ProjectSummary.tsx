@@ -204,7 +204,7 @@ export function ProjectSummary({ token, projectId, refresh, active, flowGlance }
     <header className="flex items-start justify-between gap-3 compact:flex-wrap">
       <div className="min-w-0">
         <h1 className="text-title font-semibold text-foreground" tabIndex={-1}>项目总览</h1>
-        <p className="mt-1 hidden text-small text-text-secondary compact:block">从目标差距、实际使用和当前责任判断下一步。</p>
+        <p className="mt-1 text-small text-text-secondary" data-page-role="">总览：差距与下一判断。阶段全文、任务与回看在<a className="text-primary hover:underline" href={href(projectId, "journey")}>目标与阶段</a>。</p>
         <p className={cn(muted, "mt-1")}>{read}</p>
       </div>
       <Button onClick={() => setReread(value => value + 1)} disabled={pending}><RefreshCw aria-hidden="true" className={pending ? "animate-spin" : undefined} />重新读取</Button>

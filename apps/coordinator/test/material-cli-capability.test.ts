@@ -24,7 +24,7 @@ test("v2 handoff preflight rejects an old CLI or mismatched identity before nati
       "request NAME --project UUID --file JSON_FILE [--id UUID] [--receipt UUID for endpoints without server operation IDs]",
     ]; // e95c68c apps/cli/src/application.ts:82-95; generic request schema is not ordinary.submit.
     const fixture = async (hasHandoff: boolean, actorId = "recipient", hasSubmission = false,
-      permissions = ["read", "write"]) => writeFile(script,
+      permissions = ["task", "document", "session"]) => writeFile(script,
       `const action=process.argv[2];\n`+
       `if(action==='help')console.log(JSON.stringify({commands:${JSON.stringify(hasHandoff ? oldCommandTable :
         ["run-input RUN_UUID --project UUID --hash SHA256"])} }));\n`+
@@ -42,9 +42,9 @@ test("v2 handoff preflight rejects an old CLI or mismatched identity before nati
       {fixedHandoff:true,ordinarySubmit:true}), false, "e95c68c wrapper has handoff but cannot submit");
     assert.equal(await supportsMaterialCli(command, "recipient", projectId,
       {fixedHandoff:false,ordinarySubmit:true}), false, "static Runs also reject the old wrapper");
-    await fixture(true, "recipient", true, ["read"]);
+    await fixture(true, "recipient", true, []);
     assert.equal(await supportsMaterialCli(command, "recipient", projectId,
-      {fixedHandoff:true,ordinarySubmit:true}), false, "the signer needs project write");
+      {fixedHandoff:true,ordinarySubmit:true}), false, "the signer needs an object-write class");
     await fixture(true, "recipient", true);
     assert.equal(await supportsMaterialCli(command, "recipient", projectId,
       {fixedHandoff:true,ordinarySubmit:true}), true);

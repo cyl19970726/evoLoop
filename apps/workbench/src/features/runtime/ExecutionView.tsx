@@ -1,8 +1,9 @@
-// 分工与运行 (docs/frontend/pages/team.md): the inner rail lists the project's managed agents (受管 Session); the
-// center shows the selected one, or with none selected the execution service, every agent, creating a new one, the
-// orchestration loop, queues and recorded runs. The right column holds the service facts and the selected agent's
+// 运行与接入 (docs/frontend/pages/team.md; was 运行与接入): the inner rail lists the project's managed agents (受管 Session); the
+// center shows the selected one, or with none selected the execution service, every agent, creating a new one and the
+// recorded runs. Who is free, the queues and the loops are arrangement and live only on 统筹安排 (Task 0f8c7a15). The right column holds the service facts and the selected agent's
 // identity. `/runtime?session={uuid}` selects an agent; that is also where the old deep link lands.
 import { useContext, useEffect, useRef, useState } from "react";
+import { hasDecisionAuthority } from "@evoloop/contracts";
 import { Plus, RefreshCw } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
@@ -16,20 +17,18 @@ import { ContextRailContent } from "../../shared/ui/ContextRail";
 import { FactList, PageSection, PanelSection, mutedText } from "../../shared/ui/PageParts";
 import { SectionBoundary } from "../../shared/ui/SectionBoundary";
 import { href } from "../../shared/ui/shared";
-import { OrchestrationPanel } from "../orchestration";
-import { ResidentQueuePanel } from "../workflow";
 import { AgentName } from "./AgentName";
 import { ManagedSessionCreate } from "./ManagedSessionCreate";
 import { ManagedSessionDetail, RoleLabel } from "./ManagedSessionDetail";
 import { RunList } from "./RunList";
-import { executionHref, fullGrants, permissionsText, sessionGroups, sessionStateLine, sessionStateText, sessionStateTone, sessionTargetNotice, uuidPattern } from "./executionPresentation";
+import { executionHref, faultLines, fullGrants, serviceLine, permissionsText, sessionGroups, sessionStateLine, sessionStateText, sessionStateTone, sessionTargetNotice, uuidPattern } from "./executionPresentation";
 import { useRoleNames } from "./useRoleNames";
 import { failureOf, type Failure } from "../../shared/errorPresentation";
 import { ErrorDetails } from "../../shared/ui/ErrorDetails";
 
 const stamp = (value: number) => new Date(value).toLocaleString("zh-CN", { hour12: false });
 
-export function ExecutionView({ context, refresh, sessionId }: { context: MutationContext; refresh: number; sessionId?: string }) {
+export function ExecutionView({ context, sessionId }: { context: MutationContext; refresh?: number; sessionId?: string }) {
   const { projectId } = context;
   const active = useContext(PageActive);
   const client = useQueryClient();
@@ -85,7 +84,7 @@ export function ExecutionView({ context, refresh, sessionId }: { context: Mutati
     : sessionsRead.isPending ? "正在读取受管智能体与运行…" : "受管智能体尚未读回。";
   const serviceFacts = status.data
     ? <FactList rows={[
-      ["执行服务", status.data.available ? "已接通" : `未接通${status.data.error ? `：${status.data.error}` : ""}`],
+      ["执行服务", serviceLine(status.data)],
       ["可创建智能体的完整权限授权", status.data.grants.length ? `${grants.length} 项（共 ${status.data.grants.length} 项授权）` : "当前身份在本项目没有执行授权"],
       ["读取时间", `${stamp(status.dataUpdatedAt)}${statusError ? "（本次核对失败，上次读回）" : ""}`],
     ]} />
@@ -94,7 +93,7 @@ export function ExecutionView({ context, refresh, sessionId }: { context: Mutati
     <ContextRailContent>
       <nav aria-label="受管智能体" className="flex flex-col gap-0.5 pt-1">
         <a href={href(projectId, "runtime")} aria-current={!sessionId ? "page" : undefined}
-          className={cn("rounded-lg px-3 py-1.5 text-small outline-none focus-visible:shadow-[var(--focus-ring)]", !sessionId ? "bg-raised font-medium text-foreground shadow-sm" : "text-text-secondary hover:bg-selected")}>运行总览与新建</a>
+          className={cn("rounded-lg px-3 py-1.5 text-small outline-none focus-visible:shadow-[var(--focus-ring)]", !sessionId ? "bg-accent font-medium text-accent-strong hover:bg-accent" : "text-text-secondary hover:bg-selected")}>运行总览与新建</a>
         {sessionsRead.isPending && <span className="px-3 py-2 text-caption text-muted-foreground">正在读取受管智能体…</span>}
         {sessionsError && <span className="px-3 py-2 text-caption text-destructive">{sessions.length ? "本次核对失败，下列是上次读回" : "受管智能体暂不可读"}；原因见中间页首。</span>}
         {groups.map(group => <div key={group.key} className="flex flex-col gap-0.5">
@@ -102,7 +101,7 @@ export function ExecutionView({ context, refresh, sessionId }: { context: Mutati
           {group.items.map(item => {
             const name = nameOf(item.roleId);
             return <a key={item.id} href={executionHref(projectId, item.id)} aria-current={sessionId === item.id ? "page" : undefined}
-              className={cn("flex flex-col rounded-lg px-3 py-1.5 outline-none focus-visible:shadow-[var(--focus-ring)]", sessionId === item.id ? "bg-raised shadow-sm" : "hover:bg-selected")}>
+              className={cn("flex flex-col rounded-lg px-3 py-1.5 outline-none focus-visible:shadow-[var(--focus-ring)]", sessionId === item.id ? "bg-accent hover:bg-accent" : "hover:bg-selected")}>
               <span className="truncate text-small text-foreground">{name.title ?? name.fallback}</span>
               <span className="truncate text-caption text-muted-foreground">{sessionStateLine(item)} · <AgentName projectId={projectId} sessionId={item.id} /></span>
             </a>;
@@ -122,8 +121,8 @@ export function ExecutionView({ context, refresh, sessionId }: { context: Mutati
       : <>
         <header className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="text-title font-semibold text-foreground" tabIndex={-1}>分工与运行</h1>
-            <p className="mt-1 text-small text-text-secondary">本项目授权并由 evoLoop 创建的受管智能体、它们的队列与运行。对话与活动在“智能体”空间。</p>
+            <h1 className="text-title font-semibold text-foreground" tabIndex={-1}>运行与接入</h1>
+            <p className="mt-1 text-small text-text-secondary" data-page-role="">运行与接入：执行服务、连接、恢复，以及本项目授权并由 evoLoop 创建的受管智能体和它们的运行。安排看<a href={href(projectId, "arrangement")} className="text-primary hover:underline">统筹安排</a>；对话与活动在“智能体”空间。</p>
             <p className={cn(mutedText, "mt-1")} role="status">{readLine}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -137,8 +136,16 @@ export function ExecutionView({ context, refresh, sessionId }: { context: Mutati
             ? <p className="text-small text-text-secondary">执行服务已接通。{grants.length ? `当前身份有 ${grants.length} 项可创建智能体的完整权限授权。` : status.data.grants.length
               ? "当前没有同时允许完整本机权限、无需逐次审批和联网的精确授权；请核对项目执行配置后再创建新智能体。" : "当前身份在本项目没有执行授权，不能创建新智能体。"}</p>
             : <Notice tone="waiting" title="执行服务尚未接通">{status.data.error || "已有运行记录仍保留；不自动重发结果未知的启动。"}</Notice>)}
+          {status.data?.available && (faultLines(status.data).length > 0 || status.data.error) && <Notice tone="waiting" title={faultLines(status.data).length ? `有 ${faultLines(status.data).length} 条运行故障未清除` : "执行服务有提示"} data-testid="runtime-faults">
+            {status.data.error && !(status.data.faults ?? []).some(fault => fault.message === status.data!.error) && <p>{status.data.error}</p>}   {/* the service puts the latest fault's sentence in `error` too; once is enough */}
+            {faultLines(status.data).length > 0 && <ul className="mt-1 flex flex-col gap-1">{faultLines(status.data).map(fault => <li key={fault.key}>
+              <span className="font-medium">{fault.title}</span>{fault.text && <span>：{fault.text}</span>}
+              {fault.sessionId && <> <a className="text-primary underline" href={executionHref(projectId, fault.sessionId)}>查看这个智能体</a></>}
+            </li>)}</ul>}
+            <p className="mt-1 text-caption">故障是服务当前仍记着的未核实事项；已有运行记录保留，不自动重发结果未知的启动。</p>
+          </Notice>}
           {statusError && <Notice tone="error">执行服务状态{status.data ? "本次核对失败，上面是上次读回" : "暂不可读"}：{statusError}<ErrorDetails error={status.error} /></Notice>}
-          {status.data && !status.data.available && context.principal.permissions.includes("review") && <Button className="w-fit" disabled={recovering} onClick={() => void recover()}>{recovering ? "恢复核对中…" : "受控恢复执行连接"}</Button>}
+          {status.data && !status.data.available && hasDecisionAuthority(context.principal, projectId, "management") && <Button className="w-fit" disabled={recovering} onClick={() => void recover()}>{recovering ? "恢复核对中…" : "受控恢复执行连接"}</Button>}
           {recoverError && <Notice tone="error">恢复未完成：{recoverError.text}。请先读取运行状态，不要重复发起。<ErrorDetails failure={recoverError} /></Notice>}
         </PageSection>
         {creating && status.data?.available && grants.length > 0 && <PageSection title="新建受管智能体">
@@ -158,11 +165,6 @@ export function ExecutionView({ context, refresh, sessionId }: { context: Mutati
               </li>;
             })}</ul>
           </div>)}
-        </PageSection>
-        <PageSection title="编排与队列">
-          <SectionBoundary label="编排"><OrchestrationPanel key={`${projectId}:${context.principal.actorId}`} projectId={projectId}
-            refresh={refresh + epoch} verifiedRuns={runsCurrent ? runs : null} /></SectionBoundary>
-          <SectionBoundary label="队列"><ResidentQueuePanel context={context} runs={runs} sessions={sessions} /></SectionBoundary>
         </PageSection>
         <PageSection title="运行记录" description="收到通知、读取材料、采用判断与真实效果分别留证；原生完成状态不会自动关闭任务。">
           {runsRead.isPending ? <LoadingState lines={2} label="正在读取运行" />

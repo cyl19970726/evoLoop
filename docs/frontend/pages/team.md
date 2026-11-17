@@ -2,6 +2,25 @@
 
 团队页说明每项持续职责的目标、承载它的智能体、运行时与 skill，以及分工讨论与组织复盘。具体实例的对话与活动在 [Sessions](sessions.md)。
 
+## 团队里的两个入口（Task 0f8c7a15）
+
+| 页面 | 只做什么 |
+| --- | --- |
+| 统筹安排（`/arrangement`） | 唯一的 Leader 首页：谁承接、谁空闲、队伍、冲突、动态，以及编排与队列（见 [Sessions](sessions.md)） |
+| 运行与接入（`/runtime`，原“分工与运行”） | 执行服务、连接、恢复、受管智能体与运行记录；标题下一句“安排看统筹安排”，链到统筹安排 |
+
+| 旧地址 | 现在 |
+| --- | --- |
+| `/runtime`、`/runtime?session={UUID}` | 不变，仍是运行与接入，选中该受管智能体 |
+| `/runtime?session={含冒号的键}` | 跳到智能体对话 `/sessions?session=` |
+| `/sessions`（无参数） | 智能体目录页，页上有“统筹安排”入口 |
+| `/sessions?view=flow` | 跳到 `/arrangement?view=flow` |
+
+| 前后对照 | 改前 | 改后 |
+| --- | --- | --- |
+| 运行与接入 | [1440](../../assets/frontend-pages/team-runtime-before-1440.png)、[390](../../assets/frontend-pages/team-runtime-before-390.png) | [1440](../../assets/frontend-pages/team-runtime-after-1440.png)、[390](../../assets/frontend-pages/team-runtime-after-390.png) |
+| 统筹安排（改前在 `/sessions`，改后在团队下） | [1440](../../assets/frontend-pages/arrangement-before-1440.png)、[390](../../assets/frontend-pages/arrangement-before-390.png) | [1440](../../assets/frontend-pages/team-arrangement-after-1440.png)、[390](../../assets/frontend-pages/team-arrangement-after-390.png) |
+
 ## 这一页回答什么
 
 - 项目有哪些持续职责，哪些已建立、在试行或未建立？
@@ -11,23 +30,23 @@
 
 ## 布局
 
-| 栏 | 职责（`/roles?role=`） | 分工与运行（`/runtime?session=`） | 分工讨论（`/discussions?discussion=`） |
+| 栏 | 职责（`/roles?role=`） | 运行与接入（`/runtime?session=`） | 分工讨论（`/discussions?discussion=`） |
 | --- | --- | --- | --- |
 | 内层栏 | 职责目录：业务、系统、提议与已关闭 | 受管智能体：就绪、准备中、需要核对、已关闭 | 讨论列表：当前分工 / 下一阶段 / 全部 |
-| 中间 | 所选职责：目标与范围、提出依据、承载与业务领域、按状态给出的下一步、修订与交接历史、相关讨论；未选时为基础职责、全部职责和提出试行 | 所选智能体：身份与权限、队列、它的运行、关闭条件、线程历史；未选时为执行服务、全部智能体、新建、编排与队列、运行记录 | 所选讨论：准备 → 交接 → 决定；`?new=1` 打开准备表单 |
-| 去智能体页 | 承载里的“在智能体空间打开”带返回，智能体页首写“返回职责” | “在智能体空间打开”、运行的智能体链接写“返回分工与运行” | 关系里的智能体链接写“返回分工讨论”（`shared/returnLink.ts`） |
+| 中间 | 所选职责：目标与范围、提出依据、承载与业务领域、按状态给出的下一步、修订与交接历史、相关讨论；未选时为基础职责、全部职责和提出试行 | 所选智能体：身份与权限、队列、它的运行、关闭条件、线程历史；未选时为执行服务、全部智能体、新建、运行记录（编排与队列已移到统筹安排）。**执行服务**接通不等于没有问题：服务读回里有 error 或 faults 时，“已接通”后面同时写故障条数，并在块里列出每条故障（阶段、类别、服务自己的说明）和“查看这个智能体”的链接；没有故障时只写“已接通” | 所选讨论：准备 → 交接 → 决定；`?new=1` 打开准备表单 |
+| 去智能体页 | 承载里的“在智能体空间打开”带返回，智能体页首写“返回职责” | “在智能体空间打开”、运行的智能体链接写“返回运行与接入” | 关系里的智能体链接写“返回分工讨论”（`shared/returnLink.ts`） |
 | 右栏 | 试行与回看、运行时与 skill | 所选智能体的事实、执行服务 | 讨论依据、关联的任务 / 职责 / 文档、来源与完整标识 |
 
-外壳见[布局](../layout.md)。视图由外壳“团队”导航切换（分工与运行、职责、分工讨论、组织复盘、协作回执），App 把所属分区传给页面，懒加载的页面不再从地址推断。旧地址 `/runtime?view=roles` 跳到 `/roles`，`/runtime?session=owned:…` 跳到智能体空间；`/runtime?session={ID}` 就是分工与运行里选中该智能体。分工讨论的四种写入都在中间。协作回执是单栏页，右栏放飞书连接与待处理。组织复盘点开即读原件。
+外壳见[布局](../layout.md)。视图由外壳“团队”导航切换（运行与接入、职责、分工讨论、组织复盘、协作回执），App 把所属分区传给页面，懒加载的页面不再从地址推断。旧地址 `/runtime?view=roles` 跳到 `/roles`，`/runtime?session=owned:…` 跳到智能体空间；`/runtime?session={ID}` 就是运行与接入里选中该智能体。分工讨论的四种写入都在中间。协作回执是单栏页，右栏放飞书连接与待处理。组织复盘点开即读原件。
 
 ## 内容与状态
 
 通用的空、加载、失败、未知规则见[设计原则](../principles.md)。
 
-- 职责存在 ≠ 已有可运行的实例。链接里的职责逐页查找：读取中写“正在定位”，读取失败写“无法定位”，读完仍没有才说没有；完整 ID 只在“完整标识”里。加载更多只读下一页，失败时保留已显示的职责。
+- 职责存在 ≠ 已有可运行的实例。链接里的职责逐页查找：读取中写“正在定位”，读取失败写“无法定位”，读完仍没有才说没有；完整 ID 只在“完整标识”里。加载更多只读下页，失败时保留已显示的职责。
 - 智能体、职责写登记的名称，没读到写“（名称待读取）”，读取失败写“（名称暂不可读）”，读完没有写“（未找到）”，不用标识的前几位；运行记录按任务名和承接的智能体命名。提出依据和回看来源里的任务写任务名并可点开。
 - 各视图的报错写成中文，服务端原文收在可展开的“诊断信息”里。
-- 提出试行只需写权限；决定、回看、交接、绑定和撤回需要审阅权限。
+- 提出试行只需管理类别；决定、回看、撤回要管理决定权，交接与绑定只需类别。
 - 运行时写明是否已绑定（绑定后不可更换）、每个 skill 是否加载及原因、清单来自运行时还是按文件推断。保存后所选职责不变，下一轮生效；规则见 [Agent CLI](../../development/agent-cli.md#准备或复用受管-session)。
 - 从待我决定进入职责页时，页首可“返回待我处理”；直接打开不显示。
 - 承载列表只有在最近一次读取成功时才给出打开、复制后的入口和路由核对；重读失败时保留旧内容并标明。
@@ -51,9 +70,9 @@
 
 职责的其他宽度：[1024 右栏抽屉](../../assets/frontend-pages/team-roles-1024.png)、[390](../../assets/frontend-pages/team-roles-390.png)。
 
-![分工与运行，1440](../../assets/frontend-pages/team-runtime-1440.png)
+![运行与接入，1440](../../assets/frontend-pages/team-runtime-1440.png)
 
-分工与运行的其他宽度：[1024 右栏抽屉](../../assets/frontend-pages/team-runtime-1024.png)、[390](../../assets/frontend-pages/team-runtime-390.png)。
+运行与接入的其他宽度：[1024 右栏抽屉](../../assets/frontend-pages/team-runtime-1024.png)、[390](../../assets/frontend-pages/team-runtime-390.png)。
 
 ![分工讨论，1440](../../assets/frontend-pages/team-discussions-1440.png)
 
@@ -73,7 +92,7 @@
 | --- | --- | --- |
 | 外壳与组织复盘 | `features/team/TeamWorkspace.tsx`、`features/team/OrganizationReviewList.tsx`、`shared/routes.ts` | `team-browser.test.ts`、`team-presentation.test.ts` |
 | 职责 | `features/roles/RolesView.tsx`、`features/roles/RoleDetail.tsx`（历史里只有标识的记录者写“未登记名称的身份”，标识在“完整标识”）、`features/roles/RolePresence.tsx`、`features/roles/RoleRuntime.tsx`、`features/roles/RoleTemplates.tsx`、`features/roles/SourceRef.tsx`、`features/roles/rolePresentation.ts` | `role-presentation.test.ts`、`role-runtime-card.test.ts`、`role-template-summary-browser.test.ts`、`role-card-keep-open-browser.test.ts`、`resident-observation-browser.test.ts`、`team-roles-browser.test.ts` |
-| 分工与运行 | `features/runtime/ExecutionView.tsx`、`features/runtime/ManagedSessionDetail.tsx`、`features/runtime/ManagedSessionCreate.tsx`、`features/runtime/RunList.tsx`、`features/runtime/AgentName.tsx`、`features/runtime/executionPresentation.ts`、`features/orchestration/OrchestrationPanel.tsx`（编排）、`features/orchestration/presentation.ts` | `execution-presentation.test.ts`、`orchestration-observation.test.ts`、`task-loop-browser.test.ts`、`legacy-bits-browser.test.ts`、`runtime-session-role-browser.test.ts`、`runtime-model-selection-browser.test.ts`、`runtime-reconcile-browser.test.ts` |
+| 运行与接入 | `features/runtime/ExecutionView.tsx`、`features/runtime/ManagedSessionDetail.tsx`、`features/runtime/ManagedSessionCreate.tsx`、`features/runtime/RunList.tsx`、`features/runtime/AgentName.tsx`、`features/runtime/executionPresentation.ts`、`features/orchestration/OrchestrationPanel.tsx`（编排）、`features/orchestration/presentation.ts` | `execution-presentation.test.ts`、`orchestration-observation.test.ts`、`task-loop-browser.test.ts`、`legacy-bits-browser.test.ts`、`runtime-session-role-browser.test.ts`、`runtime-model-selection-browser.test.ts`、`runtime-reconcile-browser.test.ts` |
 | 分工讨论 | `features/discussions/DiscussionPanel.tsx`、`features/discussions/DiscussionDetail.tsx`（拟交接对象的引用不是链接时只放进“来源与完整标识”）、`features/discussions/DiscussionForms.tsx`、`features/discussions/formParts.tsx`、`shared/command/CommandForm.tsx`、`features/discussions/discussionClient.ts`、`features/discussions/discussionBaseline.ts`、`features/discussions/discussionPresentation.ts`、`features/discussions/commands.ts`、`features/discussions/AllocationRelationsPanel.tsx`、`features/discussions/AllocationBacklinks.tsx`、`features/discussions/useAllocationTraces.ts` | `team-discussions-browser.test.ts`（`EVOLOOP_DISCUSSIONS_SCREENSHOT_DIR`）、`discussion-presentation.test.ts`、`discussion-panel.test.ts`、`allocation-backlink-groups.test.ts`、`allocation-names.test.ts` |
 | 协作回执 | `features/collaboration/CollaborationPanel.tsx`（待核对的写入只写对象名称，对象与原操作 ID 在“完整标识”）、`features/collaboration/collaborationPresentation.ts`、`features/collaboration/client.ts` | `team-collaboration-browser.test.ts`、`team-collaboration-paging-browser.test.ts`（都用 `EVOLOOP_COLLABORATION_SCREENSHOT_DIR`）、`collaboration-presentation.test.ts` |
 

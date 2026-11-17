@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readdir, readFile, utimes, writeFile } from "node:fs/pr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { MANIFEST, carryAssets } from "./carry-assets.mjs";
+import { MANIFEST, carryAssets, newestMtime } from "./carry-assets.mjs";
 
 // One release directory holds <dist>/assets/*; `files` maps a chunk name to its content.
 const release = async (root, name, files) => {
@@ -105,6 +105,7 @@ test("defect 581441ad: files are kept 7 days by time, then removed, so the direc
   for (const [index, day] of days.entries()) {
     const n = index + 2;
     const next = await release(dir, `r${n}`, { [`A-${n}.js`]: `a${n}` });
+    await utimes(join(next, `A-${n}.js`), at(day), at(day)); // the simulated clock is `at(day)`: the build's files carry that time
     last = await carryAssets({ previousAssets: previous, newAssets: next, now: at(day) });
     sizes.push((await names(next)).length); previous = next;
   }
@@ -152,4 +153,35 @@ test("a manifest from before this change (generation numbers only) is still read
   assert.equal(result.generation, 3);
   assert.deepEqual(await names(next), ["A-1.js", "A-2.js", "A-3.js"]);
   await assert.rejects(carryAssets({ previousAssets: previous, newAssets: next, keepDays: -1 }), /keepDays/);
+});
+
+test("the generation's build time is the build's own (newest mtime among the files it made, never later than now), not the moment of carrying", async () => {
+  const dir = await root();
+  const previous = await release(dir, "r1", { "A-1.js": "a1" });
+  const next = await release(dir, "r2", { "A-2.js": "a2", "B-2.js": "b2" });
+  const built = new Date(Date.now() - 3 * 3600_000);
+  const earlier = new Date(Date.now() - 10 * 3600_000);
+  await utimes(previous, earlier, earlier); // the previous release (no manifest) is known by its directory's time, which is older than this build
+  await utimes(join(next, "A-2.js"), new Date(built.getTime() - 600_000), new Date(built.getTime() - 600_000));
+  await utimes(join(next, "B-2.js"), built, built);
+  const result = await carryAssets({ previousAssets: previous, newAssets: next });
+  const manifest = JSON.parse(await readFile(join(dir, "r2", "dist", MANIFEST), "utf8"));
+  assert.equal(manifest.builtAt, built.toISOString(), "the newest of the build's own files, not the time of this call");
+  assert.ok(Date.now() - Date.parse(manifest.builtAt) > 2.9 * 3600_000);
+  assert.ok(result.retained >= 1);
+  // a rerun keeps the recorded time
+  const again = await carryAssets({ previousAssets: previous, newAssets: next });
+  assert.equal(JSON.parse(await readFile(join(dir, "r2", "dist", MANIFEST), "utf8")).builtAt, built.toISOString());
+  assert.ok(again.generation === result.generation);
+});
+
+test("newestMtime: capped at now, null for no files or an unreadable one (the caller then uses now)", async () => {
+  const dir = await root();
+  const assets = await release(dir, "r", { "a.js": "a" });
+  const future = new Date(Date.now() + 86_400_000);
+  await utimes(join(assets, "a.js"), future, future);
+  const now = new Date();
+  assert.equal(await newestMtime(assets, ["a.js"], now), now.toISOString());
+  assert.equal(await newestMtime(assets, [], now), null);
+  assert.equal(await newestMtime(assets, ["a.js", "missing.js"], now), null);
 });

@@ -29,9 +29,9 @@ test("human and agent acceptance preserve exact Delivery, recipient and temporar
     try{await admin.query(`DROP SCHEMA "${schema}" CASCADE`)}finally{await admin.end()}
   });
   const projectId=randomUUID(),taskId=randomUUID(),deliveryId=randomUUID();
-  const reviewer:Principal={actorId:"reviewer",projectIds:[projectId],permissions:["read","write","review"]};
-  const human:Principal={actorId:"named-human",identityKind:"human",projectIds:[projectId],permissions:["read","write","review"]};
-  const agent:Principal={actorId:"named-human",identityKind:"agent",projectIds:[projectId],permissions:["read","write"]};
+  const reviewer:Principal={actorId:"reviewer",projectIds:[projectId],permissions:["task", "document", "session", "management"], decisions: true};
+  const human:Principal={actorId:"named-human",identityKind:"human",projectIds:[projectId],permissions:["task", "document", "session", "management"], decisions: true};
+  const agent:Principal={actorId:"named-human",identityKind:"agent",projectIds:[projectId],permissions:["task", "document", "session"]};
   const workflow=new WorkflowService({uow:new PostgresUnitOfWork(pool),clock:{now:()=>new Date().toISOString()},
     ids:{next:randomUUID},hasher:{hash:(s:string)=>createHash("sha256").update(s).digest("hex")}});
   const issue=async(command:Record<string,unknown>)=>{
@@ -57,7 +57,7 @@ test("human and agent acceptance preserve exact Delivery, recipient and temporar
     sessionId:null,senderActorId:null,messageId:null,messageOperationId:null,reason:"Task policy"};
   const reviewerToken="q".repeat(40),humanToken="h".repeat(40);
   const app=await buildServer({service:workflow,acceptanceRelay:relay,credentials:[
-    {token:reviewerToken,actorId:reviewer.actorId,projectIds:[projectId],permissions:reviewer.permissions},
+    {token:reviewerToken,actorId:reviewer.actorId,projectIds:[projectId],permissions:reviewer.permissions,decisions:reviewer.decisions},
     {token:humanToken,actorId:human.actorId,identityKind:"human",projectIds:[projectId],permissions:human.permissions},
   ]});
   t.after(async()=>{await app.close()});
@@ -200,7 +200,7 @@ test("human and agent acceptance preserve exact Delivery, recipient and temporar
     [projectId,nextProcessing]);
   await pool.query(`INSERT INTO session_message_read_receipt(project_id,message_id,actor_id,evidence,recorded_at)
     VALUES($1,$2,'qa-recipient','fixture receipt',now())`,[projectId,nextInput.messageId]);
-  const qaPrincipal:Principal={actorId:"qa-recipient",identityKind:"agent",projectIds:[projectId],permissions:["read","write"]};
+  const qaPrincipal:Principal={actorId:"qa-recipient",identityKind:"agent",projectIds:[projectId],permissions:["task", "document", "session"]};
   await assert.rejects(agentRelay.linkObservation(qaPrincipal,projectId,agentTaskId,nextInput.relayId,
     earlyObservation,randomUUID(),2),{code:"ACCEPTANCE_NOT_USED"});
   const lateObservation=randomUUID();
@@ -234,8 +234,8 @@ test("Leader acceptance, capability gaps, blocked handoff notice and verified re
     try{await admin.query(`DROP SCHEMA "${schema}" CASCADE`)}finally{await admin.end()}
   });
   const projectId=randomUUID();
-  const reviewer:Principal={actorId:"reviewer",projectIds:[projectId],permissions:["read","write","review"]};
-  const leader:Principal={actorId:"leader-actor",identityKind:"agent",projectIds:[projectId],permissions:["read","write","review"]};
+  const reviewer:Principal={actorId:"reviewer",projectIds:[projectId],permissions:["task", "document", "session", "management"], decisions: true};
+  const leader:Principal={actorId:"leader-actor",identityKind:"agent",projectIds:[projectId],permissions:["task", "document", "session", "management"], decisions: true};
   const workflow=new WorkflowService({uow:new PostgresUnitOfWork(pool),clock:{now:()=>new Date().toISOString()},
     ids:{next:randomUUID},hasher:{hash:(s:string)=>createHash("sha256").update(s).digest("hex")}});
   const trusted=new RuntimeWorkflowService({uow:new PostgresUnitOfWork(pool),clock:{now:()=>new Date().toISOString()},

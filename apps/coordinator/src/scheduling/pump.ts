@@ -1,4 +1,4 @@
-import type { Principal } from "@evoloop/contracts";
+import { hasDecisionAuthority, type Permission, type Principal } from "@evoloop/contracts";
 import type { Occurrence, ScheduleDefinition, ScheduleStore } from "@evoloop/contracts/scheduling";
 import { SchedulingService } from "@evoloop/core/scheduling";
 import type { AuthConfig } from "../auth.js";
@@ -10,10 +10,13 @@ export interface ScheduleGrant {
   roleId: string;
 }
 export type TaskTimingGrant = Pick<ScheduleGrant, "projectId" | "actorId" | "roleId">;
-/** The credential a schedule or daily-copy grant acts as: one with write and review in the grant's project. */
-export const scheduleGrantCredential = (credentials: AuthConfig, grant: Pick<ScheduleGrant, "projectId" | "actorId">) =>
-  credentials.find(item => item.actorId === grant.actorId && item.projectIds.includes(grant.projectId) &&
-    item.permissions.includes("write") && item.permissions.includes("review"));
+/** The credential a schedule or daily-copy grant acts as, with decision authority for that object class. */
+export const scheduleGrantCredential = (credentials: AuthConfig, grant: Pick<ScheduleGrant, "projectId" | "actorId">,
+  permission: Permission = "management") =>
+  credentials.find(item => item.actorId === grant.actorId && hasDecisionAuthority(
+    { actorId:item.actorId, projectIds:item.projectIds, permissions:item.permissions,
+      ...(item.decisions === undefined ? {} : {decisions:item.decisions}), identityKind:item.identityKind ?? "agent" },
+    grant.projectId, permission));
 
 export interface SchedulingPumpOptions {
   store: ScheduleStore;
@@ -107,12 +110,14 @@ export class SchedulingPump {
 
   private principal(grant: ScheduleGrant): Principal | null {
     const credential = scheduleGrantCredential(this.options.credentials(), grant);
-    return credential ? { actorId: credential.actorId, projectIds: [...credential.projectIds], permissions: [...credential.permissions] } : null;
+    return credential ? { actorId: credential.actorId, projectIds: [...credential.projectIds], permissions: [...credential.permissions],
+      ...(credential.decisions === undefined ? {} : {decisions: credential.decisions}),
+      identityKind: credential.identityKind ?? "agent" } : null;
   }
 
   private taskTimingPermitted(grant: TaskTimingGrant): boolean {
     return !this.stopped && this.options.enabled() && this.options.canWrite() &&
-      !!scheduleGrantCredential(this.options.credentials(), grant);
+      !!scheduleGrantCredential(this.options.credentials(), grant, "task");
   }
 
   private permitted(grant: ScheduleGrant, definition?: ScheduleDefinition): boolean {

@@ -1,13 +1,14 @@
-import type { SessionActivityPage, SessionChanges, SessionDirectory, SessionSnapshot } from "@evoloop/contracts/session-observation";
+import type { SessionActivityPage, SessionChanges, SessionDirectory } from "@evoloop/contracts/session-observation";
 import type { SessionProfileRecord, TaskSessionAssignment, SessionAssignmentPage } from "@evoloop/contracts/session-assignments";
 import type { SessionMessageProcessing, SessionMessageRecord } from "@evoloop/contracts/session-messages";
 import type { ObservationMetadata } from "@evoloop/contracts/session-work";
 import type { RuntimeWorkTrace } from "@evoloop/contracts/runtime";
 import type { RuntimeSessionRecord } from "@evoloop/contracts/runtime";
-import type { SessionTimelinePage, WorkspaceEntry, WorkspaceLiveRead } from "@evoloop/contracts/session-timeline";
+import type { WorkspaceEntry } from "@evoloop/contracts/session-timeline";
 import type { SessionRecoveryView } from "@evoloop/contracts/session-recovery";
 import type { SessionLine, SessionLineEntry } from "@evoloop/contracts/session-line";
 import { request, requestNullable } from "./api";
+import { checkedLiveRead, checkedSessionSnapshot, checkedTimelinePage } from "./sessionShapes";
 
 const part = encodeURIComponent;
 export type SessionConversationItem = SessionMessageRecord & {
@@ -27,7 +28,7 @@ export function sessionClient(token: string, projectId: string) {
   return {
     directory: (options: { limit?: number; cursor?: string; search?: string; membership?: string } = {}, signal?: AbortSignal) =>
       get<SessionDirectory>(`${base}/session-work?${query({ limit: 50, ...options })}`, signal),
-    snapshot: (key: string, signal?: AbortSignal) => get<SessionSnapshot>(`${base}/session-work/${part(key)}`, signal),
+    snapshot: async (key: string, signal?: AbortSignal) => checkedSessionSnapshot(await get<unknown>(`${base}/session-work/${part(key)}`, signal)),
     recovery: (sessionId: string, signal?: AbortSignal) => get<SessionRecoveryView>(`${base}/runtime/sessions/${part(sessionId)}/recovery`, signal),
     runtimeSessions: (signal?:AbortSignal) => get<RuntimeSessionRecord[]>(`${base}/runtime/sessions`,signal),
     models: (signal?:AbortSignal) => get<{status:'available'|'empty'|'unavailable';models:string[];
@@ -46,11 +47,11 @@ export function sessionClient(token: string, projectId: string) {
     messages: (key: string, cursor?: string, signal?: AbortSignal) =>
       get<{ items: SessionConversationItem[]; nextCursor: string | null; metadata: ObservationMetadata }>(`${base}/session-work/${part(key)}/messages?${query({ limit: 50, cursor })}`, signal),
     timeline: (key: string, options: { cursor?: string; messagesCursor?: string; limit?: number; source?: "native" | "messages" | "both" } = {}, signal?: AbortSignal) =>
-      get<SessionTimelinePage>(`${base}/session-work/${part(key)}/timeline?${query({ limit: 25, ...options })}`, signal),
+      get<unknown>(`${base}/session-work/${part(key)}/timeline?${query({ limit: 25, ...options })}`, signal).then(checkedTimelinePage),
     timelineItem: (key: string, turnId: string, itemId: string, signal?: AbortSignal) =>
       get<WorkspaceEntry>(`${base}/session-work/${part(key)}/timeline/items/${part(itemId)}?${query({ turnId })}`, signal),
     timelineUpdates: (key: string, after?: string, signal?: AbortSignal) =>
-      request<WorkspaceLiveRead>(token, `${base}/session-work/${part(key)}/timeline/updates?${query({ after })}`, 25000, { signal }),
+      request<unknown>(token, `${base}/session-work/${part(key)}/timeline/updates?${query({ after })}`, 25000, { signal }).then(checkedLiveRead),
     message: (id: string, signal?: AbortSignal) => get<{ message: SessionMessageRecord; processing: SessionMessageProcessing | null; metadata: ObservationMetadata }>(`${base}/session-messages/${part(id)}`, signal),
     trace: (runId: string, cursor?: string, signal?: AbortSignal) =>
       get<RuntimeWorkTrace>(`${base}/runtime/runs/${part(runId)}/trace?${query({ cursor })}`, signal),

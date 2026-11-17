@@ -14,7 +14,7 @@ if (!name.includes("evoloop") || !name.includes("test")) throw new Error("dedica
 const schema=`el_resident_${randomUUID().replaceAll("-","").slice(0,16)}`;
 const pool=new pg.Pool({connectionString,options:`-c search_path=${schema}`});
 const projectId=randomUUID(),roleId=randomUUID(),now="2026-10-25T10:00:00.000Z";
-const principal={actorId:"reviewer",projectIds:[projectId],permissions:["read","write","review"] as Array<"read"|"write"|"review">};
+const principal={actorId:"reviewer",projectIds:[projectId],permissions:["task","document","session","management"] as ("task"|"document"|"session"|"management")[],decisions:true};
 const service=new WorkflowService({uow:new PostgresUnitOfWork(pool),clock:{now:()=>now},ids:{next:randomUUID},
   hasher:{hash:(value:string)=>createHash("sha256").update(value).digest("hex")}});
 before(async()=>{

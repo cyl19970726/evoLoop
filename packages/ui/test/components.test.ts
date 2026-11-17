@@ -12,13 +12,12 @@ import {
 
 const html = (node: Parameters<typeof renderToStaticMarkup>[0]) => renderToStaticMarkup(node);
 
-test("Button defaults to a secondary, typed button and renders the primary variant in ink", () => {
+test("Button defaults to a secondary, typed button and renders the primary variant in brand (DEC-051)", () => {
   const secondary = html(h(Button, null, "退回返工"));
   assert.match(secondary, /^<button type="button"/);
-  assert.match(secondary, /bg-field/);
+  assert.match(secondary, /bg-brand-soft/); assert.match(secondary, /hover:bg-brand-soft-hover/); assert.doesNotMatch(secondary, /bg-field|(?:hover|active):opacity/);
   const primary = html(h(Button, { variant: "primary" }, "通过验收"));
-  assert.match(primary, /bg-foreground/);
-  assert.match(primary, /text-background/);
+  assert.match(primary, /bg-brand/); assert.match(primary, /text-on-brand/); assert.match(primary, /hover:bg-brand-hover/); assert.match(primary, /active:bg-brand-pressed/); assert.doesNotMatch(primary, /bg-foreground|hover:opacity/);
   assert.match(primary, /text-small/);
 });
 
@@ -30,13 +29,13 @@ test("link, row and tab buttons keep the button element and carry no pill size o
   assert.doesNotMatch(link, /\bh-9\b|\bpx-4\b|text-small|rounded-full/, "a link is sized by the text around it");
   const row = html(h(Button, { variant: "row", "aria-pressed": true }, "阶段一"));
   assert.match(row, /aria-pressed="true"/);
-  assert.match(row, /aria-pressed:bg-selected/);
+  assert.match(row, /aria-pressed:bg-accent/); assert.match(row, /aria-pressed:text-accent-strong/);
   assert.match(row, /w-full/);
   assert.match(row, /justify-start/);
   const tab = html(h(Button, { variant: "tab", role: "tab", "aria-selected": true }, "信息"));
   assert.match(tab, /role="tab"/);
   assert.match(tab, /aria-selected="true"/);
-  assert.match(tab, /aria-selected:bg-selected/);
+  assert.match(tab, /aria-selected:bg-accent/); assert.match(tab, /aria-selected:text-accent-strong/);
   assert.match(html(h(Button, { variant: "link", size: "compact" }, "加载更多")), /h-\(--control-height-compact\)/, "a size given still applies");
 });
 

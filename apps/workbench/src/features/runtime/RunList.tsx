@@ -1,7 +1,8 @@
-// Runs in 分工与运行: each recorded run, the task and agent it belongs to, what the service saved about its result, and
+// Runs in 运行与接入: each recorded run, the task and agent it belongs to, what the service saved about its result, and
 // the checks a reader may make on it (native answer, receipts, terminal reconcile, interrupt, handoff use). A run's
 // state never stands for task acceptance; the task page keeps the full task context.
 import { useState } from "react";
+import { hasDecisionAuthority, hasPermission, mayAccessSession } from "@evoloop/contracts";
 import type { RuntimeRecordEvent, RuntimeReconcilePartial, RuntimeRunRecord } from "@evoloop/contracts/runtime";
 import { Button, Notice, StatusTag, Textarea } from "@evoloop/ui";
 import { ApiError, errorText } from "../../shared/api";
@@ -48,7 +49,10 @@ function RunItem({ context, run, mayAbandon }: { context: MutationContext; run: 
   const client = runtimeClient("", context.projectId);
   const report = run.resultSummary ? preflightPresentation(run.resultSummary) : null;
   const preflight = report ? preflightView(report) : null;
-  const review = context.principal.permissions.includes("review");
+  const review = hasDecisionAuthority(context.principal, context.projectId, "session") &&
+    mayAccessSession(context.principal, context.projectId, run.sessionId);
+  const mayReadFull = hasPermission(context.principal, context.projectId, "session") &&
+    mayAccessSession(context.principal, context.projectId, run.sessionId);
   const linkable = run.projectId === context.projectId && uuidPattern.test(run.sessionId);
   // A run has no name of its own: it is named by the task it ran and the agent that ran it; the run's ID stays in 来源与完整标识.
   const taskName = nameOnly("任务", useTaskName(context.projectId, uuidPattern.test(run.taskId) ? run.taskId : null));
@@ -74,7 +78,7 @@ function RunItem({ context, run, mayAbandon }: { context: MutationContext; run: 
       {run.stopRequestedAt && <Notice>已按请求停止（{run.stopReason ?? "未写理由"}）：它的已签结果被作废，之后不再接收提交或交付；运行是否已结束以原生终态为准。</Notice>}
       {run.interruptRequested && !run.stopRequestedAt && <Notice>已登记中断请求；是否停止以原生运行终态为准。</Notice>}
       <div className="flex flex-wrap gap-2">
-        {run.nativeTurnId && <Button size="compact" onClick={async () => {
+        {run.nativeTurnId && mayReadFull && <Button size="compact" onClick={async () => {
           try { setNative(await client.result(run.id)); setNativeError(null); } catch (cause) { setNativeError({ text: nativeReadError(cause), detail: diagnosticOf(cause) }); }
         }}>读取原生答复</Button>}
       </div>
@@ -89,13 +93,13 @@ function RunItem({ context, run, mayAbandon }: { context: MutationContext; run: 
       {mayAbandon && run.state === "unknown" && !run.nativeTurnId && <details className="text-small">
         <summary className="cursor-pointer text-primary">复核只读派发并保留失败记录</summary>
         <p className={`${mutedText} mt-2`}>仅适用于没有绑定一轮的只读运行。放弃会关闭旧智能体的后续派发；不证明外部未执行，也不自动重发。</p>
-        <ActionForm context={context} review embedded title="复核并放弃未知只读派发" baseline={{ runVersion: run.version }}
+        <ActionForm context={context} requiredPermissions={["session"]} decision embedded title="复核并放弃未知只读派发" baseline={{ runVersion: run.version }}
           fields={[reasonField, { name: "evidence", label: "所属线程历史与失败原因核对证据", kind: "textarea" }]}
           build={v => ({ type: "runtime.run.abandonReadOnly", runId: run.id, expectedVersion: run.version, ...v })} />
       </details>}
-      {pendingRun(run.state) && run.nativeTurnId && !run.interruptRequested && <ActionForm context={context} review title="请求中断本次运行" fields={[reasonField]}
+      {pendingRun(run.state) && run.nativeTurnId && !run.interruptRequested && <ActionForm context={context} requiredPermissions={["session"]} decision title="请求中断本次运行" fields={[reasonField]}
         build={v => ({ type: "runtime.run.interrupt", runId: run.id, ...v })} />}
-      {run.state === "completed" && <ActionForm context={context} title="记录本次交接使用" fields={[
+      {run.state === "completed" && mayReadFull && <ActionForm context={context} requiredPermissions={["session"]} title="记录本次交接使用" fields={[
         { name: "stage", label: "本身份的交接阶段", kind: "select", options: [option("received", "收到材料"), option("read", "实际阅读"), option("adopted", "已采用到行动"), option("effect", "观察到实际后果")] },
         { name: "evidence", label: "实际路径、采用动作或后果的证据", kind: "textarea", hint: "按本身份逐步记录；这是署名观察，不自动代表消费者验收或真人使用。" },
       ]} build={v => ({ type: "runtime.handoff.record", runId: run.id, ...v })} />}

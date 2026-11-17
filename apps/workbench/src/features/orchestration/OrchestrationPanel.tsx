@@ -1,4 +1,4 @@
-// 自动循环 (tasks.md 运行与关联; team.md 分工与运行): the managed loops, what each dispatched, to whom, and what came of
+// 自动循环 (tasks.md 运行与关联; team.md 运行与接入): the managed loops, what each dispatched, to whom, and what came of
 // it. On a task it shows only the loops the task's formal dispatches belong to, and names the current loop only when a
 // formal dispatch and the task's in-flight run agree. Everything is read-only and said as the records say it: a finished
 // run is not a sealed delivery, a delivery is not use, and use is not the task's acceptance. Raw records and identifiers

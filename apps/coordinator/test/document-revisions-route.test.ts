@@ -13,8 +13,8 @@ const foreignDocumentId = "00000000-0000-4000-8000-000000000104";
 const [r1, r2] = ["00000000-0000-4000-8000-000000000105", "00000000-0000-4000-8000-000000000106"];
 const reader = "r".repeat(40), writerOnly = "w".repeat(40);
 const credentials = authConfigSchema.parse([
-  { token: reader, actorId: "doc-reader", projectIds: [projectId], permissions: ["read"] },
-  { token: writerOnly, actorId: "doc-writer", projectIds: [projectId], permissions: ["write"] },
+  { token: reader, actorId: "doc-reader", projectIds: [projectId], permissions: [] },
+  { token: writerOnly, actorId: "doc-writer", projectIds: [projectId], permissions: ["task", "document", "session"] },
 ]);
 const head: Document = { projectId, id: documentId, title: "Spec", version: 3, currentRevisionId: r2,
   adoptedRevisionId: r1, kind: "spec", status: "published" };
@@ -37,7 +37,7 @@ function service(calls: Array<{ projectId: string; documentId: string; limit: nu
   return new WorkflowService({ uow, clock: { now: () => "2026-11-10T00:00:00.000Z" }, ids: { next: () => projectId }, hasher: { hash: () => "" } });
 }
 
-test("document revision list requires project read access and returns metadata pages", async () => {
+test("document revision list requires project membership and returns metadata pages", async () => {
   const calls: Array<{ projectId: string; documentId: string; limit: number; cursor: string | undefined }> = [];
   const app = await buildServer({ credentials, service: service(calls) });
   const get = (path: string, token?: string) => app.inject({ url: `/api/projects/${path}`,
@@ -58,8 +58,8 @@ test("document revision list requires project read access and returns metadata p
     assert.equal((await get(`${projectId}/documents/${documentId}/revisions?limit=100&cursor=${cursor}`, reader)).statusCode, 200);
     assert.deepEqual(calls.at(-1), { projectId, documentId, limit: 100, cursor });
 
-    const forbidden = await get(`${projectId}/documents/${documentId}/revisions`, writerOnly);
-    assert.equal(forbidden.statusCode, 403, "write permission alone cannot read history");
+    assert.equal((await get(`${projectId}/documents/${documentId}/revisions`, writerOnly)).statusCode, 200,
+      "an object writer is a project member and may read history");
     assert.equal((await get(`${foreignProjectId}/documents/${foreignDocumentId}/revisions`, reader)).statusCode, 403);
     const missing = await get(`${projectId}/documents/${foreignDocumentId}/revisions`, reader);
     assert.equal(missing.statusCode, 404, "a document outside this project is not found");

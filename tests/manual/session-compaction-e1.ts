@@ -55,8 +55,8 @@ const workflow=new WorkflowService({uow:new PostgresUnitOfWork(pool),clock:{now:
   ids:{next:randomUUID},hasher:{hash:(value:string)=>value}});
 const reviewerToken=randomBytes(32).toString('hex'),readerToken=randomBytes(32).toString('hex');
 const app=await buildServer({service:workflow,compaction:new CompactionMaintenance(pool,runner),credentials:[
-  {token:reviewerToken,actorId:'e1-maintainer',projectIds:[projectId],permissions:['read','write','review']},
-  {token:readerToken,actorId:'e1-reader',projectIds:[projectId],permissions:['read']},
+  {token:reviewerToken,actorId:'e1-maintainer',projectIds:[projectId],permissions:['task', 'document', 'session', 'management'], decisions: true},
+  {token:readerToken,actorId:'e1-reader',projectIds:[projectId],permissions:[]},
 ]});
 const address=await app.listen({host:'127.0.0.1',port:Number(process.env.E1_PORT??55493)});
 await writeFile(manifestPath,JSON.stringify({kind:'controlled-native-fixture',address,schema,projectId,sessionId,

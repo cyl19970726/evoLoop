@@ -41,7 +41,7 @@ test("an unchecked input says it was not checked, and opening its source checks 
     const root = `/api/projects/${projectId}`;
     const json = (value: unknown, status = 200) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); };
     if (url.pathname.startsWith("/api/")) {
-      if (url.pathname === "/api/session") return json({ principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} });
+      if (url.pathname === "/api/session") return json({ principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} });
       if (url.pathname === root) return json({ id: projectId, title: "核对测试项目", createdAt: stamp });
       if (url.pathname === `${root}/sessions/${sessionId}/direct-input-capability`) return json({ available: false, mode: null, expectedTurnId: null, reasonCode: "DIRECT_DISABLED", observedAt: stamp });
       if (url.pathname === `${root}/session-work`) return json({ items: [agent], nextCursor: null, observationCursor: "1", metadata,

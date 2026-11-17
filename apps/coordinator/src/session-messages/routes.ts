@@ -7,10 +7,17 @@ import { DomainError } from "@evoloop/contracts/ports";
 import type { WorkflowService } from "@evoloop/core";
 import type { SessionMessageService } from "@evoloop/core/session-messages";
 import type { SessionObservationService } from "@evoloop/core/session-observation";
+import { senderFromMessage, type SenderClass, type SenderFrom } from "./sender.js";
 
 export function registerSessionMessageRoutes(app: FastifyInstance, deps: {
   workflow: WorkflowService; observation: SessionObservationService; messages: SessionMessageService;
+  /** The same judgment the receiving Session's opening line uses, read once per request: the page shows exactly the class the Session was told (Task bedd0ef3). */
+  senderClassResolver?: () => Promise<(from: SenderFrom) => SenderClass>;
 }): void {
+  const classOf = async (projectId: string, message: { senderActorId: string; senderOrigin?: "hub" | undefined; target: { kind: string; sessionId?: string } }) => {
+    const resolve = await deps.senderClassResolver?.();
+    return resolve ? resolve(senderFromMessage({ projectId, ...message })).kind : undefined;
+  };
   const identity = async (principal: Principal | null, projectId: string): Promise<Principal> => {
     if (!principal) throw new DomainError("FORBIDDEN", "Authentication required");
     await deps.workflow.getProject(principal, projectId);
@@ -35,12 +42,14 @@ export function registerSessionMessageRoutes(app: FastifyInstance, deps: {
     const page = typeof deps.messages.conversation === "function"
       ? await deps.messages.conversation(projectId, snapshot.session.target, q.limit, position)
       : await deps.messages.list(projectId, snapshot.session.target, q.limit, position);
+    const resolveClass = await deps.senderClassResolver?.();
     const items: Array<typeof page.items[number] & { contentTruncated: boolean; responseTruncated: boolean }> = [];
     let bytes = 2048;
     for (const item of page.items) {
       const processing = (item as typeof item & { processing?: SessionMessageProcessing | null }).processing ?? null;
       const response = processing?.response ?? null;
-      const preview = { ...item, content: item.content.slice(0, 600), contentTruncated: item.content.length > 600,
+      const senderClass = resolveClass?.(senderFromMessage(item)).kind;
+      const preview = { ...item, ...(senderClass ? { senderClass } : {}), content: item.content.slice(0, 600), contentTruncated: item.content.length > 600,
         blockedReason: item.blockedReason?.slice(0, 600) ?? null,
         readReceipt: item.readReceipt ? { ...item.readReceipt, evidence: item.readReceipt.evidence.slice(0, 600) } : null,
         ...(processing ? { processing: { ...processing,
@@ -60,7 +69,8 @@ export function registerSessionMessageRoutes(app: FastifyInstance, deps: {
     const { projectId, id } = z.strictObject({ projectId: z.uuid(), id: z.uuid() }).parse(request.params);
     await identity(request.principal, projectId);
     const { message, processing, manualStop } = await deps.messages.detail(projectId, id);
-    return { message, processing, manualStop, metadata: { generatedAt: new Date().toISOString(), sourceObservedAt: manualStop?.recordedAt ?? processing?.updatedAt ?? message.updatedAt,
+    const senderClass = await classOf(projectId, message);
+    return { message: senderClass ? { ...message, senderClass } : message, processing, manualStop, metadata: { generatedAt: new Date().toISOString(), sourceObservedAt: manualStop?.recordedAt ?? processing?.updatedAt ?? message.updatedAt,
       partial: false, limitations: message.target.kind === "external" ? ["人工转交记录不证明原聊天已收到。"] : [] } };
   });
 }

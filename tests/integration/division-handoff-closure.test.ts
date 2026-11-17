@@ -23,7 +23,7 @@ const canonical=(value:unknown)=>JSON.stringify(value,(_key,item:unknown)=>item&
 const pid=randomUUID(),controller="controller",researcher="researcher",cognitiveRole=fixtureRoleId("cognition-role");
 const receiver=`worker-${randomUUID()}`,roleId=randomUUID(),goalId=randomUUID(),stageId=randomUUID(),loopId=randomUUID();
 const parentTaskId=randomUUID(),firstTaskId=randomUUID(),documentId=randomUUID();
-const principal=(actorId:string)=>({actorId,projectIds:[pid],permissions:["read","write","review"] as Array<"read"|"write"|"review">});
+const principal=(actorId:string)=>({actorId,projectIds:[pid],permissions:["task", "document", "session", "management"], decisions: true});
 
 for(const mode of ["current","legacy-later","legacy-equal","legacy-postbound"] as const) test(
   `Division waiting closure uses a bound receiver Turn (${mode})`,async t=>{

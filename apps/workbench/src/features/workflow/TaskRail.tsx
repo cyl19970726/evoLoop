@@ -64,14 +64,15 @@ export function TaskRail({ list, view, onView, selectedId, linkFor }: {
   const empty = !list.loading && !list.firstError && !list.searching && !list.awaitingAssignments && !list.searchError && !list.visible.length;
   return <section aria-label="任务列表" className="flex flex-col gap-2 pb-2" data-task-rail="">
     <div className="flex items-center gap-1 px-1">
-      <h2 className="flex-1 text-label font-semibold text-foreground">任务列表</h2>
+      {/* The name 任务列表 is the section's (inner navigation) and the region's label; the visible line says how many, not the name again. */}
+      <h2 className="flex-1 text-label font-semibold text-foreground"><span className="sr-only">任务列表 · </span>{list.loading ? "读取中…" : `${list.visible.length} 项`}</h2>
       {list.checking && <RefreshingIndicator label="正在核对" />}
       <IconButton compact label="重新读取列表" icon={<RefreshCw size={15} />} onClick={list.reread} />
     </div>
     <Input type="search" aria-label="搜索任务" placeholder="搜索标题或负责职责…" value={view.query} onChange={event => onView({ query: event.target.value })} className="h-8 text-label" />
     <div role="group" aria-label="任务范围" className="flex gap-1">
-      {(["all", "mine"] as const).map(scope => <Button key={scope} size="compact" variant={view.scope === scope ? "secondary" : "ghost"} aria-pressed={view.scope === scope}
-        className={cn("flex-1", view.scope === scope && "bg-selected")} onClick={() => onView({ scope })}>
+      {(["all", "mine"] as const).map(scope => <Button key={scope} size="compact" variant="ghost" aria-pressed={view.scope === scope}
+        className={cn("flex-1", view.scope === scope && "bg-accent text-accent-strong hover:bg-accent")} onClick={() => onView({ scope })}>
         {scope === "all" ? "全部工作" : "我的承接"}{scope === "mine" && list.mineCount > 0 && <span className="tabular-nums text-muted-foreground">{list.mineCount}</span>}
       </Button>)}
     </div>

@@ -27,7 +27,7 @@ test("a ready Task nobody dispatched reaches the Leader after 2 hours, at night 
   t.after(async () => { await pool.end(); const admin = new pg.Client({ connectionString: database }); await admin.connect(); try { await admin.query(`DROP SCHEMA "${schema}" CASCADE`); } finally { await admin.end(); } });
   let clock = T0;
   const projectId = randomUUID();
-  const lead: Principal = { actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] };
+  const lead: Principal = { actorId: "lead", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
   const workflow = new WorkflowService({ uow: new PostgresUnitOfWork(pool), clock: { now: () => new Date(clock).toISOString() }, ids: { next: randomUUID },
     hasher: { hash: (value: string) => createHash("sha256").update(value).digest("hex") } });
   const applied = async (command: Record<string, unknown>) => { const r = await workflow.execute(lead, { ...command, projectId, operationId: randomUUID() } as never); assert.equal(r.status, "applied", JSON.stringify(r)); return r; };
@@ -107,7 +107,7 @@ test("a Task released by its dependency is ready from that moment: creation time
   t.after(async () => { await pool.end(); const admin = new pg.Client({ connectionString: database }); await admin.connect(); try { await admin.query(`DROP SCHEMA "${schema}" CASCADE`); } finally { await admin.end(); } });
   let clock = T0;
   const projectId = randomUUID();
-  const lead: Principal = { actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] };
+  const lead: Principal = { actorId: "lead", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
   const workflow = new WorkflowService({ uow: new PostgresUnitOfWork(pool), clock: { now: () => new Date(clock).toISOString() }, ids: { next: randomUUID },
     hasher: { hash: (value: string) => createHash("sha256").update(value).digest("hex") } });
   const applied = async (command: Record<string, unknown>) => { const r = await workflow.execute(lead, { ...command, projectId, operationId: randomUUID() } as never); assert.equal(r.status, "applied", JSON.stringify(r)); return r; };
@@ -152,7 +152,7 @@ test("a dependency satisfied through a resident queue release is ready from the 
   t.after(async () => { await pool.end(); const admin = new pg.Client({ connectionString: database }); await admin.connect(); try { await admin.query(`DROP SCHEMA "${schema}" CASCADE`); } finally { await admin.end(); } });
   let clock = T0;
   const projectId = randomUUID();
-  const lead: Principal = { actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] };
+  const lead: Principal = { actorId: "lead", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
   const workflow = new WorkflowService({ uow: new PostgresUnitOfWork(pool), clock: { now: () => new Date(clock).toISOString() }, ids: { next: randomUUID },
     hasher: { hash: (value: string) => createHash("sha256").update(value).digest("hex") } });
   const applied = async (command: Record<string, unknown>) => { const r = await workflow.execute(lead, { ...command, projectId, operationId: randomUUID() } as never); assert.equal(r.status, "applied", JSON.stringify(r)); return r; };

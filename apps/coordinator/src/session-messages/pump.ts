@@ -47,6 +47,23 @@ export async function settledReply(load:(cursor?:string)=>Promise<RuntimePage<un
   return {kind:'bounded_unread',
     text:`（本轮已结束，但它的原生记录超过 ${maxPages} 页，回复没有在有界读取内读出；完整回复见该 Session 的原生会话记录。）`};
 }
+/** What the pump tells the host about a native refusal of `thread/resume` before any Turn start (defect 548712ac). */
+export interface ResumeRefusal {
+  projectId:string;messageId:string;sessionId:string;method:string;code:number;category:string;attempt:number;maxAttempts:number;
+  /** The native side's own words and data: private, only for a host-private sink. */
+  nativeMessage:string|null;nativeData:unknown;
+}
+export type ResumeRemedy='replaced'|'skipped'|'failed';
+export interface ResumeRefusalPolicy {
+  /** Wait before each retry; its length is the number of retries, so the message is tried `delaysMs.length+1` times in all. */
+  delaysMs:number[];
+  /** Private record of one refusal. Must not throw. */
+  record?(refusal:ResumeRefusal):void;
+  /** Before the second retry, once per message: replace the Codex child if nothing else runs on it. */
+  remedy?(refusal:ResumeRefusal):Promise<ResumeRemedy>;
+}
+export const defaultResumeRefusalPolicy:ResumeRefusalPolicy={delaysMs:[5_000,30_000,120_000]};
+const RESUME_RETRY='RESUME_REJECTED_RETRY';
 export interface SessionMessagePumpDeps {
   service:SessionMessageService;runtime():MessageRuntime;projects():Promise<string[]>;
   /** Current in-process native notification state for one exact Session, if available. */
@@ -67,12 +84,19 @@ export interface SessionMessagePumpDeps {
   /** Shared in-process admission with direct input; absent only in isolated tests and callers. */
   lock?:SessionSteerLock;
   canWrite():boolean;pollIntervalMs:number;onError(error:unknown,message?:SessionMessageRecord):void;
+  /**
+   * A native refusal of `thread/resume` (code -32600) comes before any Turn start, so nothing was sent. With this policy the message keeps its reserved operation and is
+   * retried a bounded number of times (the recovery gate stays open meanwhile) instead of failing at once; absent, a refusal fails the message as before.
+   */
+  resumeRefusal?:ResumeRefusalPolicy;
 }
 /** One message at a time per owned thread; only the original operation marker can heal an unknown start. */
 export class SessionMessagePump {
   private timer:ReturnType<typeof setInterval>|null=null;private busy:Promise<void>|null=null;
   private nextOffset=new Map<string,number>();
   private nextProjectIndex=0;
+  /** In memory by design: a coordinator restart gives a message that is still being retried a fresh count. */
+  private resumeRetries=new Map<string,{attempts:number;nextAtMs:number;remedied:boolean}>();
   constructor(private readonly deps:SessionMessagePumpDeps){}
   start(){if(this.timer)return;this.timer=setInterval(()=>{void this.tick();},this.deps.pollIntervalMs);this.timer.unref();void this.tick();}
   stop(){if(this.timer)clearInterval(this.timer);this.timer=null;}
@@ -109,7 +133,12 @@ export class SessionMessagePump {
     // A local in-flight refusal proved no native write. Keep the same reserved processing intent and
     // retry that exact operation after the other send settles; it is not a native failure or an unknown.
     const localBusyRetry=message.state==='processing'&&record?.state==='dispatching'&&
-      message.blockedReason?.startsWith('SESSION_INPUT_BUSY')===true;
+      (message.blockedReason?.startsWith('SESSION_INPUT_BUSY')===true||message.blockedReason?.startsWith(RESUME_RETRY)===true);
+    // A refused resume is retried after its backoff, not on every tick.
+    if(localBusyRetry&&message.blockedReason?.startsWith(RESUME_RETRY)){
+      const waiting=this.resumeRetries.get(message.id);
+      if(waiting&&(this.deps.now?.()??Date.now())<waiting.nextAtMs)return;
+    }
     if(message.state==='queued'||continuation||localBusyRetry){
       if(message.state==='queued'&&record)return;
       // Drain mode: a new Turn is not begun, and nothing is noted or dropped; the message waits and goes in order afterwards.
@@ -190,7 +219,8 @@ export class SessionMessagePump {
         try{const turn=connectorBindingId
           ? await runtime.startConnectorTurn!(binding,input,record.operationId,connectorBindingId,qualification.fingerprint)
           : await runtime.startConversationTurn!(binding,input,record.operationId);
-          await this.deps.service.bindTurn(message.projectId,message.id,turn,binding.resumeProfile?.reasoningEffort??null);}
+          await this.deps.service.bindTurn(message.projectId,message.id,turn,binding.resumeProfile?.reasoningEffort??null);
+          this.resumeRetries.delete(message.id);}
         catch(error){
           if(error instanceof RuntimeLocalBusyError)
             // The adapter refused before writing; the message stays queued and the gate stays open.
@@ -201,6 +231,8 @@ export class SessionMessagePump {
               'Native writer conflict before ordinary turn/start; original operation awaits exact reconciliation and authorized handoff',
               {threadId:error.rejectedThreadId!,operationId:record.operationId,requestId:error.requestId,
                 code:-32600,inputHash});
+          else if(!continuation&&this.deps.resumeRefusal&&error instanceof RuntimeServerError&&error.method==='thread/resume'&&error.code===-32600)
+            await this.retryRefusedResume(message,session.id,error);
           else if(!continuation&&error instanceof RuntimeProtocolError && !(error instanceof RuntimeUnknownError))
             await this.deps.service.failBeforeStart(message.projectId,message.id,`Native pre-turn rejection: ${error.message}`);
           else await this.deps.service.markUnknown(message.projectId,message.id,'Native start acknowledgement unavailable; reconcile original marker before any retry');
@@ -262,6 +294,36 @@ export class SessionMessagePump {
     }
     const reply=await settledReply(cursor=>runtime.listItems(binding,turn.id,cursor));
     await this.deps.service.settle(message.projectId,message.id,turn,reply.text,reply.kind);
+  }
+  /**
+   * `thread/resume` was refused before any Turn start: the method itself proves nothing was sent, and the adapter has not consumed the operation, so the same reserved
+   * operation can be tried again. Backoff, one remedy (replacing the Codex child, only when nothing else runs on it), a cap; past the cap the message fails as it always
+   * did and the recovery gate closes for a person, with the attempts in the reason.
+   */
+  private async retryRefusedResume(message:SessionMessageRecord,sessionId:string,error:RuntimeServerError):Promise<void>{
+    const policy=this.deps.resumeRefusal!;
+    const state=this.resumeRetries.get(message.id)??{attempts:0,nextAtMs:0,remedied:false};
+    state.attempts++;
+    const refusal:ResumeRefusal={projectId:message.projectId,messageId:message.id,sessionId,method:error.method,code:error.code,category:error.category,
+      attempt:state.attempts,maxAttempts:policy.delaysMs.length+1,nativeMessage:error.privateNative?.message??null,nativeData:error.privateNative?.data};
+    try{policy.record?.(refusal);}catch{/* a diagnostics sink cannot decide the message */}
+    if(state.attempts>policy.delaysMs.length){
+      this.resumeRetries.delete(message.id);
+      await this.deps.service.failBeforeStart(message.projectId,message.id,
+        `Native pre-turn rejection after ${state.attempts} attempts: ${error.message}`);
+      return;
+    }
+    let remedy:ResumeRemedy|null=null;
+    if(state.attempts>=2&&!state.remedied&&policy.remedy){
+      state.remedied=true;
+      try{remedy=await policy.remedy(refusal);}catch{remedy='failed';}
+    }
+    const delay=policy.delaysMs[state.attempts-1]!;
+    state.nextAtMs=(this.deps.now?.()??Date.now())+delay;
+    this.resumeRetries.set(message.id,state);
+    await this.deps.service.noteBlocked(message.projectId,message.id,
+      `${RESUME_RETRY}: thread/resume refused (${error.category}, code ${error.code}) before any Turn start; nothing was sent; attempt ${state.attempts} of ${refusal.maxAttempts}; `+
+      `retry in ${Math.round(delay/1000)} s${remedy?`; Codex child ${remedy==='replaced'?'replaced':remedy==='skipped'?'not replaced (other work is running on it)':'replacement failed'}`:''}`);
   }
   private async mayDeferMissingBoundTurn(projectId:string,sessionId:string,binding:RuntimeBinding,nativeTurnId:string):Promise<boolean>{
     const observed=this.deps.nativeTurn?.(projectId,sessionId);

@@ -41,24 +41,65 @@ const argumentText = value => {
   return [];
 };
 
+/** The exit status in a Codex tool output ("Process exited with code N" or a JSON exit_code): true = 0, false = anything else, null = not stated (still running). */
+const exitOk = output => {
+  const text = typeof output === "string" ? output : JSON.stringify(output ?? "");
+  const match = /Process exited with code (-?\d+)/.exec(text) ?? /"exit_code"\s*:\s*(-?\d+)/.exec(text);
+  return match ? Number(match[1]) === 0 : null;
+};
+
 /**
- * What one transcript line did with tools (Codex function_call, Claude tool_use), with the line's UTC timestamp; [] for anything else.
+ * What one transcript line did with tools, read once: the commands it ran (Codex function_call, Claude tool_use, each with the line's UTC time and
+ * its call id), the results it reports for earlier calls (Codex function_call_output, Claude tool_result: ok true / false / null when the status
+ * is not stated), and a `defect` when the line cannot be read: it mentions a tool call but is not valid JSON, or it is a call record (Claude `assistant`, Codex `function_call`) with no usable
+ * timestamp (a mirror record such as `api-request-blob` has none by design and is neither). A defect is never silent; the caller counts it and names the file and line. Lines that are not tool records give nothing and no defect.
  * The text is the call's whole argument list, so a file read through a Read/Edit tool's file_path or an array-form command counts
  * the same as a shell command; it is only ever matched against, never printed.
  */
-export function commandsOfLine(line) {
-  if (!line.includes("function_call") && !line.includes("tool_use")) return [];
-  let record; try { record = JSON.parse(line); } catch { return []; }
-  const at = record.timestamp ?? record.payload?.timestamp;
-  if (!at) return [];
-  const calls = [];
+export function inspectLine(line) {
+  const none = { commands: [], results: [], defect: null };
+  if (!line.includes("function_call") && !line.includes("tool_use")) return none;
+  let record; try { record = JSON.parse(line); } catch { return { ...none, defect: "JSON 无法解析" }; }
+  if (!record || typeof record !== "object") return { ...none, defect: "JSON 无法解析" };
+  const calls = [], results = [];
   const payload = record.payload;
   if (payload?.type === "function_call" && typeof payload.arguments === "string") {
-    try { calls.push(argumentText(JSON.parse(payload.arguments)).join("\n")); } catch { calls.push(payload.arguments); }
+    let text; try { text = argumentText(JSON.parse(payload.arguments)).join("\n"); } catch { text = payload.arguments; }
+    calls.push({ text, callId: payload.call_id ?? null });
   }
+  if (payload?.type === "function_call_output") results.push({ callId: payload.call_id ?? null, ok: exitOk(payload.output) });
   const content = record.message?.content;
-  if (Array.isArray(content)) for (const part of content) if (part?.type === "tool_use" && part.input) calls.push(argumentText(part.input).join("\n"));
-  return calls.filter(Boolean).map(command => ({ at: new Date(at).toISOString(), command }));
+  if (Array.isArray(content)) for (const part of content) {
+    if (part?.type === "tool_use" && part.input) calls.push({ text: argumentText(part.input).join("\n"), callId: part.id ?? null });
+    if (part?.type === "tool_result") results.push({ callId: part.tool_use_id ?? null, ok: part.is_error === true ? false : true });
+  }
+  const at = record.timestamp ?? record.payload?.timestamp;
+  const time = at ? new Date(at) : null;
+  const usable = time && Number.isFinite(time.getTime());
+  const commands = usable ? calls.filter(call => call.text).map(call => ({ at: time.toISOString(), command: call.text, callId: call.callId })) : [];
+  // A missing time is a defect only on a record that IS a call: Claude `assistant`, Codex `function_call`. Other records may hold tool_use content without a time
+  // by design (Claude `api-request-blob` mirrors the API request: only hash, message, sessionId and type; the same call is on the neighbouring `assistant` line,
+  // which has its time), so they are neither commands nor bad lines.
+  const isCallRecord = record.type === "assistant" || payload?.type === "function_call";
+  return { commands, results, defect: !usable && isCallRecord && calls.some(call => call.text) ? "缺时间戳或时间戳读不出" : null };
+}
+
+/** The commands of one transcript line with their time (see inspectLine); [] for anything else. */
+export function commandsOfLine(line) {
+  return inspectLine(line).commands.map(({ at, command }) => ({ at, command }));
+}
+
+/** Names the unreadable transcript lines: how many, which file and line, and why; at most `shown` are spelled out. null when there are none. */
+export function badLineProblem(bad, shown = 8) {
+  if (!bad.length) return null;
+  const list = bad.slice(0, shown).map(item => `${item.file}:${item.line}（${item.why}）`).join("、");
+  return `会话记录有 ${bad.length} 行无法解析：${list}${bad.length > shown ? `……共 ${bad.length} 行` : ""}，这些行里的命令没有核对`;
+}
+
+/** Merged PRs GitHub gave no merge time for cannot be placed in or out of the window; they are listed and the report is incomplete. null when there are none. */
+export function missingMergeTimeProblem(prs) {
+  const missing = prs.filter(pr => !Number.isFinite(Date.parse(pr.mergedAt))).map(pr => `#${pr.number}`);
+  return missing.length ? `${missing.length} 个已合并 PR 没有合并时间（${missing.slice(0, 8).join("、")}${missing.length > 8 ? "……" : ""}）：无法判断是否在窗口内，已列在合并表里` : null;
 }
 
 /** The identity a transcript mostly acts as: the agent-cli directory its commands use most (a count, not a claim). */
@@ -123,7 +164,7 @@ const COMMAND_START = String.raw`(?:^|[;&|\n(])\s*(?:[A-Za-z_]\w*=\S+\s+)*`;
 
 export function mergeInvocations(commands) {
   const found = [];
-  for (const { at, command: raw } of commands) {
+  for (const { at, command: raw, ok } of commands) {
     const command = resolveVariables(expandLoops(executedPart(raw)));
     for (const match of command.matchAll(new RegExp(COMMAND_START + String.raw`(?:node|nodejs)\s+\S*merge-gate\.mjs\s+merge\b([^;&|\n]*)`, "g"))) {
       const rest = match[1];
@@ -132,13 +173,13 @@ export function mergeInvocations(commands) {
       const config = /--config[ =]("[^"]+"|'[^']+'|\S+)/.exec(rest);
       const viaEnvironment = /\bEVOLOOP_MERGE_CONFIG=("[^"]+"|'[^']+'|\S+)/.exec(command);
       const path = config ?? viaEnvironment; // the merge-gate reads EVOLOOP_MERGE_CONFIG when --config is not given
-      if (pr) found.push({ at, pr: Number(pr[1]), config: path ? path[1].replace(/^["']|["']$/g, "") : null, via: "merge-gate" });
+      if (pr) found.push({ at, pr: Number(pr[1]), config: path ? path[1].replace(/^["']|["']$/g, "") : null, via: "merge-gate", ok: ok ?? null });
     }
     for (const match of command.matchAll(new RegExp(COMMAND_START + String.raw`gh\s+pr\s+merge\b([^;&|\n]*)`, "g"))) {
       const pr = ghMergeNumber(match[1]);
-      if (pr) found.push({ at, pr, config: null, via: "gh pr merge" });
+      if (pr) found.push({ at, pr, config: null, via: "gh pr merge", ok: ok ?? null });
     }
-    for (const match of command.matchAll(new RegExp(COMMAND_START + String.raw`gh\s+api\s+[^;&|\n]*?pulls\/(\d+)\/merge`, "g"))) found.push({ at, pr: Number(match[1]), config: null, via: "gh api merge" });
+    for (const match of command.matchAll(new RegExp(COMMAND_START + String.raw`gh\s+api\s+[^;&|\n]*?pulls\/(\d+)\/merge`, "g"))) found.push({ at, pr: Number(match[1]), config: null, via: "gh api merge", ok: ok ?? null });
   }
   return found;
 }
@@ -164,7 +205,20 @@ export const MERGE_OK = ["合并列车", "本人发起"];
 export function mergeRows({ merged, train, transcripts }) {
   const trainBy = new Map(train.map(item => [item.pr, item]));
   return merged.map(pr => {
-    const runs = transcripts.flatMap(t => { const who = sessionIdentity(t.actor); return t.merges.filter(m => m.pr === pr.number).map(m => ({ transcript: t.id, actor: who.actor, mixed: who.mixed, config: m.configIdentity ?? null, at: m.at, via: m.via })); });
+    const mergedMs = Date.parse(pr.mergedAt);
+    if (!Number.isFinite(mergedMs)) return { pr: pr.number, mergedAt: null, githubLogin: pr.mergedBy?.login ?? null, title: pr.title, verdict: "合并时间缺失", who: "GitHub 没有给出合并时间：无法判断是否在窗口内，也无法核对发起命令的时间" };
+    const all = transcripts.flatMap(t => { const who = sessionIdentity(t.actor); return t.merges.filter(m => m.pr === pr.number).map(m => ({ transcript: t.id, actor: who.actor, mixed: who.mixed, config: m.configIdentity ?? null, at: m.at, via: m.via, ok: m.ok })); });
+    // A command counts as the initiator only if it started no later than the merge (to the second) and did not fail; otherwise the PR was
+    // merged some other way (out of band, then the gate was run afterwards) and the command is not who merged it.
+    const disqualified = run => {
+      const at = Date.parse(run.at);
+      if (!Number.isFinite(at)) return "命令时间读不出";
+      if (Math.floor(at / 1000) * 1000 > mergedMs) return `命令时间 ${new Date(at).toISOString().slice(11, 19)}Z 晚于 GitHub 合并时间 ${new Date(mergedMs).toISOString().slice(11, 19)}Z`;
+      if (run.ok === false) return "命令失败";
+      if (run.ok !== true) return "命令结果记录缺失";
+      return null;
+    };
+    const runs = all.filter(run => !disqualified(run)), bad = all.filter(run => disqualified(run));
     const own = trainBy.get(pr.number);
     const who_ = run => run.actor ?? (run.mixed ? `身份认不出（会话混用多个身份：${run.mixed}）` : "身份未识别");
     const describe = run => run.via === "merge-gate"
@@ -172,10 +226,12 @@ export function mergeRows({ merged, train, transcripts }) {
       : `${who_(run)} 用 ${run.via}，没有经过合并门，不涉及合并配置（会话记录 ${run.transcript}）`;
     const seen = new Set();
     const who = runs.map(describe).filter(text => !seen.has(text) && seen.add(text)).join("；");
+    const rejected = bad.map(run => `${who_(run)} 的合并命令不能算发起（${disqualified(run)}；会话记录 ${run.transcript}）`).filter(text => !seen.has(text) && seen.add(text)).join("；");
     let verdict, why = "";
     if (own && runs.length) { verdict = "合并列车与会话记录冲突"; why = `合并列车日志 ${own.log} 记了它，同时会话记录里有人运行了合并：`; }
     else if (own) { verdict = "合并列车"; why = `合并列车日志 ${own.log}`; }
-    else if (!runs.length) { verdict = "发起者无记录"; why = "不在合并列车日志，也没有会话记录里的合并命令"; }
+    else if (!all.length) { verdict = "发起者无记录"; why = "不在合并列车日志，也没有会话记录里的合并命令"; }
+    else if (!runs.length) { verdict = "合并命令不能算发起"; why = "会话记录里有合并命令，但都不能证明是它合并了："; }
     else if (runs.some(run => run.via !== "merge-gate")) { verdict = "绕过合并门"; why = "没有经过合并门（合并门会核对验收）："; }
     else if (runs.some(run => !run.actor || !run.config)) {
       verdict = "发起者或配置认不出";
@@ -183,7 +239,8 @@ export function mergeRows({ merged, train, transcripts }) {
     }
     else if (runs.some(run => run.actor !== run.config)) { verdict = "借用他人合并配置"; why = ""; }
     else { verdict = "本人发起"; why = ""; }
-    return { pr: pr.number, mergedAt: pr.mergedAt, githubLogin: pr.mergedBy?.login ?? null, title: pr.title, verdict, who: `${why}${own && !runs.length ? "" : who}` };
+    const shown = [own && !runs.length ? "" : who, rejected].filter(Boolean).join("；");
+    return { pr: pr.number, mergedAt: pr.mergedAt, githubLogin: pr.mergedBy?.login ?? null, title: pr.title, verdict, who: `${why}${shown}` };
   });
 }
 

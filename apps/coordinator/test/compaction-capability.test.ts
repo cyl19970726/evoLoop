@@ -9,7 +9,7 @@ import { ProviderRoutedRuntime } from "../src/runtime/routed.js";
 import { ownerOf, type ManagedRuntime, type RuntimeProvider } from "@evoloop/contracts/runtime";
 
 const projectId = randomUUID(), sessionId = randomUUID();
-const reviewer: Principal = { actorId: "maintainer", projectIds: [projectId], permissions: ["read", "write", "review"] };
+const reviewer: Principal = { actorId: "maintainer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
 const intent = (): CompactionIntent => ({ operationId: randomUUID(), threadId: "owned-thread", expectedSessionVersion: 3,
   expectedGateVersion: 1, evidenceRef: "handoff:1", reason: "context near limit" });
 

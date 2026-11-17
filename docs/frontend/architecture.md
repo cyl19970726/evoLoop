@@ -32,12 +32,12 @@
 - 别的包按包名引用，不用相对路径跨包。检查读不懂的 import 写法直接报错，不会放过。
 - `@evoloop/ui` 不引用工作台和 `@evoloop/contracts`（含 `package.json` 依赖），不发请求，文案与数据由调用方传入。
 
-领域之间现有的依赖（检查运行时会打印）：overview → workflow；roles → discussions；runtime → orchestration、sessions、workflow；sessions → discussions；team → discussions、roles、runtime；workflow → discussions、orchestration、references、sessions。任务的分派、执行队列和运行在任务自己的“运行与关联”（`workflow/TaskRuntimeTab.tsx`）；团队页“分工与运行”是 `ExecutionView`，嵌入编排与执行队列。执行队列 `ResidentQueuePanel` 由 workflow 提供给这两处。
+领域之间现有的依赖（检查运行时会打印）：overview → workflow；roles → discussions；runtime → sessions、workflow；scheduling → workflow；sessions → discussions；team → discussions、orchestration、roles、runtime、workflow；workflow → discussions、orchestration、references、sessions。任务的分派、执行队列和运行在任务自己的“运行与关联”（`workflow/TaskRuntimeTab.tsx`）；团队下的“运行与接入”是 `ExecutionView`（执行服务、受管智能体、运行记录）；“统筹安排”（`/arrangement`）在看板下嵌入编排与执行队列（`team/ArrangementOperations.tsx`）。执行队列 `ResidentQueuePanel` 由 workflow 提供，任务页与统筹安排各用一处。
 
 **路由。** URL 承载项目、对象稳定 ID、修订和筛选，刷新或分享后回到同一位置；改标题或移动 Git 路径不改链接。历史修订 URL 不跳到最新版。导航入口由[布局](layout.md)决定，不按路由生成。
 
 - **现状**（PR4a）：TanStack Router 管地址与历史，路径 URL `/p/{项目}/{区域}/{ID}?revision=…`，`/` 是项目列表，`/ui` 是组件样例页。路由表在 `app/router.tsx`，地址清单在 `app/routePaths.ts`；页面仍由 `App.tsx` 按解析出的区域选择（`shared/routes.ts` 的 `parseRoute`），访问过的页面保持挂载；PR5 的新外壳没有改成布局路由。
-  - **旧链接**：文档正文、交付登记、消息里保存的 `#/p/…` 链接继续可用。打开带 `#/…` 的地址（书签、粘贴、Agent 只读浏览器）时先换成对应路径；渲染保存的链接时用 `appPath()` 改写为路径。合同和数据库里的保存格式不变。团队页的旧地址 `/runtime?view=roles|discussions` 与 `/runtime?session={含冒号的键}` 由 `shared/routes.ts` 的 `legacyTeamAddress` 改写到 `/roles`、`/discussions`、`/sessions`；`/runtime?session={UUID}` 就是“分工与运行”里选中该受管智能体的地址。
+  - **旧链接**：文档正文、交付登记、消息里保存的 `#/p/…` 链接继续可用。打开带 `#/…` 的地址（书签、粘贴、Agent 只读浏览器）时先换成对应路径；渲染保存的链接时用 `appPath()` 改写为路径。合同和数据库里的保存格式不变。团队页的旧地址 `/runtime?view=roles|discussions` 与 `/runtime?session={含冒号的键}` 由 `shared/routes.ts` 的 `legacyTeamAddress` 改写到 `/roles`、`/discussions`、`/sessions`；`/runtime?session={UUID}` 就是“运行与接入”里选中该受管智能体的地址。
   - **站内跳转**：`shared/navigation.ts` 是唯一入口：`navigate()`、`currentPath()`、`onNavigate()`；只改地址栏、不通知页面的视图状态（筛选、展开项）用 `replaceQuietly()`。站内 `<a href="/p/…">` 的点击统一转成历史导航，不整页刷新，所以内存里的登录不丢；带修饰键、新标签页、下载和外站链接不拦。
   - **离开项目**：有未提交草稿时先确认，前进后退同样拦截。
   - **拆包**：每个页面是单独的 chunk，首屏只带登录门与共用代码，外壳（`app/shell/`）登录后再加载。首屏 JS 预算以 `apps/workbench/bundle-budget.json` 为准（现为 gzip 170 KB；拆包前单包 392 KB，历次调整写在该文件的 `note` 里），由 `bundle-budget.test.ts` 对构建产物检查。
@@ -108,11 +108,11 @@ QueryService 返回 `observedAt`、对象与 revision、权限能力、分源状
 
 - **现状**（PR4c）：`shared/identity.ts` 是唯一的身份来源，所有请求经 `shared/api.ts` 的同一处读取它。
   - **本机令牌**：用户在登录门输入令牌，只存在页面内存，请求带 `Authorization` 头。
-  - **Hub 登录**：Hub 托管的页面带 `<meta name="evoloop-auth" content="hub">`，登录门不要令牌，直接用同源 cookie 核对 `/api/session`；Origin/CSRF 校验在 Hub 一侧（#219）。
+  - **Hub 登录**：Hub 托管工作台的静态文件（`apps/hub/src/workbench.ts`），页面带 `<meta name="evoloop-auth" content="hub">`。登录门先用同源 cookie 核对 `/api/session`，没有登录才出邮箱与密码的表单（`POST /api/auth/login`）；写请求带内存里的 `X-Hub-CSRF`，Origin 与 CSRF 校验在 Hub 一侧（#219）。`/api/session` 由 Hub 回答，除 `projectIds` 外带 `permissions`（调用者在任一项目里持有的类别）与 `projectPermissions`（每个项目各持有什么），页面按当前项目取后者；项目详情与项目列表也由 Hub 回答并带 `machine`（名称、状态、是否在线）；其余 `/api/projects/{id}/…` 与 `/api/commands` 由 Hub 转发到项目所在的机器。Hub 的错误形状 `{error:{code,message}}` 在 `shared/api.ts` 里转成与 coordinator 相同的 `{code,message}`，机器离线等 Hub 的代码在 `shared/errorCodes.ts` 里有中文。
   - **新代码**：调用 `api()` 不传令牌即用当前身份；上面说的少数读取和登录门、项目列表、操作核对仍从 `MutationContext.token` 或页面参数传令牌。
   - **401**：任何请求收到 401 视为登录失效：清空查询缓存、草稿、恢复意图和页面缓存，回登录门并说明原因。地址保留，未确认的操作回执保留给同一身份。
   - **403**：403 只说明某个对象无权读取，由页面自己说明。只有读取项目本身得到 403 时，外壳重读身份；项目已不在授权内就清掉它的缓存，回到项目列表并提示。
-  - **页面出错**：某一页渲染出错只替换这一页（`app/PageBoundary.tsx`），外壳、登录和其他已访问页面保留；路由层兜底的错误页同样是中文。
+  - **页面出错**：某一页渲染出错只替换这一页（`app/PageBoundary.tsx`），外壳、登录和其他已访问页面保留；路由层兜底的错误页同样是中文。页面上的“错误信息”展开后有错误信息、路由、构建 commit、时间、服务端记录编号和组件栈，可一键复制；同一份内容在显示的同时由页面经 `POST /api/projects/:id/client-errors` 交给服务保存（表 `client_render_error`，迁移 115），`GET` 同一路径读回最近的记录，不用打开控制台。选服务端而不是浏览器本地存储，是因为出错的常是别人的浏览器、截图又会被后面的画面覆盖，验收者需要在自己这边读到；保存前服务端截断并隐去令牌形态的文字，请求体只接受约定的字段（不收会话正文），每个项目只留最近 200 条、同一人 1 分钟内的同一错误只记一条。这只记页面级渲染错误，不是全站错误上报。会话页的读回（快照、实时更新）先过 `shared/sessionShapes.ts` 的形状检查，列表或资源块缺失、为 null 或类型不对时按空处理并写进 `limitations`，不再把整页带进错误边界。
 - **目标**：组件间不再传令牌；剩下的读取迁到 `useProjectQuery` 时一并去掉。
 
 公网访问须先有 HTTPS 与登录。Git、Wiki、飞书和模型凭据只在服务端；附件下载经授权并限定内容类型。

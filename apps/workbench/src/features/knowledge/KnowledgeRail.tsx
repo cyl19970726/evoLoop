@@ -8,7 +8,6 @@ import type { KnowledgeSummary } from "@evoloop/contracts/knowledge";
 import { Badge, Button, Input, ListRow, RefreshingIndicator, Select, cn } from "@evoloop/ui";
 import type { ListCoverage } from "../../shared/listCoverage";
 import { ContextRailContent } from "../../shared/ui/ContextRail";
-import { ReadingSpaceSwitch } from "../../shared/ui/ReadingSpaceSwitch";
 import { knowledgeHref } from "./knowledgeRoute";
 import {
   coverageText, emptyKnowledgeText, label, listProblemText, pageTypeLabel, pageTypes, validityLabel, type KnowledgeFilter, type ListProblem,
@@ -90,7 +89,6 @@ export function KnowledgeRail({ projectId, filter, update, list, selectedId, rev
   selectedId: string | null; reviewing: boolean; pendingCandidates: string | null;
 }) {
   return <ContextRailContent><section data-ui="" aria-label="知识目录" className="flex flex-col gap-2.5 pb-2">
-    <ReadingSpaceSwitch projectId={projectId} current="knowledge" className="mx-1" />
     <KnowledgeFilters filter={filter} update={update} />
     <ListRow href={knowledgeHref(projectId, "review")} selected={reviewing} title="候选与审阅"
       trailing={pendingCandidates ? <Badge aria-label={`已载入的候选里 ${pendingCandidates} 条待审`}>{pendingCandidates}</Badge> : undefined} />

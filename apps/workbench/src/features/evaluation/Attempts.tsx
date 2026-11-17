@@ -152,7 +152,7 @@ function AssessmentForm({ context, revision, attempt, assessments, deliveries, o
   const unread = !hasTask
     ? taskState === "failed" ? "共同任务没有读回，交付与使用记录暂不能选择。" : "交付与使用记录正在读取，暂不能选择。"
     : taskState === "failed" ? "共同任务重读失败；可选项来自上次读回，当前待核对。" : undefined;
-  return <EvaluationForm context={{ ...context, draftScope: `evaluation-assessment:${attempt.id}`, draftBaseline: revision.id }} review hold={hold}
+  return <EvaluationForm context={{ ...context, draftScope: `evaluation-assessment:${attempt.id}`, draftBaseline: revision.id }} permission="management" hold={hold}
     title={assessments.length ? "追加更正判定" : "记录本次判定"} fields={[
       { name: "supersedesId", label: "更正此前判定（可选）", kind: "select", optional: true, options: currentAssessments(assessments).map(item => option(item.id, `${labelOf(actorKindLabels, item.assessorKind, "未识别的身份")} ${actorText(item.actorId)} · ${date(item.createdAt)}`)) },
       { name: "deliveryId", label: "本次实际交付（可选）", kind: "select", optional: true, hint: unread, options: deliveries.map(item => option(item.id, `${labelOf(technicalResultLabels, item.technicalResult, "技术检查结果未识别")} · 登记于 ${date(item.createdAt)}`)) },
@@ -191,8 +191,8 @@ export function RunForm({ context, revision, conditionId, task, sessions, runs, 
     <h3 className="text-small font-semibold text-foreground">第 {nextOrdinal} 次尝试 / 重试</h3>
     {active && <Notice tone="waiting">共同任务已有运行中或结果未知的尝试。先核对同一运行，不能重发。</Notice>}
     {!fullExecution && <Notice>此历史定义保留旧执行权限，只供回读；新尝试请先另存完整权限的定义修订。</Notice>}
-    {fullExecution && !fresh.length && <p className="m-0 text-small text-text-secondary">没有符合冻结模型、授权与已激活执行配置的全新自有智能体。先在<a className={linkClass} href={`/p/${context.projectId}/runtime?view=execution`}>分工与运行</a>创建并核对激活；用过的智能体不可复用。</p>}
-    {!active && fresh.length > 0 && <EvaluationForm key={`${revision.id}:${conditionId}:${task.task.version}`} review hold={hold}
+    {fullExecution && !fresh.length && <p className="m-0 text-small text-text-secondary">没有符合冻结模型、授权与已激活执行配置的全新自有智能体。先在<a className={linkClass} href={`/p/${context.projectId}/runtime?view=execution`}>运行与接入</a>创建并核对激活；用过的智能体不可复用。</p>}
+    {!active && fresh.length > 0 && <EvaluationForm key={`${revision.id}:${conditionId}:${task.task.version}`} permission="session" decision hold={hold}
       context={{ ...context, draftScope: `evaluation-run:${revision.id}:${conditionId}`, draftBaseline: `${revision.id}:${task.task.currentRevisionId}` }}
       title={`派发第 ${nextOrdinal} 次真实运行`} fields={[
         { name: "sessionId", label: "全新的自有智能体", kind: "select", options: fresh.map(session => option(session.id, `${agentName(session)} · ${session.model} · 创建于 ${date(session.createdAt)}`)) },

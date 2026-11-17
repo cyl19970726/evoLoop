@@ -34,10 +34,10 @@ test("a place that needs write offers only members who can write, of the kind it
   assert.equal(memberChoices(view(team), "write", null).eligible, 3);
 });
 
-test("a place that needs review offers only members who can review", () => {
-  const reviewers = memberChoices(view(team), "review", null);
+test("a place that needs a decision offers only members who can decide", () => {
+  const reviewers = memberChoices(view(team), "decision", null);
   assert.deepEqual(reviewers.options.map(option => option.value), ["zhang-reviewer", "loop-controller"]);
-  assert.equal(reviewers.leftOut, "另有 3 位不能复核，没有列出。");
+  assert.equal(reviewers.leftOut, "另有 3 位不能决定，没有列出。");
 });
 
 test("the value already registered stays offered as it is, said for what it is", () => {
@@ -56,7 +56,7 @@ test("an edited identity file is said, with what each member could do after a re
     member("agent-now", { identityKind: "agent", pending: { identityKind: "human", canRead: false, canWrite: true, canReview: false } })], "changed");
   const choices = memberChoices(edited, "write", null);
   assert.deepEqual(choices.notice, { tone: "waiting", title: "身份文件已改动，部分成员的权限要重启后才生效", text: "下面按现在生效的权限列出；重启后会变的成员另行写明。" });
-  assert.deepEqual(choices.pending, ["zhang-reviewer：重启后不能再写入", "new-person：重启后才能写入，才能复核",
+  assert.deepEqual(choices.pending, ["zhang-reviewer：重启后不能再写入", "new-person：重启后才能写入，才能决定",
     "agent-now：重启后身份类型变为人，不能再登录读取"]);
   assert.deepEqual(choices.options.map(option => option.value), ["zhang-reviewer", "agent-now"], "what is in effect now decides who is offered");
   assert.equal(memberPendingText(member("x")), null);

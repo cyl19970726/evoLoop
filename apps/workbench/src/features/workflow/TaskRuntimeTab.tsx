@@ -4,7 +4,7 @@
 // for it. A run's state is never the task's acceptance, and an agent being busy never means it runs this task.
 import React from "react";
 import { useQueries } from "@tanstack/react-query";
-import type { Task, TaskDetail } from "@evoloop/contracts";
+import { hasDecisionAuthority, hasPermission, mayAccessSession, type Task, type TaskDetail } from "@evoloop/contracts";
 import type { RuntimeReconcilePartial, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import type { TaskSessionAssignment } from "@evoloop/contracts/session-assignments";
 import { AgentAvatar, Button, Notice, StatusTag, Textarea, Field } from "@evoloop/ui";
@@ -121,7 +121,8 @@ function AssignmentSection({ context, task, read }: { context: MutationContext; 
   const ready = known && !read.error;
   const valid = !!assignment && assignment.state !== "released" && assignment.taskRevisionId === task.currentRevisionId;
   const closed = task.state === "done" || task.state === "cancelled";
-  const permissions = context.principal.permissions;
+  const canTaskWrite = hasPermission(context.principal, projectId, "task");
+  const canTaskDecide = hasDecisionAuthority(context.principal, projectId, "task");
   const seen = { taskVersion: task.version, assignmentVersion: assignment?.version ?? 0 };
   const state = !assignment ? null : assignment.state === "released" ? { tone: "history" as const, label: "分派已释放" }
     : closed ? { tone: "history" as const, label: assignment.state === "accepted" ? "历史承接 · 当时已接手" : "历史分派" }
@@ -146,23 +147,23 @@ function AssignmentSection({ context, task, read }: { context: MutationContext; 
         actorRow("分派人", assignment.actorId), actorRow("指定执行者", assignment.recipientActorId)]} />
     </div> : <p className="text-label text-text-secondary">还没有指定具体的智能体。负责职责仍在任务上，但不能据此推定哪个智能体已经接手。</p>)}
     {task.state === "todo" && <Fine>建议先开始任务再指定智能体：开始会产生新的固定修订，之前的分派和接手不会沿用。</Fine>}
-    {ready && task.state === "in_progress" && permissions.includes("review") && (binding
+    {ready && task.state === "in_progress" && canTaskDecide && (binding
       ? <BindAgentForm context={context} task={task} currentVersion={assignment?.version ?? 0} currentKey={assignment && assignment.state !== "released" ? key : null} onDone={() => setBinding(false)} />
       : <div><Button size="compact" onClick={() => setBinding(true)}>{assignment && assignment.state !== "released" ? "更换智能体" : assignment ? "重新指定智能体" : "指定智能体"}</Button></div>)}
     {ready && assignment && <div className="flex flex-col">
-      {assignment.state === "assigned" && valid && assignment.recipientActorId === context.principal.actorId && permissions.includes("write") &&
+      {assignment.state === "assigned" && valid && assignment.recipientActorId === context.principal.actorId && canTaskWrite &&
         <ActionRow title="本人确认接手" description="你是这次分派指定的执行者。">
-          <CommandForm context={context} submitLabel="确认接手" baseline={seen} fields={[{ name: "evidence", label: "实际接手的证据", kind: "textarea", maxLength: 4000 },
+          <CommandForm context={context} submitLabel="确认接手" permission="task" baseline={seen} fields={[{ name: "evidence", label: "实际接手的证据", kind: "textarea", maxLength: 4000 },
             { name: "sourceRef", label: "来源引用", optional: true, maxLength: 4000 }]}
             build={(values, recorded) => assignmentAcknowledgeCommand(task.id, recorded, { evidence: values.evidence ?? "", sourceRef: values.sourceRef ?? "" })} /></ActionRow>}
-      {assignment.state === "assigned" && valid && permissions.includes("review") &&
+      {assignment.state === "assigned" && valid && canTaskDecide &&
         <ActionRow title="记录负责人观察到接手" description="由负责人写明实际看到的接手证据。">
-          <CommandForm context={context} submitLabel="记录观察" baseline={seen} fields={[{ name: "evidence", label: "实际观察与证据", kind: "textarea", maxLength: 4000 },
+          <CommandForm context={context} submitLabel="记录观察" permission="task" decision baseline={seen} fields={[{ name: "evidence", label: "实际观察与证据", kind: "textarea", maxLength: 4000 },
             { name: "sourceRef", label: "来源引用", optional: true, maxLength: 4000 }]}
             build={(values, recorded) => assignmentObserveCommand(task.id, recorded, { evidence: values.evidence ?? "", sourceRef: values.sourceRef ?? "" })} /></ActionRow>}
-      {assignment.state !== "released" && permissions.includes("review") &&
+      {assignment.state !== "released" && canTaskDecide &&
         <ActionRow title="释放具体分派" description="释放后这项任务回到只有负责职责、没有具体承接的状态。">
-          <CommandForm context={context} submitLabel="释放分派" danger baseline={seen} fields={[reasonField("释放原因")]}
+          <CommandForm context={context} submitLabel="释放分派" permission="task" decision danger baseline={seen} fields={[reasonField("释放原因")]}
             build={(values, recorded) => assignmentReleaseCommand(task.id, recorded, { reason: values.reason ?? "" })} /></ActionRow>}
     </div>}
     {history.data && history.data.items.length > 1 && <details>
@@ -184,13 +185,15 @@ function RunsSection({ context, detail, assignment, runs, runsRead, sessionsRead
 }) {
   const projectId = context.projectId;
   const task = detail.task;
-  const permissions = context.principal.permissions;
+  const canManageQueue = hasPermission(context.principal, projectId, "management");
+  const canReserveRun = hasDecisionAuthority(context.principal, projectId, "session");
   const sessions = sessionsRead.data ?? [];
   const assigned = assignment.data && assignment.data.state !== "released" ? assignment.data : null;
   const stale = !!assigned && assigned.taskRevisionId !== task.currentRevisionId;
   // Only current reads decide who may take the task: a failed reread of the agents or the assignment offers nothing.
   const agentsKnown = readCurrent(sessionsRead) && readCurrent(assignment);
   const eligible = agentsKnown ? eligibleOwnedSessions(task, sessions.filter(activeFullExecution), assignment.data ?? null) : [];
+  const runnable = eligible.filter(session => mayAccessSession(context.principal, projectId, session.id));
   const names = useQueries({ queries: eligible.map(session => ({ queryKey: queryKeys.project(projectId, "session-names", `owned:${session.id}`),
     queryFn: ({ signal }: { signal: AbortSignal }) => readAgent(projectId, `owned:${session.id}`, signal), retry: false })) });
   const roleName = (session: RuntimeSessionRecord) => {
@@ -206,7 +209,7 @@ function RunsSection({ context, detail, assignment, runs, runsRead, sessionsRead
     {!!sessionsRead.error && <Notice tone="error">智能体列表暂不可读取：{errorText(sessionsRead.error)}。参与的智能体范围不能据此推断。</Notice>}
     {targetProblem && <Notice tone="error">链接指向的运行暂不可核对：{targetProblem}。没有定位到其他运行。</Notice>}
     {status.data && !status.data.available && <Notice tone="waiting" title="执行服务尚未接通"
-      action={permissions.includes("review") ? <Button size="compact" disabled={recover.busy} onClick={() => void recover.run()}>{recover.busy ? "正在核对…" : "受控恢复执行连接"}</Button> : undefined}>
+      action={hasDecisionAuthority(context.principal, projectId, "session") ? <Button size="compact" disabled={recover.busy} onClick={() => void recover.run()}>{recover.busy ? "正在核对…" : "受控恢复执行连接"}</Button> : undefined}>
       已有运行记录仍保留；不会自动重发结果未知的启动。{recover.message}</Notice>}
     {runsRead.isPending && !runsRead.error ? <ReadNote read={runsRead} what="运行记录" />
       : readCurrent(runsRead) && !runs.length && <p className="text-label text-text-secondary">这项任务还没有登记运行。</p>}
@@ -221,17 +224,17 @@ function RunsSection({ context, detail, assignment, runs, runsRead, sessionsRead
             : !agentsKnown ? <Fine>{sessionsRead.isPending ? "正在读取智能体列表…" : "智能体列表没有读回，暂不能排队或派发；先重新读取运行状态。"}</Fine>
               : !eligible.length ? <Fine>没有就绪、完整执行配置已激活且职责匹配的项目内智能体；请核对分派和智能体状态。</Fine>
                 : null}
-      {eligible.length > 0 && permissions.includes("review") && <ActionRow title="把任务排进具体智能体的队列" description="创建只有这一项的执行队列；还要有权者采纳，登记不表示已经开始。">
-        <CommandForm context={context} submitLabel="创建队列" baseline={arrange} fields={[
+      {eligible.length > 0 && canManageQueue && <ActionRow title="把任务排进具体智能体的队列" description="创建只有这一项的执行队列；还要有权者采纳，登记不表示已经开始。">
+        <CommandForm context={context} submitLabel="创建队列" permission="management" baseline={arrange} fields={[
           { name: "sessionId", label: "承接的智能体", kind: "select", options: eligible.map(session => ({ value: session.id, label: roleName(session) })) },
           { name: "consumerId", label: "验收责任者", kind: "select", initial: detail.proposal?.consumer || context.principal.actorId,
             options: [{ value: detail.proposal?.consumer || context.principal.actorId, label: detail.proposal?.consumer || "当前身份" }] },
           reasonField("为什么安排给这个智能体")]}
           notes={<Fine>每次创建一个任务项，最多 3 次有界运行；要跨任务排序，在队列里调整后重新采纳。</Fine>}
           build={(values, seen) => queueCreateCommand(detail, seen, { sessionId: values.sessionId ?? "", consumerId: values.consumerId ?? "", reason: values.reason ?? "" })} /></ActionRow>}
-      {eligible.length > 0 && status.data?.available && permissions.includes("write") && <ActionRow title="派发这一次运行" description="系统附上任务的固定依据；运行结束后还要交付和使用验收。">
-        <CommandForm context={context} submitLabel="派发运行" baseline={arrange} fields={[
-          { name: "sessionId", label: "承接的智能体", kind: "select", options: eligible.map(session => ({ value: session.id, label: roleName(session) })) },
+      {runnable.length > 0 && status.data?.available && canReserveRun && <ActionRow title="派发这一次运行" description="系统附上任务的固定依据；运行结束后还要交付和使用验收。">
+        <CommandForm context={context} submitLabel="派发运行" permission="session" decision baseline={arrange} fields={[
+          { name: "sessionId", label: "承接的智能体", kind: "select", options: runnable.map(session => ({ value: session.id, label: roleName(session) })) },
           { name: "input", label: "这一次的有界工作与停止条件", kind: "textarea", rows: 4, maxLength: 4000 }]}
           build={(values, seen) => runReserveCommand(task.id, seen, { sessionId: values.sessionId ?? "", input: values.input ?? "" })} /></ActionRow>}
     </div>}
@@ -276,7 +279,9 @@ function RunRecord({ context, run, taskTitle, anchor, readOnlyAgent }: {
   context: MutationContext; run: RuntimeRunRecord; taskTitle: string | null; anchor: string; readOnlyAgent: boolean;
 }) {
   const projectId = context.projectId;
-  const permissions = context.principal.permissions;
+  const canReadNative = hasPermission(context.principal, projectId, "session") && mayAccessSession(context.principal, projectId, run.sessionId);
+  const canWriteSession = hasPermission(context.principal, projectId, "session") && mayAccessSession(context.principal, projectId, run.sessionId);
+  const canDecideSession = hasDecisionAuthority(context.principal, projectId, "session") && mayAccessSession(context.principal, projectId, run.sessionId);
   const preflight = run.resultSummary ? preflightPresentation(run.resultSummary) : null;
   const refused = preflight ? preflightView(preflight) : null;
   const [answer, setAnswer] = React.useState<{ value?: NativeResult; error?: string } | null>(null);
@@ -298,7 +303,7 @@ function RunRecord({ context, run, taskTitle, anchor, readOnlyAgent }: {
       {refused && <Notice tone="error" title={`派发前检查没有通过：${refused.title}`}>模型没有开始。{[refused.source, refused.size].filter(Boolean).join("；")}{refused.source || refused.size ? "。" : ""}{refused.next}</Notice>}
       {run.resultSummary && !preflight && <div className="flex flex-col gap-1"><p className="text-caption text-muted-foreground">保存的结果摘要（可能截断，不能代替完整答复）</p>
         <p className="whitespace-pre-wrap text-label text-foreground [overflow-wrap:anywhere]">{run.resultSummary}</p></div>}
-      {run.nativeTurnId && <div className="flex flex-col gap-2">
+      {run.nativeTurnId && canReadNative && <div className="flex flex-col gap-2">
         <div><Button size="compact" onClick={async () => {
           try { setAnswer({ value: await runtimeClient("", projectId).result(run.id) }); }
           catch (cause) { setAnswer({ error: cause instanceof ApiError && (cause.status === 0 || cause.status >= 500) ? "完整答复读取失败或超时。已保存的运行记录仍可查看；检查执行连接后重试读取，不要重发运行。" : errorText(cause) }); }
@@ -322,21 +327,21 @@ function RunRecord({ context, run, taskTitle, anchor, readOnlyAgent }: {
         </li>)}</ol> : <p className="text-label text-text-secondary">没有回执记录。</p>)}
       </div>
       <div className="flex flex-col">
-        {inFlight.includes(run.state) && run.nativeTurnId && !run.interruptRequested && permissions.includes("review") && <ActionRow title="请求中断这次运行" description="是否停下以运行的最终状态为准。">
-          <CommandForm context={context} submitLabel="请求中断" danger baseline={{ runVersion: run.version }} fields={[reasonField()]}
+        {inFlight.includes(run.state) && run.nativeTurnId && !run.interruptRequested && canDecideSession && <ActionRow title="请求中断这次运行" description="是否停下以运行的最终状态为准。">
+          <CommandForm context={context} submitLabel="请求中断" permission="session" decision danger baseline={{ runVersion: run.version }} fields={[reasonField()]}
             build={values => runInterruptCommand(run.id, { reason: values.reason ?? "" })} /></ActionRow>}
-        {run.state === "completed" && permissions.includes("write") && <ActionRow title="记录这次交接的使用" description="按本身份逐步记录；这是署名观察，不自动代表验收或真人使用。">
-          <CommandForm context={context} submitLabel="记录" baseline={{ runVersion: run.version }} fields={[
+        {run.state === "completed" && canWriteSession && <ActionRow title="记录这次交接的使用" description="按本身份逐步记录；这是署名观察，不自动代表验收或真人使用。">
+          <CommandForm context={context} submitLabel="记录" permission="session" baseline={{ runVersion: run.version }} fields={[
             { name: "stage", label: "本身份的交接阶段", kind: "select", options: [{ value: "received", label: "收到材料" }, { value: "read", label: "实际阅读" },
               { value: "adopted", label: "已采用到行动" }, { value: "effect", label: "观察到实际后果" }] },
             { name: "evidence", label: "实际路径、采用动作或后果的证据", kind: "textarea", maxLength: 4000 }]}
             build={values => handoffRecordCommand(run.id, { stage: values.stage ?? "", evidence: values.evidence ?? "" })} /></ActionRow>}
-        {readOnlyAgent && run.state === "unknown" && !run.nativeTurnId && permissions.includes("review") && <ActionRow title="复核只读派发并保留失败记录"
+        {readOnlyAgent && run.state === "unknown" && !run.nativeTurnId && canDecideSession && <ActionRow title="复核只读派发并保留失败记录"
           description="只适用于没有绑定线程轮次的只读运行。放弃会关闭旧派发，不证明外部没有执行，也不自动重发。">
-          <CommandForm context={context} submitLabel="复核并放弃" danger baseline={{ runVersion: run.version }} fields={[reasonField(),
+          <CommandForm context={context} submitLabel="复核并放弃" permission="session" decision danger baseline={{ runVersion: run.version }} fields={[reasonField(),
             { name: "evidence", label: "线程历史与失败原因的核对证据", kind: "textarea", maxLength: 4000 }]}
             build={(values, seen) => runAbandonCommand(run.id, seen, { reason: values.reason ?? "", evidence: values.evidence ?? "" })} /></ActionRow>}
-        {run.nativeTurnId && terminal.includes(run.state) && permissions.includes("review") && <ActionRow title="核对已绑定运行的最终状态"
+        {run.nativeTurnId && terminal.includes(run.state) && canDecideSession && <ActionRow title="核对已绑定运行的最终状态"
           description="只回读同一轮次；保留旧观察并登记修正，不再启动工作，也不自动关闭任务。"><ReconcileRun context={context} run={run} /></ActionRow>}
       </div>
       <FullIdentifiers rows={[{ label: "运行", value: run.id }, { label: "执行的任务修订", value: run.taskRevisionId }, { label: "依据集合", value: run.basisSetId },

@@ -32,7 +32,7 @@ function fixture() {
     3: ["布局专题", "topic"], 1: ["右栏只在要时打开", "concept"], 2: ["窄屏不能换组件树", "concept"], 4: ["列表要写明覆盖范围", "decision"],
   };
   const state = {
-    degraded: false, notConfigured: false, published: [] as Summary[], observed: "valid", publishAttempts: 0, retracted: false,
+    degraded: false, notConfigured: false, /** The project capabilities read: "ok" answers the setting, "fail" is a service that cannot judge it. */ capabilityRead: "ok" as "ok" | "fail", published: [] as Summary[], observed: "valid", publishAttempts: 0, retracted: false,
     /** The current version of each page (2 unless a test moves it on). */
     current: {} as Record<number, number>,
     sourceRevision: id(91),
@@ -97,9 +97,18 @@ async function serve(t: TestContext, fx: Fixture) {
         : rest === "/candidates" && req.method === "GET" ? "candidates" : rest === "/candidates" ? "propose"
           : candidateMatch?.[2] === "/review" ? "review" : candidateMatch?.[2] === "/publish" ? "publish"
             : rest.endsWith("/retract") ? "retract" : rest.endsWith("/reconcile") ? "reconcile" : rest === "/sources/documents" ? "sources" : rest.slice(1);
+      // The service's own judgment of this project's knowledge backend (GET /projects/:id/capabilities, key `knowledge`).
+      if (url.pathname === `${root}/capabilities`) {
+        state.reads.push("project-capabilities");
+        if (state.capabilityRead === "fail") return send(503, { message: "暂时无法判断" });
+        return send(200, { projectId, status: "available", items: [{ key: "knowledge", scope: "project", readAt: "start", pending: null,
+          state: state.notConfigured ? "not_configured" : "configured", reason: state.notConfigured ? "project_not_configured" : null }] });
+      }
       if (url.pathname.startsWith(k)) {
         state.reads.push(label);
         if (req.method === "POST") state.bodies.push({ kind: label, body: input });
+        // The adopted-document list answers without the backend (nothing to judge with no documents).
+        if (state.notConfigured && label === "sources") return send(200, { items: [], nextCursor: null });
         if (state.notConfigured) return send(409, { code: "KNOWLEDGE_NOT_CONFIGURED", message: "当前项目尚未配置外置知识后端。" });
         // A write the outside service records before the answer is lost: publish and retract keep their operation.
         if (label === "publish") state.ops[String(input.operationId)] = "publish";
@@ -113,7 +122,7 @@ async function serve(t: TestContext, fx: Fixture) {
         }
         if (failure) return send(failure.status, failure.body);
       }
-      if (url.pathname === "/api/session") value = { principal: { actorId: "reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "reviewer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "知识回归项目", createdAt: stamp };
       else if (url.pathname === `${k}/capabilities`) value = { backendVersion: "fixture", backendReachable: !state.degraded, fixedRevisionRead: state.degraded ? "unavailable" : "adapter_verified",
         conditionalPublish: "single_maintainer_adapter", boundedRelations: "adapter_verified", migration: "unsupported", semanticIndex: "unverified" };
@@ -175,15 +184,17 @@ async function serve(t: TestContext, fx: Fixture) {
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
   const browser = await chromium.launch({ headless: true, executablePath: process.env.EVOLOOP_BROWSER_TEST_CHROMIUM_EXECUTABLE }); t.after(() => browser.close());
   const errors: string[] = [];
+  const consoleErrors: string[] = [];
   const open = async (width: number, height: number, path = "") => {
     const page = await browser.newPage({ viewport: { width, height } });
     page.on("pageerror", (error: Error) => errors.push(error.message));
+    page.on("console", (message: { type(): string; text(): string }) => { if (message.type() === "error") consoleErrors.push(message.text()); });
     await page.goto(`${base}/p/${projectId}/knowledge${path}`);
     await page.getByLabel("访问令牌").fill("fixture-token");
     await page.getByRole("button", { name: "进入", exact: true }).click();
     return page;
   };
-  return { open, errors };
+  return { open, errors, consoleErrors };
 }
 
 test("知识空间 reads, filters, switches pages without collapsing the right column, and runs the candidate flow",
@@ -198,7 +209,7 @@ test("知识空间 reads, filters, switches pages without collapsing the right c
     const page = await open(1440, 900);
     await page.getByRole("heading", { name: "知识空间", level: 1 }).waitFor();
     const rail = page.locator("aside[aria-label=项目导航]");
-    assert.equal(await rail.getByRole("navigation", { name: "文档与知识" }).getByRole("link", { name: "知识" }).getAttribute("aria-current"), "page");
+    assert.equal(await rail.getByRole("navigation", { name: "工作分区" }).getByRole("link", { name: /^知识空间/ }).getAttribute("aria-current"), "page");
     const directory = rail.getByRole("region", { name: "知识目录" });
     await directory.getByRole("navigation", { name: "专题目录" }).getByRole("link", { name: /布局专题/ }).waitFor();
     assert.match(await directory.innerText(), /已载入 3 项 · 后续页面未读/);
@@ -258,7 +269,7 @@ test("知识空间 reads, filters, switches pages without collapsing the right c
     assert.match(await main.innerText(), /这一版没有登记来源，正文待复核/);
 
     // From the index, a page opens from a loading state, not from the page read before.
-    await rail.getByRole("navigation", { name: "文档与知识" }).getByRole("link", { name: "知识" }).click();
+    await rail.getByRole("navigation", { name: "工作分区" }).getByRole("link", { name: /^知识空间/ }).click();
     await main.getByRole("heading", { name: "知识空间", level: 1 }).waitFor();
     await directory.getByRole("link", { name: /列表要写明覆盖范围/ }).click();
     await main.getByText("正在读取「列表要写明覆盖范围」").waitFor({ state: "attached" });
@@ -266,7 +277,7 @@ test("知识空间 reads, filters, switches pages without collapsing the right c
     await main.getByRole("heading", { name: "列表要写明覆盖范围", level: 1 }).waitFor();
 
     // ---- Propose a candidate, reject the existing one, accept ours, publish (result unknown), reconcile.
-    await page.locator("aside[aria-label=项目导航]").getByRole("navigation", { name: "文档与知识" }).getByRole("link", { name: "知识" }).click();
+    await page.locator("aside[aria-label=项目导航]").getByRole("navigation", { name: "工作分区" }).getByRole("link", { name: /^知识空间/ }).click();
     await main.getByRole("button", { name: "提出候选" }).click();
     await main.getByRole("heading", { name: "提出知识候选" }).waitFor();
     await main.getByLabel("标题").fill("右栏入口要有名字");
@@ -312,7 +323,7 @@ test("知识空间 reads, filters, switches pages without collapsing the right c
 
     // ---- Degraded: the service is unreachable; the index says so and what can still be done.
     state.degraded = true;
-    await page.locator("aside[aria-label=项目导航]").getByRole("navigation", { name: "文档与知识" }).getByRole("link", { name: "知识" }).click();
+    await page.locator("aside[aria-label=项目导航]").getByRole("navigation", { name: "工作分区" }).getByRole("link", { name: /^知识空间/ }).click();
     await main.getByRole("button", { name: "重新读取" }).click();
     await main.getByText("知识服务暂不可达").waitFor();
     await main.getByRole("heading", { name: "此时仍可做什么" }).waitFor();
@@ -358,7 +369,7 @@ test("知识空间 writes: request bodies, conflicts, unknown results by the ori
   { skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE" }, async t => {
     const fx = fixture();
     const { state } = fx;
-    const { open, errors } = await serve(t, fx);
+    const { open, errors, consoleErrors } = await serve(t, fx);
     const reads = (label: string) => state.reads.filter(item => item === label).length;
     const bodies = (kind: string) => state.bodies.filter(item => item.kind === kind).map(item => item.body);
     const until = async (check: () => boolean, what: string) => {
@@ -376,7 +387,7 @@ test("知识空间 writes: request bodies, conflicts, unknown results by the ori
     const rail = page.locator("aside[aria-label=项目导航]");
     const directory = rail.getByRole("region", { name: "知识目录" });
     const index = async () => {
-      await rail.getByRole("navigation", { name: "文档与知识" }).getByRole("link", { name: "知识" }).click();
+      await rail.getByRole("navigation", { name: "工作分区" }).getByRole("link", { name: /^知识空间/ }).click();
       await main.getByRole("heading", { name: "知识空间", level: 1 }).waitFor();
     };
     await directory.getByText(/知识列表这次没有读回/).waitFor();
@@ -535,6 +546,8 @@ test("知识空间 writes: request bodies, conflicts, unknown results by the ori
 
     // ---- No knowledge backend for this project: said as a setting, with no retry, no 上次读回 and no doubled period.
     state.notConfigured = true;
+    consoleErrors.length = 0;
+    const readsBefore = state.reads.length;
     const unconfigured = await open(1440, 900);
     await unconfigured.locator("main").getByText("知识后端未配置").first().waitFor();
     const unconfiguredRail = unconfigured.locator("aside[aria-label=项目导航]");
@@ -547,6 +560,30 @@ test("知识空间 writes: request bodies, conflicts, unknown results by the ori
     await unconfigured.locator("main").getByText("知识后端未配置，暂时不能提出", { exact: true }).waitFor();
     assert.equal(await unconfigured.locator("main").getByRole("button", { name: "提出候选" }).isDisabled(), true);
     if (shots) await unconfigured.screenshot({ path: `${shots}/knowledge-unconfigured-1440.png` });
+    // Task 306bdd7a: the service's setting is read once, and the three reads that could only be refused are not sent at all: no 409, no console error.
+    const sentUnconfigured = state.reads.slice(readsBefore);
+    for (const refused of ["capabilities", "pages:first", "candidates"]) assert.ok(!sentUnconfigured.includes(refused), `${refused} is not requested without a backend (${sentUnconfigured.join(",")})`);
+    assert.ok(sentUnconfigured.includes("project-capabilities"), "the project's setting is what decided it");
+    assert.deepEqual(consoleErrors, [], "no failed-resource line in the console");
     await unconfigured.close();
+    // The same at 390x844.
+    consoleErrors.length = 0;
+    const readsNarrow = state.reads.length;
+    const narrow = await open(390, 844);
+    await narrow.getByText("知识后端未配置").first().waitFor();
+    const sentNarrow = state.reads.slice(readsNarrow);
+    for (const refused of ["capabilities", "pages:first", "candidates"]) assert.ok(!sentNarrow.includes(refused), `${refused} is not requested at 390 (${sentNarrow.join(",")})`);
+    assert.deepEqual(consoleErrors, []);
+    if (shots) await narrow.screenshot({ path: `${shots}/knowledge-unconfigured-390.png` });
+    await narrow.close();
+    // A service that cannot judge the setting is not taken as "no backend": the reads go out and answer for themselves (here with the refusal, said as before).
+    state.capabilityRead = "fail";
+    const readsUnknown = state.reads.length;
+    const unknown = await open(1440, 900);
+    await unknown.locator("main").getByText("知识后端未配置").first().waitFor();
+    const sentUnknown = state.reads.slice(readsUnknown);
+    for (const asked of ["capabilities", "pages:first", "candidates"]) assert.ok(sentUnknown.includes(asked), `${asked} is still requested when the setting is unknown`);
+    await unknown.close();
+    state.capabilityRead = "ok"; state.notConfigured = false;
     assert.deepEqual(errors, []);
   });

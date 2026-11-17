@@ -81,7 +81,7 @@ test("跨空间返回: task → agent → task (same tab), table → agent, 统�
       const root = `/api/projects/${projectId}`;
       const path = decodeURIComponent(url.pathname);
       let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
-      if (path === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
+      if (path === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} };
       else if (path === "/api/projects") value = [{ id: projectId, title: "返回链接夹具", createdAt: stamp }];
       else if (path === root) value = { id: projectId, title: "返回链接夹具", createdAt: stamp };
       else if (path === `${root}/tasks`) value = { items: tasks, nextCursor: null };
@@ -241,7 +241,7 @@ test("跨空间返回: task → agent → task (same tab), table → agent, 统�
   assert.match(await here(), /state=all/, "the filter stays");
 
   // 5. 统筹安排: an assignment on an older revision is a risk; a task opened from the board comes back to it.
-  await page.goto(`${base}/p/${projectId}/sessions`);
+  await page.goto(`${base}/p/${projectId}/arrangement`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "统筹安排" }).waitFor();
@@ -265,7 +265,7 @@ test("跨空间返回: task → agent → task (same tab), table → agent, 统�
   await shoot("task-from-arrangement-1440");
   await backToBoard.click();
   await page.getByRole("heading", { name: "统筹安排" }).waitFor();
-  assert.equal(await here(), `/p/${projectId}/sessions`);
+  assert.equal(await here(), `/p/${projectId}/arrangement`);
   await page.getByRole("region", { name: /没有承接者的任务/ }).getByRole("link", { name: titleC }).click();
   await page.getByRole("heading", { level: 1, name: titleC }).waitFor();
   await backToBoard.waitFor();
@@ -274,11 +274,11 @@ test("跨空间返回: task → agent → task (same tab), table → agent, 统�
 
   // 6. Narrow widths: the way back stays on screen and nothing scrolls sideways.
   const agentFromTask = `/p/${projectId}/sessions?${new URLSearchParams({ session: sessionKey, return: `${taskPath}?tab=runtime`, actor: "reader", returnTitle: titleA })}`;
-  const taskFromBoard = `${taskPath}?${new URLSearchParams({ return: `/p/${projectId}/sessions`, actor: "reader" })}`;
+  const taskFromBoard = `${taskPath}?${new URLSearchParams({ return: `/p/${projectId}/arrangement`, actor: "reader" })}`;
   for (const width of [1024, 390]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 800 });
     for (const [name, path, label] of [["agent-from-task", agentFromTask, `返回任务：${titleA}`], ["task-from-arrangement", taskFromBoard, "返回统筹安排"],
-      ["arrangement-stale", `/p/${projectId}/sessions`, null]] as const) {
+      ["arrangement-stale", `/p/${projectId}/arrangement`, null]] as const) {
       await page.evaluate(next => { history.pushState(null, "", next); dispatchEvent(new PopStateEvent("popstate")); }, path);
       if (label) await returnLink(label).waitFor({ timeout: 8000 }).catch(() => fail(`${name} at ${width}`));
       else await page.locator("[data-stale-assignment]").waitFor();

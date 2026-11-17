@@ -1,9 +1,9 @@
-// What 分工与运行 says about managed agents (Session) and their runs, apart from rendering so each rule can be tested.
+// What 运行与接入 says about managed agents (Session) and their runs, apart from rendering so each rule can be tested.
 // Service states reach the screen as short Chinese labels; a close is offered only when no recorded fact blocks it.
 import type { ResidentQueue } from "@evoloop/contracts/queues";
 import type { RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import type { StatusTone } from "@evoloop/ui";
-import type { ExecutionGrant } from "../../shared/runtimeClient";
+import type { ExecutionGrant, RuntimeStatus } from "../../shared/runtimeClient";
 
 export const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -106,7 +106,7 @@ export function closeBlockers(session: RuntimeSessionRecord, read: CloseRead): s
   return blockers;
 }
 
-/** The address of one managed agent in 分工与运行. */
+/** The address of one managed agent in 运行与接入. */
 export const executionHref = (projectId: string, sessionId: string) => `/p/${projectId}/runtime?session=${encodeURIComponent(sessionId)}`;
 
 /** A linked agent that is not on screen: still being read, unreadable, or read back and not there — never guessed. */
@@ -125,3 +125,33 @@ const messageKind: Record<string, string> = {
 /** Native thread history: turn states and item kinds as words; an unknown value is named as unknown, not shown raw. */
 export const turnStatusText = (status: string) => turnStatus[status] ?? "状态未识别";
 export const messageKindText = (type: string) => messageKind[type] ?? "其他记录";
+
+
+const faultPhaseText: Record<string, string> = {
+  project_scan: "读取项目运行状态", session_create: "创建智能体", session_name_sync: "同步智能体名称", session_close: "关闭智能体", profile_activation: "模型配置生效",
+  run_preflight: "运行前检查", business_profile_restore: "恢复业务配置", run_start: "启动运行", run_bind: "绑定运行", run_reconcile: "对账运行", approval_receipt: "审批回执",
+};
+const faultCategoryText: Record<string, string> = {
+  authorization: "授权问题", native_rejected: "原生服务拒绝", verification: "尚未核实", unavailable: "暂不可用", unknown_outcome: "结果未知",
+};
+export interface FaultLine { key: string; sessionId: string | null; title: string; text: string }
+
+/** The faults the service still holds, one line each, in the order read; the service's own sentence is kept as the explanation. */
+export function faultLines(status: Pick<RuntimeStatus, "faults">): FaultLine[] {
+  return (status.faults ?? []).map((fault, index) => ({
+    key: `${index}-${fault.phase}-${fault.sessionId ?? ""}`, sessionId: fault.sessionId,
+    title: `${faultPhaseText[fault.phase] ?? fault.phase} · ${faultCategoryText[fault.category] ?? fault.category}`,
+    text: fault.message ?? "",
+  }));
+}
+
+/**
+ * The one line for 执行服务. Reachable is not the same as healthy: a service that answers can still hold an error or faults (`available` stays true),
+ * and a reader who sees only 已接通 would take everything to be fine.
+ */
+export function serviceLine(status: Pick<RuntimeStatus, "available" | "error" | "faults">): string {
+  const faults = status.faults?.length ?? 0;
+  if (!status.available) return `未接通${status.error ? `：${status.error}` : ""}`;
+  if (faults) return `已接通，但有 ${faults} 条故障未清除`;
+  return status.error ? "已接通，但有提示" : "已接通";
+}

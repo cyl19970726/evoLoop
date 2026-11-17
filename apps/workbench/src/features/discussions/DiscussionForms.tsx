@@ -98,12 +98,12 @@ export function PrepareForm({ context, choices, rereading, onPrepared, onCancel 
       { discussionId: crypto.randomUUID(), documentId: crypto.randomUUID() }, context.projectId), result => { draft.clear(); setDocumentIds([]); onPrepared(result.entityId); });
   };
   const refill = () => { command.rebase(); draft.clear(); setDocumentIds([]); };
-  return <CommandFrame context={context} command={command} label="准备讨论" submitLabel="生成交接包" dirty={draft.dirty} onSubmit={send}
+  return <CommandFrame context={context} command={command} label="准备讨论" submitLabel="生成交接包" dirty={draft.dirty} permission="task" onSubmit={send}
     onKeep={() => command.rebase()} onRefill={refill} keepNote={keepNote} rereading={rereading} onCancel={onCancel} className="gap-4 rounded-xl"
     copy={draftText("准备讨论", prepareLabels, values)}>
     <div role="group" aria-label="讨论什么" className="flex flex-wrap gap-2">
-      {(["allocation", "direction"] as const).map(item => <Button key={item} size="compact" variant={kind === item ? "secondary" : "ghost"} aria-pressed={kind === item}
-        className={cn(kind === item && "bg-selected")} onClick={() => setKind(item)}>{item === "allocation" ? "讨论当前分工" : "讨论下一阶段"}</Button>)}
+      {(["allocation", "direction"] as const).map(item => <Button key={item} size="compact" variant="ghost" aria-pressed={kind === item}
+        className={cn(kind === item && "bg-accent text-accent-strong hover:bg-accent")} onClick={() => setKind(item)}>{item === "allocation" ? "讨论当前分工" : "讨论下一阶段"}</Button>)}
     </div>
     <p className={muted}>交接包固定所选目标的版本、可选的阶段与任务、已采纳文档，系统生成完整来源头，正文只补充本次的问题。</p>
     <TextField label="交接包标题" value={values.title} error={draft.error("title")} onChange={value => draft.set("title", value)} />
@@ -151,7 +151,7 @@ export function HandoffForm({ context, record, notReady, rereading, onCancel }: 
     if (draft.missing(["evidence", "reason"])) return;
     void command.submit(() => discussionHandoffPayload(record, draft.values), () => { draft.clear(); onCancel(); });
   };
-  return <CommandFrame context={context} command={command} label="登记承接观察" submitLabel="登记承接" dirty={draft.dirty} onSubmit={send}
+  return <CommandFrame context={context} command={command} label="登记承接观察" submitLabel="登记承接" dirty={draft.dirty} permission="task" onSubmit={send}
     onKeep={() => command.rebase()} onRefill={() => { command.rebase(); draft.clear(); }} keepNote={keepNote} paused={notReady} rereading={rereading}
     onCancel={onCancel} className="gap-4 rounded-xl" copy={draftText("登记承接观察", { evidence: "实际怎样观察到承接", reason: "理由与依据" }, draft.values)}>
     <TextField label="实际怎样观察到承接" hint="只登记人工观察，不证明自动送达或对方已读完。" multiline value={draft.values.evidence} error={draft.error("evidence")} onChange={value => draft.set("evidence", value)} />
@@ -183,7 +183,7 @@ export function DecisionForm({ context, record, latest, head, notReady, rereadin
   const title = latest ? "纠正当前决定" : "登记讨论决定";
   return <CommandFrame context={context} command={command} label={title} submitLabel={latest ? "保存纠正" : "保存决定"} dirty={draft.dirty || confirmed}
     onSubmit={send} onKeep={() => command.rebase()} onRefill={() => { command.rebase(); draft.clear(); setConfirmed(false); }} keepNote={keepNote}
-    permission="review" paused={notReady} rereading={rereading} onCancel={onCancel} className="gap-4 rounded-xl"
+    permission="task" decision paused={notReady} rereading={rereading} onCancel={onCancel} className="gap-4 rounded-xl"
     copy={draftText(title, { choice: "本次取舍", unresolved: "还没解决的问题", relookCondition: "什么情况下重看", evidence: "讨论依据与实际观察", reason: "理由",
       documentRecoveryReason: "为什么从文档当前版接续" }, draft.values)}>
     {latest && <p className={muted}>保存后当前决定会标为已纠正。旧决定和已链接的对象都保留，不会自动撤销任何行动。</p>}
@@ -230,7 +230,7 @@ export function LinkForm({ context, record, decision, choices, notReady, rereadi
   };
   const pick = (value: string) => { draft.set("target", value); command.adopt({ target: targetKey(choices.find(item => item.value === value)?.target) }); };
   return <CommandFrame context={context} command={command} label="链接后续对象" submitLabel="链接对象" dirty={draft.dirty} onSubmit={send}
-    onKeep={() => command.rebase()} onRefill={() => { command.rebase(); draft.clear(); }} keepNote={keepNote} permission="review" paused={notReady}
+    onKeep={() => command.rebase()} onRefill={() => { command.rebase(); draft.clear(); }} keepNote={keepNote} permission="task" decision paused={notReady}
     rereading={rereading} onCancel={onCancel} className="gap-4 rounded-xl" copy={draftText("链接后续对象", { reason: "理由" }, draft.values)}>
     <p className={muted}>只链接已经存在、能读到的对象；讨论决定本身不会创建任务、阶段或常设职责。</p>
     <SelectField label="实际的后续对象" value={draft.values.target} error={draft.error("target")} onChange={pick}>

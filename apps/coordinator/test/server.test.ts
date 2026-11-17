@@ -8,7 +8,7 @@ import { DomainError } from "@evoloop/contracts/ports";
 
 const projectId = "00000000-0000-4000-8000-000000000001";
 const token = "a".repeat(40);
-const credentials = authConfigSchema.parse([{ token, actorId: "local-owner", projectIds: [projectId], permissions: ["read", "write", "review"] }]);
+const credentials = authConfigSchema.parse([{ token, actorId: "local-owner", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }]);
 const workManagementQueries = {
   listRoles: async (principal: { actorId: string }) => ({ actorId: principal.actorId, items: [], nextCursor: null }),
   listRoleRevisions: async () => [], listRoleReviews: async () => [], listRoleHandoffs: async () => [],
@@ -79,7 +79,7 @@ test("current study reviewer accepts equivalent token rotation but never combine
   const rotating=authConfigSchema.parse([...credentials,{...credentials[0]!,token:"b".repeat(40)}]);
   assert.equal(hasCurrentStudyReviewer(rotating,projectId,"local-owner"),true);
   assert.equal(hasCurrentStudyReviewer(rotating,projectId,"other-owner"),false);
-  rotating[1]!.permissions=["read","write"];
+  rotating[1]!.permissions=["task","document","session"];
   assert.equal(hasCurrentStudyReviewer(rotating,projectId,"local-owner"),false);
   rotating.splice(0);
   assert.equal(hasCurrentStudyReviewer(rotating,projectId,"local-owner"),false);
@@ -115,8 +115,7 @@ test("Session recovery read remains available without a native runtime and keeps
   const app=await buildServer({credentials,service:{...workManagementQueries,
     getSessionRecovery:async (principal:{actorId:string;projectIds:string[];permissions:string[]},project:string,id:string)=>{
       calls++;
-      if(!principal.projectIds.includes(project)||!principal.permissions.includes("read"))
-        throw new DomainError("FORBIDDEN","project read required");
+      if(!principal.projectIds.includes(project)) throw new DomainError("FORBIDDEN","project membership required");
       assert.equal(principal.actorId,"local-owner");assert.equal(id,sessionId);
       return {sessionId:id,gate:{phase:"blocked"},nextAction:"review_original_run"};
     },
@@ -242,7 +241,7 @@ test("schedule status scopes grants to the caller and active commands require an
   const otherProject = "00000000-0000-4000-8000-000000000099";
   const otherToken = "b".repeat(40);
   const identities = authConfigSchema.parse([...credentials,
-    { token: otherToken, actorId: "other-reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] }]);
+    { token: otherToken, actorId: "other-reviewer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }]);
   let enabled = true;
   const grant = { projectId, actorId: "local-owner", scopeId: "scope:daily", roleId: "temporary-role" };
   const grants = [grant, { ...grant, actorId: "other-reviewer" }, { ...grant, projectId: otherProject }];
@@ -409,7 +408,7 @@ test("runtime.run.stop needs review permission and the Session's exact execution
   const sessionId="00000000-0000-4000-8000-000000000041",runId="00000000-0000-4000-8000-000000000042";
   let writes=0,granted=true,journalled=false;
   const readerToken="r".repeat(40);
-  const identities=authConfigSchema.parse([...credentials,{token:readerToken,actorId:"writer",projectIds:[projectId],permissions:["read","write"]}]);
+  const identities=authConfigSchema.parse([...credentials,{token:readerToken,actorId:"writer",projectIds:[projectId],permissions:["session"]}]);
   const app=await buildServer({credentials:identities,service:{...workManagementQueries,
     getRuntimeRun:async()=>({id:runId,projectId,sessionId}),
     getRuntimeSession:async()=>({id:sessionId,roleId:"approved-role",authorizationScope:"task:approved",cwd:"/tmp/approved",sandbox:"danger-full-access",approvalPolicy:"never",model:"approved-model",state:"ready"}),

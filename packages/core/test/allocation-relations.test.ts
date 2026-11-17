@@ -8,7 +8,7 @@ import { AllocationRelationsService } from '../src/allocation-relations/index.ts
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const projectId = id(1), roleId = id(2);
-const principal: Principal = { actorId: 'reader', projectIds: [projectId], permissions: ['write', 'read', 'write'] };
+const principal: Principal = { actorId: 'reader', projectIds: [projectId], permissions: ['task', 'document', 'session'] };
 const empty: AllocationTracePage = { items: [], nextCursor: 'next-page', resetRequired: false,
   canonicalSessionKey: null, metadata: { generatedAt: new Date(0).toISOString(), sourceObservedAt: null,
     partial: false, limitations: ['Only registered paths appear.'] } };
@@ -19,7 +19,7 @@ test('one read transaction verifies project and passes a bounded exact query wit
     assert.equal(project, projectId); calls.push('read');
     return action({ getProject: async () => { calls.push('project'); return { id: projectId }; },
       allocationRelations: (scope: string) => { calls.push('scope');
-        assert.deepEqual(JSON.parse(scope), { actorId: 'reader', permissions: ['read', 'write'] });
+        assert.deepEqual(JSON.parse(scope), { actorId: 'reader', permissions: ['document', 'session', 'task'] });
         return { list: async (query: unknown) => { calls.push('list'); assert.deepEqual(query, { roleId, limit: 20 }); return empty; } }; } });
   }, transaction: async () => { throw new Error('read path must not write'); } } as unknown as UnitOfWork;
   const result = await new AllocationRelationsService({ uow }).list(principal, projectId, { roleId });

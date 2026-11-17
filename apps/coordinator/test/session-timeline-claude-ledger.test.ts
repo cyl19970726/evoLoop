@@ -22,7 +22,7 @@ import { SessionTimelineService, type WorkspaceHistoryOwner } from '../src/sessi
 const fake = fileURLToPath(new URL('../../../packages/adapter-claude-agent-sdk/test/fake-claude.mjs', import.meta.url));
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const project = id(1), sessionId = id(2), key = `owned:${sessionId}`, now = '2026-11-11T00:00:00.000Z';
-const reader: Principal = { actorId: 'reader', projectIds: [project], permissions: ['read'] };
+const reader: Principal = { actorId: 'reader', projectIds: [project], permissions: ['session'] };
 
 async function settle(adapter: ClaudeAgentSdkAdapter, binding: RuntimeBinding, turnId: string) {
   const deadline = Date.now() + 15_000;

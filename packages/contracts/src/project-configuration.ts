@@ -58,7 +58,8 @@ export type ProjectCapabilityState = "configured" | "not_configured" | "unknown"
  * - `grant_holder_not_authorized`: this project has grants, but no holder has the permissions the service requires.
  * - `grant_directory_unavailable`: this project's runtime grants name a working directory the service does not accept.
  * - `controller_not_in_project`: the managed loop controller identity does not include this project.
- * - `controller_not_authorized`: the controller identity lacks read, write or review, so managed loops do not start.
+ * - `controller_not_authorized`: the controller identity lacks a task/document/Session class or decision authority,
+ *   so managed loops do not start.
  * - `controller_grants_ambiguous`: the controller has several runtime grants for each of this project's Roles, and
  *   acts for a Role only through exactly one.
  * - `runtime_unavailable`: configured, but the runtime was not available when read.
@@ -76,8 +77,7 @@ export type ProjectCapabilityReason =
  * Why the calling identity cannot use a capability granted per actor.
  * - `caller_has_no_grant`: its actor holds no grant here that the service accepts.
  * - `caller_lacks_write`, `caller_lacks_review`, `caller_lacks_write_and_review`: its actor holds a grant, but the token
- *   it signed in with lacks what the service requires of the request (scheduling and runtime need review; daily copies
- *   and Feishu actions need write and review).
+ *   it signed in with lacks the owning object class or decision authority the service requires of the request.
  * - `caller_not_current_writer`: daily copies also need the actor to be a writer in the identity file as it is now.
  */
 export type ProjectCallerReason =
@@ -116,21 +116,25 @@ export type ProjectMemberSourceKind = "local_identities" | "hub";
 /** What an actor may do in this project, each as the service's own check decides it now. */
 export interface ProjectMemberAbilities {
   identityKind: "agent" | "human";
-  /** Sign in and read: HTTP authentication accepts one credential, which must grant read here. */
+  /** Membership: the identity can sign in and read ordinary project objects. */
   canRead: boolean;
-  /**
-   * Write: a request writes with the token it signed in with, from the identities loaded at start, and business writer
-   * checks read the identity file again. Both must find one credential with read and write here. false when the loaded
-   * identities have none; null when they do but the identity file is unreadable.
-   */
+  /** Object classes this identity may write. Ordinary reads need membership only. */
+  permissions: import("./identity.js").Permission[];
+  /** Decision authority over those classes. Humans receive it with a class; agents need it explicitly. */
+  decisions: boolean;
+  /** Projects named by the credential. `/members` lists only the requested project here. */
+  projectIds: string[];
+  /** Session write/full-record scope; an empty list means every Session in the named projects. */
+  sessionIds: string[];
+  /** Compatibility summary: this identity has at least one object-write class. */
   canWrite: boolean | null;
-  /** The reviewer check: every credential of the actor here grants read, write and review; partial grants never add up. */
+  /** Compatibility summary: this identity currently has decision authority. Use `permissions` and `decisions` for the class. */
   canReview: boolean;
 }
 export interface ProjectMember extends ProjectMemberAbilities {
   actorId: string;
   /** What this actor could do after a restart, when the identity file now says otherwise than what is in effect; else null. */
-  pending: { identityKind: "agent" | "human"; canRead: boolean; canWrite: boolean; canReview: boolean } | null;
+  pending: ProjectMemberAbilities | null;
 }
 /**
  * `unchanged`: this project's identity entries are as the service loaded them at start. `changed`: this project's

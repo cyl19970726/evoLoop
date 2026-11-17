@@ -56,7 +56,7 @@ test("Task tabs and refresh retain the verified Session return; ordinary and wro
     const url = new URL(route.request().url());
     const root = `/api/projects/${projectId}`;
     let status=200, value:unknown={items:[],nextCursor:null,metadata};
-    if (url.pathname === "/api/session") value={principal:{actorId:"reader",projectIds:[projectId],permissions:["read"]},capabilities:{}};
+    if (url.pathname === "/api/session") value={principal:{actorId:"reader",projectIds:[projectId],permissions:[]},capabilities:{}};
     else if (url.pathname === root) value={id:projectId,title:"夹具项目",createdAt:stamp};
     else if (url.pathname === `${root}/tasks/${taskId}`) value={task,revision:{...task,taskId,id:taskId,actorId:"reader",reason:"fixture",createdAt:stamp},
       basis:null,links:[],impacts:[],decisions:[],proposal:null,judgements:[],deliveries:[],observations:[],closures:[]};

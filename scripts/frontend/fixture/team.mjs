@@ -58,7 +58,7 @@ export const roleRuntime = key => ({ projectId, roleId: roles[key].id, binding: 
     location: ".claude/skills/frontend-design", contentHash: null, delivery: "role_context" }],
   missing: [], skillsReportedBy: "files", plugins: [], mcpServers: [], notes: [], observedAtUtc: ago(10) });
 
-// ---------- runtime (分工与运行) ----------
+// ---------- runtime (运行与接入) ----------
 const grant = { projectId, actorId, roleId: roles.dev.id, authorizationScope: "前端任务", cwd: "/srv/evoloop/workbench", sandbox: "workspace-write",
   approvalPolicy: "never", networkAccess: true, models: ["gpt-6-sol"] };
 export const runtime = () => ({ available: true, error: null, allowedCwds: ["/srv/evoloop/workbench"], grants: [grant] });

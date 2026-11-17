@@ -133,7 +133,7 @@ test("resident observation keeps acceptance, host authority and task replies dis
     if (url.pathname.startsWith("/api/")) {
       const p = `/api/projects/${projectId}`;
       let value:unknown = page([]);
-      if (url.pathname === "/api/session") value = {principal:{actorId:"lead",projectIds:[projectId,otherProjectId],permissions:["read"]},capabilities:{}};
+      if (url.pathname === "/api/session") value = {principal:{actorId:"lead",projectIds:[projectId,otherProjectId],permissions:[]},capabilities:{}};
       else if (url.pathname === `/api/projects/${otherProjectId}`) value = {id:otherProjectId,title:"另一夹具项目",createdAt:stamp};
       else if (url.pathname === `/api/projects/${otherProjectId}/roles`) value = page([{...role,projectId:otherProjectId}]);
       else if (url.pathname === `/api/projects/${otherProjectId}/roles/${roleId}/hosts`) {
@@ -302,7 +302,7 @@ test("resident observation keeps acceptance, host authority and task replies dis
   await presence.getByRole("link",{name:"查看运行与队列"}).waitFor();
   assert.equal((await presence.getByRole("link",{name:"在智能体空间打开"}).getAttribute("href"))?.split("&return=")[0],`/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${sessionId}`)}`);
   await presence.getByRole("link",{name:"查看运行与队列"}).click();
-  // The owned host opens that managed agent in 分工与运行, with its queue.
+  // The owned host opens that managed agent in 运行与接入, with its queue.
   await pageBrowser.locator(`#runtime-session-${sessionId}`).waitFor();
   assert.equal(new URL(pageBrowser.url()).pathname + new URL(pageBrowser.url()).search,`/p/${projectId}/runtime?session=${sessionId}`);
   if (await pageBrowser.locator("[data-queue]").getAttribute("open") === null)

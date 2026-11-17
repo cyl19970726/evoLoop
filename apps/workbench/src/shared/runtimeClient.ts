@@ -5,7 +5,7 @@ export interface ExecutionGrant { projectId: string; actorId: string; roleId: st
   sandbox: "read-only" | "workspace-write" | "danger-full-access"; model?: string | null; models?: string[];
   approvalPolicy?: "on-request" | "untrusted" | "never"; networkAccess?: boolean }
 export interface RuntimeStatus { available: boolean; error: string | null; allowedCwds: string[]; grants: ExecutionGrant[];
-  faults?: { sessionId: string | null; phase: string; category: string; nativeMethod?: string; nativeCode?: number;
+  faults?: { sessionId: string | null; runId?: string | null; phase: string; category: string; message?: string; nativeMethod?: string; nativeCode?: number;
     nativeCategory?: string; observedAtUtc: string }[] }
 export interface RuntimeModels { status: "available" | "empty" | "unavailable"; models: string[];
   authorizedModels?: string[]; modelStatus?: { model: string; authorized: boolean }[]; error?: string | null }

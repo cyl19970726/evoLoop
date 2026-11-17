@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { EvaluationFixedRef, Principal } from "@evoloop/contracts";
+import { isProjectMember, type EvaluationFixedRef, type Principal } from "@evoloop/contracts";
 import type { WorkflowService } from "@evoloop/core";
 import type { KnowledgeRepository } from "@evoloop/contracts/knowledge";
 import type { DocumentSource } from "@evoloop/contracts/sources";
@@ -19,7 +19,7 @@ export interface EvaluationSourceOptions {
 /** Read only a declared fixed source, rechecking current project authority and its immutable revision hash. */
 export async function readEvaluationMaterial(principal: Principal, projectId: string,
   source: EvaluationFixedRef, options: EvaluationSourceOptions): Promise<FixedEvaluationMaterial> {
-  if (!principal.projectIds.includes(projectId) || !principal.permissions.includes("read"))
+  if (!isProjectMember(principal, projectId))
     throw new Error("Project read authority is unavailable for evaluation material");
   if (source.kind === "document") {
     const revision = await options.workflow.getDocumentPayloadRevision(principal, projectId, source.id, source.revision);

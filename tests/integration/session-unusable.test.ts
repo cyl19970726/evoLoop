@@ -38,7 +38,7 @@ test("a Session without a business identity or native thread is unusable and say
   const deps = { uow, clock: { now: () => new Date().toISOString() }, ids: { next: randomUUID }, hasher: { hash } };
   const workflow = new WorkflowService(deps), runtime = new RuntimeWorkflowService(deps);
   const projectId = randomUUID(), token = randomUUID() + randomUUID();
-  const lead: Principal = { actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] };
+  const lead: Principal = { actorId: "lead", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
   const apply = async (command: Record<string, unknown>) => { const r = await workflow.execute(lead, { projectId, operationId: randomUUID(), ...command } as never); assert.equal(r.status, "applied", JSON.stringify(r)); return r; };
   await apply({ type: "project.create", title: "Unusable sessions" });
   const roleId = randomUUID(), revId = randomUUID();
@@ -73,7 +73,7 @@ test("a Session without a business identity or native thread is unusable and say
   // Opt-in (EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE + the built workbench): the same real server also serves the workbench, and step 13 reads the page back.
   const playwrightModule = process.env.EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE;
   const webRoot = playwrightModule ? (process.env.EVOLOOP_BROWSER_TEST_DIST ?? resolve(import.meta.dirname, "../../apps/workbench/dist")) : undefined;
-  const app = await buildServer({ ...(webRoot ? { webRoot } : {}), service: workflow, credentials: [{ token, actorId: "lead", projectIds: [projectId], permissions: ["read", "write", "review"] }],
+  const app = await buildServer({ ...(webRoot ? { webRoot } : {}), service: workflow, credentials: [{ token, actorId: "lead", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
     runtime: { status: () => ({ available: true, error: null, faults: [] }) } as never, listRuntimeModels: async () => ({ status: "available", models: [], error: null, observedAtUtc: new Date().toISOString() }),
     hasRuntimeGrant: () => true, workBoard: { reads, hub, usability: judge }, sessionWork: new SessionObservationService({ uow }), sessionUsability: judge, sessionAttention: (project: string) => listSessionAttention(pool as never, project),
     requireRunRecipient: createReserveRecipientCheck({ uow, loadIntegrations: async () => ({ runtime: { enabled: true, materialCli: config.materialCli as never } }), usability: judge,
@@ -93,7 +93,7 @@ test("a Session without a business identity or native thread is unusable and say
     const response = await app.inject({ method: "POST", url: "/api/commands", headers, payload: { type: "runtime.run.reserve", projectId, operationId: randomUUID(), runId: randomUUID(), taskId, sessionId, expectedVersion: task.version, input: "go" } });
     return { status: response.statusCode, body: response.body };
   };
-  const worker: Principal = { actorId: "worker", projectIds: [projectId], permissions: ["read", "write"] };
+  const worker: Principal = { actorId: "worker", projectIds: [projectId], permissions: ["task", "document", "session"] };
   /** The normal dispatch path: the Task is assigned to the Session with the signer named, and the Session confirms; only the reservation is left. */
   const assign = async (taskId: string, sessionId: string) => {
     const task = (await uow.read(projectId, r => r.getTask(taskId)))!;
@@ -264,7 +264,7 @@ test("a Session without a business identity or native thread is unusable and say
   // ---- Rework 2 (Task 6612e287, acceptance 3196b5d9) ----
   // 11. No requirements Session: the item is not dropped. A skip row says why (and is readable over HTTP), the Leader's notice is there, and when a
   //     requirements Session appears the item is delivered through the REAL session.message.post command, once.
-  const worker2: Principal = { actorId: "worker", projectIds: [projectId], permissions: ["read", "write"] };
+  const worker2: Principal = { actorId: "worker", projectIds: [projectId], permissions: ["task", "document", "session"] };
   const realPost = (_project: string, to: string, content: string, messageId: string, operationId: string) => postAttentionMessage(workflow, worker2, projectId, to, content, messageId, operationId);
   let requirements: string[] = [];
   const skipped: string[] = [];
@@ -296,12 +296,12 @@ test("a Session without a business identity or native thread is unusable and say
   assert.equal((await pool.query("SELECT state FROM session_attention_delivery WHERE project_id=$1 AND attention_id=$2 AND recipient_session_id=$3", [projectId, lonelyItem.attention_id, requirementsC])).rows[0].state, "posted");
   // A real post that is refused is kept with its reason (a Session that does not exist for the sender: no write permission).
   const refusedPump = new SessionAttentionPump({ store: pgSessionAttentionStore(pool as never), canWrite: () => true, requirementsSessions: async () => [requirementsC],
-    post: (_project, to, content, messageId, operationId) => postAttentionMessage(workflow, { ...worker2, permissions: ["read"] }, projectId, to, content, messageId, operationId) });
+    post: (_project, to, content, messageId, operationId) => postAttentionMessage(workflow, { ...worker2, permissions: [] }, projectId, to, content, messageId, operationId) });
   const fourth = await makeSession();
   for (let i = 0; i < 3; i++) await reserve(await newTask(false), fourth);
   await refusedPump.tick();
   const refusedRows = (await pool.query("SELECT state, reason FROM session_attention_delivery WHERE project_id=$1 AND recipient_session_id=$2 AND state<>'posted'", [projectId, requirementsC])).rows;
-  assert.equal(refusedRows.length, 1); assert.equal(refusedRows[0].state, "blocked"); assert.match(refusedRows[0].reason, /MESSAGE_POST_REJECTED|POST_FAILED.*write is required/);
+  assert.equal(refusedRows.length, 1); assert.equal(refusedRows[0].state, "blocked"); assert.match(refusedRows[0].reason, /MESSAGE_POST_REJECTED|POST_FAILED.*session is required/);
 
   // 12. The capacity view (`work acceptance`), run for real: an unbound Session carries the reasons and is not ready for acceptance, a bound one is.
   const relay = new AcceptanceRelayService({ pool, workflow, messages: {} as never, principals: async () => [], canWrite: () => false, leaderSession: async () => null, qualify: async () => null,

@@ -1,4 +1,4 @@
-import type { Principal } from "@evoloop/contracts";
+import { hasDecisionAuthority, hasPermission, type Principal } from "@evoloop/contracts";
 import { roleCommandSchema } from "@evoloop/contracts/roles";
 import type { RoleCommand, RoleDecision, RoleHandoff, RoleHandoffEvent, RoleProposal, RoleRecord, RoleRevision, RoleSessionBinding, RoleTransaction, RoleTrialReview } from "@evoloop/contracts/roles";
 
@@ -10,13 +10,19 @@ export interface RoleApplied { entityId: string; version: number; revisionId: st
 const fail = (code: string, message: string, version?: number): never => { throw new RoleRuleError(code, message, version); };
 const date = (value: string) => Date.parse(value);
 
-/** Execute inside the caller's journalled UnitOfWork transaction. No runtime call or Task owner mutation occurs here. */
-export async function applyRole(tx: RoleTransaction, principal: Principal, input: RoleCommand, context: RoleApplyContext): Promise<RoleApplied> {
+/**
+ * Execute inside the caller's journalled UnitOfWork transaction. No runtime call or Task owner mutation occurs here.
+ * `authority` is the principal whose management grant authorizes a delegated internal proposal (for example a
+ * division decision); the recorded author stays `principal`.
+ */
+export async function applyRole(tx: RoleTransaction, principal: Principal, input: RoleCommand,
+  context: RoleApplyContext, authority: Principal = principal): Promise<RoleApplied> {
   const parsed = roleCommandSchema.safeParse(input);
   if (!parsed.success) return fail("INVALID_COMMAND", parsed.error.message);
   const command = parsed.data;
-  if (!principal.actorId || !principal.projectIds.includes(command.projectId) || !principal.permissions.includes("write")) return fail("FORBIDDEN", "project write permission required");
-  if (command.type !== "role.propose" && !principal.permissions.includes("review")) return fail("FORBIDDEN", "role decision requires review permission");
+  if (!hasPermission(authority, command.projectId, "management")) return fail("FORBIDDEN", "project management permission required");
+  if (command.type !== "role.propose" && !hasDecisionAuthority(authority, command.projectId, "management"))
+    return fail("FORBIDDEN", "role decision requires project management decision authority");
   if (!Number.isFinite(date(context.nowUtc))) return fail("INVALID_TIME", "nowUtc must be a valid instant");
   if (command.type === "role.runtime.set") return fail("INVALID_COMMAND", "role runtime commands are applied by applyRoleRuntime");
   if (command.type === "role.bootstrap") return fail("INVALID_COMMAND", "role.bootstrap is applied by applyRoleBootstrap");
@@ -150,9 +156,8 @@ export async function applyRoleBootstrap(tx: RoleTransaction, principal: Princip
   const parsed = roleCommandSchema.safeParse(input);
   if (!parsed.success || parsed.data.type !== "role.bootstrap") return fail("INVALID_COMMAND", parsed.success ? "role.bootstrap required" : parsed.error.message);
   const command = parsed.data;
-  if (!principal.actorId || !principal.projectIds.includes(command.projectId) ||
-    !principal.permissions.includes("write") || !principal.permissions.includes("review"))
-    return fail("FORBIDDEN", "role bootstrap requires project write and review permission");
+  if (!hasDecisionAuthority(principal, command.projectId, "management"))
+    return fail("FORBIDDEN", "role bootstrap requires project management decision authority");
   if (!Number.isFinite(date(context.nowUtc))) return fail("INVALID_TIME", "nowUtc must be a valid instant");
   checkProposalShape(command.proposal, context.nowUtc);
   if (command.proposal.templateKey !== "lead" || command.proposal.roleClass !== "system")

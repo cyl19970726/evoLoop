@@ -1,12 +1,16 @@
 import { registerWorkBoardRoutes, type WorkBoardRouteDeps } from "./work-board/routes.js";
+import { clientRenderErrorSchema } from "./client-errors/index.js";
 import { registerReferenceRoutes, type ReferenceRouteOptions } from "./references/routes.js";
 import Fastify from "fastify";
 import staticPlugin from "@fastify/static";
-import { commandSchema, capabilities, idSchema, documentKindSchema, documentStatusSchema, type Command, type Principal, type RuntimeSessionRecord } from "@evoloop/contracts";
+import { commandSchema, capabilities, hasAnyDecisionAuthority, hasDecisionAuthority, hasPermission, isProjectMember,
+  mayAccessSession, idSchema, documentKindSchema, documentStatusSchema, type Command, type Principal, type RuntimeSessionRecord } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
 import { sessionPreparationHints } from "@evoloop/contracts/session-preparation";
 import type { WorkflowService } from "@evoloop/core";
 import { authenticate, authConfigSchema, type AuthConfig } from "./auth.js";
+import { HUB_IDENTITY_HEADER } from "@evoloop/contracts";
+import { HubIdentityError, type HubIdentityVerifier } from "./hub/identity.js";
 import { z } from "zod";
 import type { RuntimeRunner } from "./runtime/runner.js";
 import { runInputPage } from "./runtime/input-read.js";
@@ -113,6 +117,8 @@ export async function buildServer(options: {
   sessionWork?: SessionObservationService;
   allocationRelations?: AllocationRelationsService;
   sessionMessages?: SessionMessageService;
+  /** Who sent a message, as the receiving Session is told: the page shows the same class (Task bedd0ef3). */
+  senderClassResolver?: () => Promise<(from: import("./session-messages/sender.js").SenderFrom) => import("./session-messages/sender.js").SenderClass>;
   directInput?: DirectInputService;
   connectorRoutes?: ConnectorRouteReader;
   connectorDeliveries?: ConnectorDeliveryReader;
@@ -173,6 +179,8 @@ export async function buildServer(options: {
   workIndex?: LeaderWorkIndexReader;
   /** The work board and the scheduling event stream (DEC-045 Q2). */
   workBoard?: Omit<WorkBoardRouteDeps, "service">;
+  /** Pages the workbench could not render, posted by its page boundary and listed back (Task c3a8e5d1). */
+  clientErrors?: import("./client-errors/index.js").ClientErrorStore;
   /** Where each repeated-cause attention item went (delivered, blocked with its reason, skipped for lack of a requirements Session). */
   sessionAttention?: (projectId: string) => Promise<unknown>;
   /** Whether each Session can start work now: shown on `list sessions`, the Session directory and snapshot, and the work board. Without it nothing is judged and nothing claims usable. */
@@ -192,6 +200,8 @@ export async function buildServer(options: {
   sourceConfiguration?(principal: Principal | null): {git: boolean; wiki: boolean};
   /** This project's repositories, capabilities and members; a part left out answers `unavailable`. */
   projectConfiguration?: ProjectConfigurationSource;
+  /** Accepts the identity the Hub signs for a forwarded request (only on a machine that joined a Hub). */
+  hubIdentity?: { verifier: HubIdentityVerifier; onRejected?(reason: string): void; onAccepted?(identity: import("./hub/identity.js").HubIdentity): void };
 }) {
   const credentials = authConfigSchema.parse(options.credentials);
   const app = Fastify({ logger: false, bodyLimit: 128 * 1024 });
@@ -205,6 +215,23 @@ export async function buildServer(options: {
     if (!request.url.startsWith("/api/")) return;
     // The version is as public as /health: the commit, the build time and the start time only.
     if (options.milestones && request.method === "GET" && request.url.split("?")[0] === "/api/version") return;
+    const hubHeader = request.headers[HUB_IDENTITY_HEADER];
+    if (hubHeader !== undefined) {
+      // A request the Hub forwarded. It carries a signed identity and nothing else: an Authorization header next to it is ambiguous, so neither is trusted.
+      const value = Array.isArray(hubHeader) ? hubHeader[0] : hubHeader;
+      const rejected = (reason: string) => { options.hubIdentity?.onRejected?.(reason); return reply.code(401).send({ code: "UNAUTHENTICATED", message: "转发身份未被接受。" }); };
+      if (!options.hubIdentity || !value || request.headers.authorization !== undefined) return rejected("hub identity not usable here");
+      try {
+        const accepted = await options.hubIdentity.verifier.verify(value, { method: request.method, url: request.url });
+        request.principal = accepted.principal;
+        options.hubIdentity.onAccepted?.(accepted.identity);
+      } catch (error) {
+        return rejected(error instanceof HubIdentityError ? error.reason : "verification failed");
+      }
+      if (request.method !== "GET" && request.method !== "HEAD" && options.canWrite && !options.canWrite())
+        return reply.code(503).send({ code: "UNAVAILABLE", message: "协调者资格不可用；请保留操作 ID 并回读。" });
+      return;
+    }
     request.principal = authenticate(request.headers.authorization, credentials);
     if (!request.principal && options.workers) {
       request.workerIdentity = await options.workers.authenticate(request.headers.authorization);
@@ -240,8 +267,8 @@ export async function buildServer(options: {
   const who = (p: Principal | null) => { if (!p) throw new DomainError("FORBIDDEN", "未认证"); return p; };
   const messageRecoverySession = async (principal:Principal,projectId:string,sessionId:string,
     allowInactive=false) => {
-    if (!principal.projectIds.includes(projectId) || !principal.permissions.includes("review"))
-      throw new DomainError("FORBIDDEN", "普通消息恢复需要本项目复核权限。");
+    if (!hasDecisionAuthority(principal, projectId, "session") || !mayAccessSession(principal, projectId, sessionId))
+      throw new DomainError("FORBIDDEN", "普通消息恢复需要本项目 Session 决定权限。");
     const session = await options.service.getRuntimeSession(principal, projectId, sessionId);
     const dynamic = await options.isDynamicSession?.(projectId, sessionId);
     const granted = dynamic ? await options.authorizeDynamicMessageRecovery?.(principal, session) :
@@ -278,8 +305,8 @@ export async function buildServer(options: {
     const command = commandSchema.parse(request.body);
     if (command.type === "runtime.session.reserve" && !command.model) {
       const principal = who(request.principal);
-      if (!principal.projectIds.includes(command.projectId) || !principal.permissions.includes("review"))
-        throw new DomainError("FORBIDDEN", "执行操作需要本项目复核权限。");
+      if (!hasDecisionAuthority(principal, command.projectId, "session"))
+        throw new DomainError("FORBIDDEN", "执行操作需要本项目 Session 决定权限。");
       // An already recorded legacy intent must reach core's actor/hash guarded idempotency path.
       // A missing operation remains a new request and goes through the exact-model requirement below.
       if (await options.service.getOperation(principal, command.projectId, command.operationId)) {
@@ -331,8 +358,9 @@ export async function buildServer(options: {
         command.type !== "runtime.session.executionProfile.revise" && command.type !== "runtime.session.recovery.resume" && command.type !== "runtime.run.stop" && command.type !== "runtime.providerHold.release" &&
         !options.runtime?.status().available) throw new DomainError("RUNTIME_UNAVAILABLE", "Codex 执行服务尚未配置或当前不可用；本次未登记派发。");
       const principal = who(request.principal);
-      if (!principal.projectIds.includes(command.projectId) || (command.type === "runtime.handoff.record" ? !principal.permissions.includes("write") : !principal.permissions.includes("review"))) {
-        throw new DomainError("FORBIDDEN", "执行操作需要本项目复核权限。");
+      if (command.type === "runtime.handoff.record" ? !hasPermission(principal, command.projectId, "session") :
+        !hasDecisionAuthority(principal, command.projectId, "session")) {
+        throw new DomainError("FORBIDDEN", "执行操作需要本项目 Session 权限。");
       }
       if (command.type === "runtime.run.stop") {
         // review permission (checked above) plus this Session's exact execution grant, as for message recovery. A stop needs no live
@@ -386,12 +414,18 @@ export async function buildServer(options: {
           throw new DomainError("FORBIDDEN", "当前请求者未获该职责和范围的执行授权。");
         }
         if(!dynamic)await requireActiveModel(session.executionProfile?.revision.model??session.model,sessionProvider(session));
-        await options.requireRunRecipient?.(principal, command, session);
+        try {
+          await options.requireRunRecipient?.(principal, command, session);
+        } catch (error) {
+          // A stale assignment must not mask the shared delivery guard. Let the command
+          // re-check it after the guard's exact continuation/rework allowances.
+          if (!(error instanceof DomainError && error.code === "ASSIGNMENT_STALE")) throw error;
+        }
       }
     }
     if (command.type === "schedule.create" || (command.type === "schedule.revise" && command.state === "active")) {
       const principal = who(request.principal);
-      if (!principal.projectIds.includes(command.projectId) || !principal.permissions.includes("review") ||
+      if (!hasPermission(principal, command.projectId, "management") ||
         !callerSchedulingGrants(command.projectId, principal.actorId).some(grant =>
           grant.scopeId === command.authorization.scopeId && grant.roleId === command.authorization.roleId)) {
         throw new DomainError("FORBIDDEN", "当前身份没有此项目、范围和职责的日程授权。");
@@ -423,14 +457,14 @@ export async function buildServer(options: {
     const p = z.strictObject({ projectId: idSchema }).parse(request.params);
     const principal = who(request.principal);
     await options.service.getProject(principal, p.projectId);
-    return options.decisionsForMe!(p.projectId, principal.actorId, principal.permissions.includes("review"));
+    return options.decisionsForMe!(p.projectId, principal.actorId, hasAnyDecisionAuthority(principal, p.projectId));
   });
   app.get("/api/projects/:projectId/session-preparation/:sessionId", async request => {
     const p=z.strictObject({projectId:z.uuid(),sessionId:z.uuid()}).parse(request.params);
     const q=z.strictObject({roleId:z.uuid(),cwd:z.string().optional(),authorizationScope:z.string().optional(),
       model:z.string().optional()}).parse(request.query);
     const principal=who(request.principal);
-    if(!principal.permissions.includes("review"))throw new DomainError("FORBIDDEN","Session preparation requires project review permission");
+    if(!hasDecisionAuthority(principal,p.projectId,"session"))throw new DomainError("FORBIDDEN","Session preparation requires Session decision authority");
     await options.service.getProject(principal,p.projectId);
     const role=await options.service.getRole(principal,p.projectId,q.roleId);
     let session:RuntimeSessionRecord|null=null;
@@ -571,6 +605,21 @@ export async function buildServer(options: {
   });
   app.get("/api/projects/:projectId/runtime/provider-holds", async request =>
     options.service.listProviderHolds(who(request.principal), params(request.params).projectId!));
+  if (options.clientErrors) {
+    // Any caller who may read the project may leave and read these: the page that broke may be a read-only viewer's. The body is strict, bounded and redacted before it is stored.
+    app.post("/api/projects/:projectId/client-errors", async request => {
+      const projectId = params(request.params).projectId!;
+      await options.service.getProject(who(request.principal), projectId);
+      const result = await options.clientErrors!.record(projectId, who(request.principal).actorId, clientRenderErrorSchema.parse(request.body));
+      return { id: result.record.id, recordedAt: result.record.recordedAt, duplicate: result.duplicate };
+    });
+    app.get("/api/projects/:projectId/client-errors", async request => {
+      const projectId = params(request.params).projectId!;
+      await options.service.getProject(who(request.principal), projectId);
+      const limit = z.strictObject({ limit: z.coerce.number().int().min(1).max(50).default(20) }).parse(request.query).limit;
+      return { items: await options.clientErrors!.list(projectId, limit) };
+    });
+  }
   if (options.sessionAttention) app.get("/api/projects/:projectId/session-attention", async request => {
     const projectId = params(request.params).projectId!;
     await options.service.getProject(who(request.principal), projectId);
@@ -612,10 +661,12 @@ export async function buildServer(options: {
     return options.compaction.reconcile(who(request.principal),p.projectId,p.id);
   });
   if (options.allocationRelations) registerAllocationRelationRoutes(app, options.allocationRelations);
-  if (options.sessionWork) registerSessionWorkRoutes(app, options.sessionWork, (principal, session) => ({
+  if (options.sessionWork) registerSessionWorkRoutes(app, options.sessionWork, (principal, projectId, session) => ({
     ...session, capabilities: { ...session.capabilities,
-      send: options.sessionMessages && principal.permissions.includes("write") ? session.capabilities.send : {
-        available: false, mode: "unavailable", reason: !principal.permissions.includes("write")
+      send: options.sessionMessages && session.target.kind === "owned" &&
+        mayAccessSession(principal, projectId, session.target.sessionId) ? session.capabilities.send : {
+        available: false, mode: "unavailable", reason: session.target.kind === "owned" &&
+          !mayAccessSession(principal, projectId, session.target.sessionId)
           ? "当前身份只有读取权限，不能保存消息。" : "此服务尚未启用消息持久化入口。",
       } },
   }), async (principal, projectId, session) => ({
@@ -628,7 +679,7 @@ export async function buildServer(options: {
   }), async (principal, projectId, snapshot) => {
     const nativeObservation = options.nativeObservation && snapshot.session.target.kind === "owned"
       ? publicNativeObservationView(await options.nativeObservation.get(projectId, snapshot.session.target.sessionId),
-        principal.permissions.includes("read") && principal.permissions.includes("review")) : null;
+        mayAccessSession(principal, projectId, snapshot.session.target.sessionId)) : null;
     const usage = nativeObservation?.usage;
     const metric = (name: "inputTokens" | "outputTokens") => ({ ...snapshot.resources[name],
       value: usage!.total[name], source: "owned-native-event:thread/tokenUsage/updated", unit: "tokens", scope: "session" as const,
@@ -646,6 +697,7 @@ export async function buildServer(options: {
   }, (projectId, sessions) => dispatchOfSessions(options.sessionUsability, projectId, sessions));
   if (options.sessionWork && options.sessionMessages) registerSessionMessageRoutes(app, {
     workflow: options.service, observation: options.sessionWork, messages: options.sessionMessages,
+    ...(options.senderClassResolver ? { senderClassResolver: options.senderClassResolver } : {}),
   });
   if (options.directInput) registerDirectInputRoutes(app, options.directInput);
   if (options.connectorRoutes) registerConnectorRouteReads(app, options.service, options.connectorRoutes,
@@ -654,8 +706,8 @@ export async function buildServer(options: {
   app.get("/api/projects/:projectId/session-messages/:id/manual-stop-preview", async request => {
     const {projectId,id}=z.strictObject({projectId:z.uuid(),id:z.uuid()}).parse(request.params);
     const principal=who(request.principal);
-    if (!principal.projectIds.includes(projectId) || !principal.permissions.includes("review"))
-      throw new DomainError("FORBIDDEN", "普通消息恢复需要本项目复核权限。");
+    if (!hasDecisionAuthority(principal, projectId, "session"))
+      throw new DomainError("FORBIDDEN", "普通消息恢复需要本项目 Session 决定权限。");
     if (!options.manualStop || !options.sessionMessages)
       throw new DomainError("MANUAL_STOP_UNAVAILABLE", "当前 owner 未提供首次维护交接核验入口。");
     const detail=await options.sessionMessages.detail(projectId,id);
@@ -680,7 +732,7 @@ export async function buildServer(options: {
     await options.service.getRuntimeSession(principal, p.projectId, p.id);
     if (!options.nativeObservation) throw new DomainError("NATIVE_OBSERVATION_UNAVAILABLE", "此服务尚未启用原生进度观察。");
     return publicNativeObservationView(await options.nativeObservation.get(p.projectId, p.id),
-      principal.permissions.includes("read") && principal.permissions.includes("review"));
+      mayAccessSession(principal, p.projectId, p.id));
   });
   app.get("/api/projects/:projectId/session-inputs/:id", async request => {
     const p = z.strictObject({ projectId: z.uuid(), id: z.uuid() }).parse(request.params);
@@ -700,7 +752,7 @@ export async function buildServer(options: {
   app.post("/api/projects/:projectId/runtime/recover", async request => {
     const projectId = params(request.params).projectId!;
     const principal = who(request.principal);
-    if (!principal.projectIds.includes(projectId) || !principal.permissions.includes("review")) throw new DomainError("FORBIDDEN", "恢复执行服务需要本项目复核权限。");
+    if (!hasDecisionAuthority(principal, projectId, "session")) throw new DomainError("FORBIDDEN", "恢复执行服务需要本项目 Session 决定权限。");
     await options.service.getProject(principal, projectId);
     if (!options.runtime) throw new DomainError("RUNTIME_UNAVAILABLE", "执行服务尚未配置。");
     if (!callerGrants(projectId, principal.actorId).length) throw new DomainError("FORBIDDEN", "当前身份没有本项目的执行恢复授权。");
@@ -743,7 +795,7 @@ export async function buildServer(options: {
     const p=params(request.params),principal=who(request.principal);
     const body=preTurnContinueSchema.parse(request.body);
     const session=await options.service.getRuntimeSession(principal,p.projectId!,body.sessionId);
-    if(!principal.permissions.includes("review")||!principal.projectIds.includes(p.projectId!)||
+    if(!hasDecisionAuthority(principal,p.projectId!,"session")||
       !await options.hasRuntimeGrant?.({projectId:p.projectId!,actorId:principal.actorId,roleId:session.roleId,
         authorizationScope:session.authorizationScope,cwd:session.cwd,sandbox:session.sandbox,
         model:session.model,approvalPolicy:session.approvalPolicy}))
@@ -769,9 +821,11 @@ export async function buildServer(options: {
   app.get("/api/projects/:projectId/runtime/runs/:id/trace", async request => {
     const p = params(request.params);
     const principal = who(request.principal);
-    if (!principal.projectIds.includes(p.projectId!) || !principal.permissions.includes("read") ||
-        !request.workerIdentity && !principal.permissions.includes("review"))
-      throw new DomainError("FORBIDDEN", "读取工作轨迹需要本项目读取和复核权限。");
+    if (!request.workerIdentity) {
+      const run = await options.service.getRuntimeRun(principal, p.projectId!, p.id!);
+      if (!mayAccessSession(principal, p.projectId!, run.sessionId))
+        throw new DomainError("FORBIDDEN", "读取完整原生工作轨迹需要此 Session 的 Session 权限。");
+    }
     if (!options.runtime?.status().available) throw new DomainError("RUNTIME_UNAVAILABLE", "执行服务不可用，无法读取原生工作轨迹。");
     const query = z.object({ cursor: z.string().min(1).max(2048).optional(), turnCursor: z.string().min(1).max(2048).optional() }).parse(request.query);
     return options.runtime.trace(principal, p.projectId!, p.id!, query.cursor, request.workerIdentity ?? undefined, query.turnCursor);
@@ -779,8 +833,8 @@ export async function buildServer(options: {
   app.post("/api/projects/:projectId/runtime/runs/:id/reconcile", async request => {
     const p = params(request.params);
     const principal = who(request.principal);
-    if (!principal.projectIds.includes(p.projectId!) || !principal.permissions.includes("review")) {
-      throw new DomainError("FORBIDDEN", "重新核对运行需要本项目复核权限。");
+    if (!hasDecisionAuthority(principal, p.projectId!, "session")) {
+      throw new DomainError("FORBIDDEN", "重新核对运行需要本项目 Session 决定权限。");
     }
     if (!options.runtime?.status().available) throw new DomainError("RUNTIME_UNAVAILABLE", "执行服务不可用，无法重新读取原生运行。");
     const body = runtimeReconcileSchema.parse(request.body);

@@ -29,7 +29,7 @@ flowchart LR
 
 路由固定 `projectId`、`bindingId`、`provider/connectionId/conversationId`、群/私聊类型、便于人工识别的会话名称、目标 Session 及原生 Thread、接收及发送 actor、wx `owner/epoch/sessionRef`、`mode`、项目 `readScope`、`sendTargets`、允许触发 Session 的 `senderIds`、`internalTargets`、能力、策略哈希、状态和版本。Conversation ID 与 Thread ID 才是机器身份，名称只作识别。`senderIds` 至少一项，未列出的群成员或私聊对方只留下拒绝记录，不能触发 Session。`sendTargets` 是允许发送的 conversation ID，标准模式必须包括来源；`internalTargets` 是允许内部转交的受管 Session UUID，空数组即禁止。目标变更仅在 disabled 状态和新审核策略哈希下进行。来源、来源类型、接收 Session、Thread 和模式不可变；一个启用或暂停的来源及接收 Session 不能被另一自动路由复用。保存路由不授予发送权，正文也不构成授权。
 
-项目 reader 可经 `GET /api/projects/:projectId/message-connectors/routes` 分页、`GET .../routes/:bindingId`、`GET .../routes/:bindingId/deliveries`、`GET .../routes/:bindingId/deliveries/:deliveryId` 和 `GET .../operations/:operationId` 读回。项目 reviewer 兼 write 可用 `POST .../routes` 创建 disabled 路由，或以 `PUT .../routes/:bindingId` 按 `expectedVersion` 和下一版本更新状态。每次写入带稳定 `operationId`；操作回执保存 actor、意图哈希和结果。写响应未知时先查原 operation；未找到仍为未确认，保留原 ID 和原意图。Workbench 的“微信 Connector”页提供列表、创建、启用、暂停、恢复和回读入口，浏览器会话保存一个待核对操作 ID。服务端仍做最终权限和资格检查。
+项目成员可经 `GET /api/projects/:projectId/message-connectors/routes` 分页、`GET .../routes/:bindingId`、`GET .../routes/:bindingId/deliveries`、`GET .../routes/:bindingId/deliveries/:deliveryId` 和 `GET .../operations/:operationId` 读回。具有 `management` 类别与决定权者可用 `POST .../routes` 创建 disabled 路由，或以 `PUT .../routes/:bindingId` 按 `expectedVersion` 和下一版本更新状态。每次写入带稳定 `operationId`；操作回执保存 actor、意图哈希和结果。写响应未知时先查原 operation；未找到仍为未确认，保留原 ID 和原意图。Workbench 的“微信 Connector”页提供列表、创建、启用、暂停、恢复和回读入口，浏览器会话保存一个待核对操作 ID。服务端仍做最终权限和资格检查。
 
 ## 两种接收模式
 

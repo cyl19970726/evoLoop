@@ -67,7 +67,7 @@ test("native question stays bound to its Session and one exact operation, then d
     if (url.pathname.startsWith("/api/")) {
       const root = `/api/projects/${projectId}`;
       let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
-      if (url.pathname === "/api/session") value = { principal: { actorId: "operator", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "operator", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "测试项目", createdAt: stamp };
       else if (url.pathname === "/api/commands" && req.method === "POST") {
         postCount++;

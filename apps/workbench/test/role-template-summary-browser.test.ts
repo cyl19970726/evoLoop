@@ -31,7 +31,7 @@ test("seven template states appear on 职责 with truthful refresh and target li
     if (url.pathname.startsWith("/api/")) {
       let value: unknown = { items: [], nextCursor: null }, status = 200;
       const root = `/api/projects/${projectId}`;
-      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: [] }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "模板项目", createdAt: stamp };
       else if (url.pathname === `${root}/session-work`) value = { items: [], nextCursor: null, totals: { current: 0, historical: 0, unclassified: 0 }, metadata: { generatedAt: stamp, sourceObservedAt: stamp, partial: false, limitations: [] } };
       else if (url.pathname === `${root}/runtime`) value = { available: true, error: null, allowedCwds: [], grants: [] };
@@ -55,7 +55,7 @@ test("seven template states appear on 职责 with truthful refresh and target li
   const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) }); t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.stack ?? error.message));
-  // 基础职责 lives on the 职责 overview; 分工与运行 no longer repeats it.
+  // 基础职责 lives on the 职责 overview; 运行与接入 no longer repeats it.
   await page.goto(`${base}/p/${projectId}/roles`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();

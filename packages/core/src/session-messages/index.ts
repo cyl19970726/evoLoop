@@ -1,5 +1,5 @@
 import { holdsProvider, providerHeldMessage } from '@evoloop/contracts/provider-hold';
-import type { AppliedResult, Principal } from "@evoloop/contracts";
+import { hasDecisionAuthority, mayAccessSession, type AppliedResult, type Principal } from "@evoloop/contracts";
 import type { SessionMessageCommand, SessionMessageDispatchGrant, SessionMessageManualStopEvidence, SessionMessageManualStopPreflight, SessionMessageProcessing, SessionMessageRecord, SessionMessageResponseKind } from "@evoloop/contracts/session-messages";
 import { preTurnProofSchema, type PreTurnProof, type RuntimeTurn, type RuntimeSessionRecord } from "@evoloop/contracts/runtime";
 import type { Clock, IdFactory, Reader, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
@@ -23,6 +23,8 @@ export async function applySessionMessage(tx:Transaction,principal:Principal,com
       const session=required(await tx.getRuntimeSession(command.target.sessionId),'Session');
       if(session.state!=='ready'||!session.nativeThreadId||!session.nativeSessionId)
         throw new DomainError('SESSION_NOT_READY','owned recipient must be a ready bound Session');
+      if(!mayAccessSession(principal,command.projectId,session.id))
+        throw new DomainError('FORBIDDEN','This identity is not granted access to that Session');
     }else{
       const link=required(await tx.getHostLink(command.target.linkId),'host link');
       if(link.host.kind!=='external'||link.state==='revoked')throw new DomainError('MANUAL_TARGET_ONLY','external recipient must be a current manual link');
@@ -36,13 +38,15 @@ export async function applySessionMessage(tx:Transaction,principal:Principal,com
       if(!sameTarget(prior.target,command.target))throw new DomainError('REPLY_TARGET_MISMATCH','reply target has another recipient');
     }
     const item:SessionMessageRecord={projectId:command.projectId,id:command.messageId,operationId:command.operationId,
-      target:command.target,senderActorId:principal.actorId,content:command.content,context:command.context??null,
+      target:command.target,senderActorId:principal.actorId,...(principal.origin==='hub'?{senderOrigin:'hub' as const}:{}),content:command.content,context:command.context??null,
       replyToMessageId:command.replyToMessageId??null,state:command.target.kind==='owned'?'queued':'manual_pending',
       version:1,blockedReason:null,readReceipt:null,createdAt:now,updatedAt:now};
     await store.insertSessionMessage(item);
     return{result:applied(command.operationId,item.id,1),effects:[{kind:'session.message',entityId:item.id,version:1}]};
   }
   const item=required(await store.getSessionMessage(command.messageId),'message');
+  if(item.target.kind==='owned'&&!mayAccessSession(principal,command.projectId,item.target.sessionId))
+    throw new DomainError('FORBIDDEN','This identity is not granted access to that Session');
   if(command.type==='session.message.confirmSuperseded'){
     if(item.senderActorId!==principal.actorId)throw new DomainError('MESSAGE_SENDER','only the sender may confirm a superseded message');
     if(item.version!==command.expectedVersion)throw new DomainError('VERSION_CONFLICT','message changed',item.version);
@@ -59,7 +63,7 @@ export async function applySessionMessage(tx:Transaction,principal:Principal,com
   }
   if(command.type==='session.message.reconcile'||command.type==='session.message.interrupt'||
     command.type==='session.message.manualStop'){
-    if(!principal.permissions.includes('review'))throw new DomainError('FORBIDDEN','message recovery requires project review authority');
+    if(!hasDecisionAuthority(principal,command.projectId,'session'))throw new DomainError('FORBIDDEN','message recovery requires Session decision authority');
     const processing=required(await store.getSessionMessageProcessing(item.id),'processing');
     if(item.target.kind!=='owned'||item.target.sessionId!==command.sessionId||
       processing.sessionId!==command.sessionId||processing.id!==command.processingId||
@@ -289,7 +293,8 @@ export class SessionMessageService {
   async approvePreTurnContinuation(projectId:string,messageId:string,principal:Principal,
     command:{operationId:string;sessionId:string;originalOperationId:string;expectedVersion:number;
       expectedMessageVersion:number;expectedGateVersion:number;evidenceRef:string;reason:string}):Promise<SessionMessageProcessing>{
-    if(!principal.projectIds.includes(projectId)||!principal.permissions.includes('review')||principal.actorId.startsWith('worker-'))
+    if(!hasDecisionAuthority(principal,projectId,'session')||
+      !mayAccessSession(principal,projectId,command.sessionId)||principal.actorId.startsWith('worker-'))
       throw new DomainError('FORBIDDEN','pre-turn continuation requires project review authority');
     return this.deps.uow.transaction(projectId,async tx=>{
       const intentJson=reviewIntentJson(principal.actorId,'message',messageId,command);
@@ -331,7 +336,8 @@ export class SessionMessageService {
   }
   async readPreTurnContinuationDecision(projectId:string,messageId:string,principal:Principal,
     command:Parameters<SessionMessageService['approvePreTurnContinuation']>[3]):Promise<SessionMessageProcessing|null>{
-    if(!principal.projectIds.includes(projectId)||!principal.permissions.includes('review')||principal.actorId.startsWith('worker-'))
+    if(!hasDecisionAuthority(principal,projectId,'session')||
+      !mayAccessSession(principal,projectId,command.sessionId)||principal.actorId.startsWith('worker-'))
       throw new DomainError('FORBIDDEN','pre-turn continuation requires project review authority');
     return this.deps.uow.read(projectId,reader=>priorReviewDecision<SessionMessageProcessing>(reader,
       command.operationId,principal.actorId,'message',messageId,
@@ -392,7 +398,9 @@ export class SessionMessageService {
       if(turn.observedModel)await tx.recordSessionActualModel?.(p.sessionId,turn.observedModel,now);
       if(turn.usage&&tx.usage&&(session?.runtimeProvider??'codex')!=='codex')
         await tx.usage.addUsage(projectId,p.sessionId,this.deps.usageDay?.(now)??now.slice(0,10),{
-          ...inclusiveRuntimeUsage(turn.usage),costUsd:0,costReported:false});
+          ...inclusiveRuntimeUsage(turn.usage),
+          // The Turn's own cost, as a Run's is added: the daily cost covers every Turn, not only the Runs (defect 44ba20f6). Not reported stays 0 and not reported.
+          costUsd:turn.costUsd!=null&&turn.costUsd>0?turn.costUsd:0,costReported:turn.costUsd!=null});
       // The first quota/authentication failure pauses the whole provider: every Session of it would fail the same way.
       if(!ok&&holdsProvider(turn.error?.category)){
         await tx.recovery?.openProviderHold({id:this.deps.ids.next(),provider:session?.runtimeProvider??'codex',

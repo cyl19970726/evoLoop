@@ -1,4 +1,4 @@
-import type { Operation, OutboxEvent, Principal } from "@evoloop/contracts";
+import { hasDecisionAuthority, hasPermission, isProjectMember, type Operation, type OutboxEvent, type Principal } from "@evoloop/contracts";
 import { applyRole, RoleRuleError } from "../roles/index.js";
 import type { DelegationTemplate, LoopPolicyRevision, RuntimeRoleBinding } from "@evoloop/contracts/division";
 import { orchestrationCommandSchema } from "@evoloop/contracts/orchestration";
@@ -32,6 +32,15 @@ const studyIntentId = (hash: (value: string) => string, ...parts: string[]): str
 const sameStudyItem=(a:StudyMaterialItem,b:StudyMaterialItem)=>a.sourceDecisionId===b.sourceDecisionId &&
   a.sourceSlotId===b.sourceSlotId && a.runId===b.runId &&
   a.targetTaskRevisionId===b.targetTaskRevisionId && a.inputHash===b.inputHash;
+/** Worker-side lifecycle stays with the Session class; Loop, division and recovery controls belong to management. */
+const sessionCommands = new Set<OrchestrationCommand["type"]>([
+  "inbox.accept", "inbox.ack", "inbox.dispose",
+  "dispatch.claim", "dispatch.reclaim", "dispatch.request", "dispatch.resolve", "dispatch.start",
+  "division.ackHandoff", "division.consume", "division.confirmTransfer", "division.decide",
+  "worker.beginSeal", "worker.decision", "worker.finishSeal", "worker.outcome", "worker.reconcileSeal", "worker.submit",
+]);
+const commandPermission = (command: OrchestrationCommand): "management" | "session" =>
+  sessionCommands.has(command.type) ? "session" : "management";
 
 /** Only persists orchestration decisions. WorkflowService remains the sole Task/Run/Delivery writer. */
 export class OrchestrationService {
@@ -41,8 +50,10 @@ export class OrchestrationService {
     const parsed = orchestrationCommandSchema.safeParse(input);
     if (!parsed.success) return fail("INVALID_COMMAND", parsed.error.message);
     const command = parsed.data;
-    if (!principal.actorId || !principal.projectIds.includes(command.projectId) || !principal.permissions.includes("write")) return fail("FORBIDDEN", "project write permission required");
-    if ((command.type === "loop.enroll" || command.type === "loop.state" || command.type === "loop.extendBudget" || command.type === "loop.resumeWaiting" || command.type === "loop.studyMaterial.declare" || command.type === "loop.studyMaterial.revoke" || command.type === "division.revoke" || command.type === "division.consume" || command.type === "division.confirmTransfer" || command.type === "dispatch.reconcile" || command.type === "dispatch.gap" || command.type === "worker.beginSeal" || command.type === "worker.finishSeal" || command.type === "worker.reconcileSeal") && !principal.permissions.includes("review")) return fail("FORBIDDEN", "loop policy requires review permission");
+    const permission = commandPermission(command);
+    if (!hasPermission(principal, command.projectId, permission)) return fail("FORBIDDEN", `project ${permission} permission required`);
+    if ((command.type === "loop.enroll" || command.type === "loop.state" || command.type === "loop.extendBudget" || command.type === "loop.resumeWaiting" || command.type === "loop.studyMaterial.declare" || command.type === "loop.studyMaterial.revoke" || command.type === "division.revoke" || command.type === "division.consume" || command.type === "division.confirmTransfer" || command.type === "dispatch.reconcile" || command.type === "dispatch.gap" || command.type === "worker.beginSeal" || command.type === "worker.finishSeal" || command.type === "worker.reconcileSeal") &&
+      !hasDecisionAuthority(principal, command.projectId, permission)) return fail("FORBIDDEN", "loop policy requires decision authority");
     if ((command.type === "loop.extendBudget" || command.type === "loop.resumeWaiting" || command.type === "loop.studyMaterial.declare" || command.type === "loop.studyMaterial.revoke" || command.type === "division.consume" || command.type === "division.confirmTransfer") && principal.actorId.startsWith("worker-")) return fail("FORBIDDEN", "runtime worker cannot change a Loop's study authority");
     const now = this.deps.now();
     if (!Number.isFinite(Date.parse(now)) || !now.endsWith("Z")) return fail("INVALID_TIME", "clock must return UTC time");
@@ -79,7 +90,7 @@ export class OrchestrationService {
   async listSubmissions(principal: Principal, projectId: string, loopId: string, limit = 50, cursor?: string) { this.readable(principal, projectId); return this.deps.store.read(projectId, reader => reader.listSubmissions(loopId, this.limit(limit), cursor)); }
   async listEvents(principal: Principal, projectId: string, loopId: string, limit = 50, cursor?: string) { this.readable(principal, projectId); return this.deps.store.read(projectId, reader => reader.listEvents(loopId, this.limit(limit), cursor)); }
   async listSourceFacts(principal: Principal, projectId: string, loopId: string, limit = 50, cursor?: string) { this.readable(principal, projectId); return this.deps.store.read(projectId, reader => reader.listSourceFacts(loopId, this.limit(limit), cursor)); }
-  private readable(principal: Principal, projectId: string) { if (!principal.actorId || !principal.projectIds.includes(projectId) || !principal.permissions.includes("read")) return fail("FORBIDDEN", "project read permission required"); }
+  private readable(principal: Principal, projectId: string) { if (!isProjectMember(principal, projectId)) return fail("FORBIDDEN", "project membership required"); }
   private limit(n: number) { if (!Number.isInteger(n) || n < 1 || n > 100) return fail("INVALID_PAGE", "page limit must be 1–100"); return n; }
 
   private async authorize(tx: OrchestrationTransaction, principal: Principal, command: OrchestrationCommand): Promise<void> {
@@ -90,7 +101,8 @@ export class OrchestrationService {
         workerScope.roleId !== loop.cognitiveRoleId || workerScope.kind !== "cognition"))
         return fail("FORBIDDEN", "worker must be the current Loop cognition Role");
       if (command.choice === "method") {
-        if (!loop || (!workerScope && !principal.permissions.includes("review") && !(await tx.canActAsRole(principal.actorId, loop.cognitiveRoleId))))
+        if (!loop || (!workerScope && !hasDecisionAuthority(principal, command.projectId, "management") &&
+          !(await tx.canActAsRole(principal.actorId, loop.cognitiveRoleId))))
           return fail("FORBIDDEN", "method decision requires cognition Role or reviewer");
       } else {
         if (!command.templateId || !command.templateRevision || !command.templateHash) return fail("TEMPLATE_REQUIRED", "explicit delegation template required");
@@ -109,7 +121,9 @@ export class OrchestrationService {
         return fail("FORBIDDEN","only the enrolling Loop controller may extend its budget");
       return;
     }
-    if (command.type === "loop.enroll" || command.type === "loop.state" || command.type === "loop.resumeWaiting" || command.type === "loop.studyMaterial.declare" || command.type === "loop.studyMaterial.revoke" || command.type === "division.revoke" || command.type === "division.consume" || command.type === "division.confirmTransfer" || command.type === "dispatch.reconcile" || command.type === "dispatch.gap" || command.type === "worker.beginSeal" || command.type === "worker.finishSeal" || command.type === "worker.reconcileSeal" || (command.type === "worker.outcome" && principal.permissions.includes("review")) || (command.type === "dispatch.resolve" && command.result === "unknown" && principal.permissions.includes("review"))) return;
+    if (command.type === "loop.enroll" || command.type === "loop.state" || command.type === "loop.resumeWaiting" || command.type === "loop.studyMaterial.declare" || command.type === "loop.studyMaterial.revoke" || command.type === "division.revoke" || command.type === "division.consume" || command.type === "division.confirmTransfer" || command.type === "dispatch.reconcile" || command.type === "dispatch.gap" || command.type === "worker.beginSeal" || command.type === "worker.finishSeal" || command.type === "worker.reconcileSeal" ||
+      (command.type === "worker.outcome" && hasDecisionAuthority(principal, command.projectId, "session")) ||
+      (command.type === "dispatch.resolve" && command.result === "unknown" && hasDecisionAuthority(principal, command.projectId, "management"))) return;
     let loop: OrchestrationLoop | null = null;
     let dispatch: OrchestrationDispatch | null = null;
     if (command.type === "inbox.accept") loop = await tx.getLoop(command.loopId);
@@ -198,7 +212,7 @@ export class OrchestrationService {
       const loop = await this.loop(tx, command.loopId, command.projectId);
       if (loop.state === "stopped") return fail("LOOP_STOPPED", "stopped loop cannot accept study material");
       this.version(loop.version, command.expectedLoopVersion);
-      if (!principal.permissions.includes("read") ||
+      if (!isProjectMember(principal, loop.projectId) ||
         !await this.deps.hasCurrentStudyReviewer?.(loop.projectId, principal.actorId) || !loop.stageId ||
         new Set(command.sourceDecisionIds).size !== command.sourceDecisionIds.length ||
         loop.currentStudyDeclarationId || await tx.getStudyDeclaration(command.declarationId))
@@ -207,7 +221,7 @@ export class OrchestrationService {
       const controller = await this.deps.getTrialController?.(loop.projectId, command.controllerActorId);
       if (!stage || stage.goalId !== loop.goalId || stage.state !== "active" ||
         !controller || controller.actorId !== command.controllerActorId ||
-        !controller.projectIds.includes(loop.projectId) || !controller.permissions.includes("write"))
+        !hasPermission(controller, loop.projectId, "management"))
         return fail("STUDY_DECLARATION_DENIED", "active Goal Stage and configured controller are required");
       const items = await tx.resolveStudySource(command.sourceTaskId, command.sourceTaskRevisionId,
         command.sourceDecisionIds);
@@ -241,7 +255,7 @@ export class OrchestrationService {
       const loop = await this.loop(tx, command.loopId, command.projectId);
       const workerScope = await this.divisionWorkerScope(principal);
       this.active(loop); this.version(loop.version, command.expectedLoopVersion);
-      if (command.choice === "method" && !workerScope && !principal.permissions.includes("review") &&
+      if (command.choice === "method" && !workerScope && !hasDecisionAuthority(principal, command.projectId, "management") &&
         !(await tx.canActAsRole(principal.actorId, loop.cognitiveRoleId)))
         return fail("FORBIDDEN", "method decision requires cognition Role or reviewer");
       if (!loop.currentPolicyRevisionId) return fail("POLICY_MISSING", "Loop policy revision required");
@@ -310,7 +324,7 @@ export class OrchestrationService {
           return fail("STAGE_NOT_ACTIVE", "first Task must remain under the active Goal Stage before trial Role creation");
         const controller = await this.deps.getTrialController?.(loop.projectId, template.actorId);
         if (!controller || controller.actorId !== template.actorId || !controller.projectIds.includes(loop.projectId) ||
-          !controller.permissions.includes("write") || !controller.permissions.includes("review"))
+          !hasDecisionAuthority(controller, loop.projectId, "management"))
           return fail("CREATION_DENIED", "configured controller must hold project review authority");
         if (!await this.deps.verifyProposalMaterial?.(principal, loop.projectId, command.documentId,
           command.documentRevisionId, command.documentContentHash))
@@ -322,7 +336,7 @@ export class OrchestrationService {
             operationId:scheduleIdFor(this.deps.hash,`${command.operationId}:role.propose`),
             roleId:command.roleId,proposal:command.proposedRole};
           const proposed = await applyRole(tx.roleTransaction(), principal, proposeCommand,
-            {nowUtc:now,nextId:this.deps.nextId});
+            {nowUtc:now,nextId:this.deps.nextId}, controller);
           await this.roleOperation(tx, principal, proposeCommand, proposed, now);
           const acceptCommand = {type:"role.decide" as const,projectId:loop.projectId,
             operationId:scheduleIdFor(this.deps.hash,`${command.operationId}:role.decide`),
@@ -1146,7 +1160,7 @@ export class OrchestrationService {
       declaration.controllerActorId !== original.requestedBy ||
       (controllerActorId && declaration.controllerActorId !== controllerActorId) ||
       !controller || controller.actorId !== declaration.controllerActorId ||
-      !controller.projectIds.includes(loop.projectId) || !controller.permissions.includes("write") ||
+      !hasPermission(controller, loop.projectId, "management") ||
       !await this.deps.hasCurrentStudyReviewer?.(loop.projectId,declaration.actorId) ||
       !originalSource || (originalSource.kind!=="loop.enrolled" &&
         (originalSource.kind!=="waiting.resumed" || !originalSource.continuation ||
@@ -1159,7 +1173,7 @@ export class OrchestrationService {
     if (!currentItems || currentItems.length !== declaration.items.length ||
       currentItems.some((item,index)=>!sameStudyItem(item,declaration.items[index]!)) ||
       !(await Promise.all(declaration.items.flatMap(item=>[
-        this.deps.canReadStudySourceRun?.({actorId:declaration.actorId,projectIds:[loop.projectId],permissions:["read","review"]},loop.projectId,item.runId),
+        this.deps.canReadStudySourceRun?.({actorId:declaration.actorId,projectIds:[loop.projectId],permissions:["task","document","session","management"],decisions:true},loop.projectId,item.runId),
         this.deps.canReadStudySourceRun?.(controller,loop.projectId,item.runId),
       ]))).every(Boolean))
       return fail("STUDY_SOURCE_UNAVAILABLE","declared source heads, Run grants and Sessions must remain current");

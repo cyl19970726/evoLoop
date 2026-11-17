@@ -113,7 +113,8 @@ export function afterTaskChanged(tabs: PanelObject[], active: string, path: stri
 export function ContextPanelProvider({ space, children }: { space: Space; children: React.ReactNode }) {
   const wide = useMediaQuery("(min-width: 1440px)");
   const inline = useMediaQuery("(min-width: 1100px)");
-  const store = typeof window === "undefined" ? null : window.localStorage;
+  // Reading window.localStorage itself throws where storage is disabled; the panel state then lives in this page only.
+  const store = (() => { try { return typeof window === "undefined" ? null : window.localStorage; } catch { return null; } })();
   const [states, setStates] = React.useState<Partial<Record<Space, PanelState>>>({});
   const state = states[space] ?? readPanelState(store, space, wide);
   const update = (next: PanelState) => {
@@ -192,7 +193,7 @@ export function ContextPanelColumn({ embedded = false }: { embedded?: boolean } 
       <div role="tablist" aria-label="右栏内容" className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
         {providers > 0 && <Button role="tab" variant="tab" aria-selected={showFacts} onClick={() => setActive("facts")}>信息</Button>}
         {/* An opened object's tab and its close button share one highlight. */}
-        {tabs.map(tab => <span key={tab.id} className={cn("flex shrink-0 items-center rounded-md", active === tab.id ? "bg-selected" : "hover:bg-selected")}>
+        {tabs.map(tab => <span key={tab.id} className={cn("flex shrink-0 items-center rounded-md", active === tab.id ? "bg-accent" : "hover:bg-selected")}>
           <Button role="tab" variant="tab" aria-selected={active === tab.id} onClick={() => setActive(tab.id)} title={tab.title}
             className="min-w-0 max-w-40 pr-1 hover:bg-transparent aria-selected:bg-transparent"><span className="truncate">{tab.title}</span></Button>
           <IconButton label={`关闭 ${tab.title}`} icon={<X aria-hidden="true" />} className="size-6 rounded-sm [&_svg]:size-3.5" onClick={() => close(tab.id)} />

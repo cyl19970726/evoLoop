@@ -78,7 +78,7 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
     const selected = selectedId === session.key;
     return <a key={session.key} href={sessionHref(projectId, session.key)} aria-current={selected ? "page" : undefined} onClick={onNavigate}
       className={cn("session-nav-item flex items-center gap-2.5 rounded-lg py-1.5 pl-2 pr-3 text-text-secondary hover:bg-selected focus-visible:shadow-[var(--focus-ring)] outline-none",
-        selected && "bg-raised font-medium text-foreground shadow-sm")}>
+        selected && "bg-accent font-medium text-accent-strong hover:bg-accent")}>
       <AgentAvatar seed={session.key} roleSeed={session.roles[0]?.id ?? session.title} size={30} />
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate" title={name}>{name}</span>
@@ -102,8 +102,9 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
       }))} />
       <IconButton label="连接或建立智能体" icon={<Plus size={16} />} compact onClick={() => setConnectOpen(true)} />
     </label>
-    <a href={href(projectId, "sessions")} onClick={onNavigate} aria-current={!selectedId ? "page" : undefined}
-      className={cn("flex items-center gap-2.5 rounded-lg px-3 py-2 text-text-secondary hover:bg-selected focus-visible:shadow-[var(--focus-ring)] outline-none", !selectedId && "bg-raised font-medium text-foreground shadow-sm")}>
+    {/* 统筹安排 is a team page now (Task 0f8c7a15): the directory only points to it. */}
+    <a href={href(projectId, "arrangement")} onClick={onNavigate} data-arrangement-entry=""
+      className={cn("flex items-center gap-2.5 rounded-lg px-3 py-2 text-text-secondary hover:bg-selected focus-visible:shadow-[var(--focus-ring)] outline-none")}>
       <LayoutDashboard size={18} aria-hidden="true" />统筹安排
       {totals && <span className="ml-auto text-caption text-muted-foreground" title="目录里的智能体总数，含历史与待归类">共 {totals.current + totals.historical + totals.unclassified} 个智能体</span>}
     </a>

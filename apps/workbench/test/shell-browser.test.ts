@@ -63,7 +63,7 @@ async function serve(t: { after: (fn: () => unknown) => void }) {
       const path = decodeURIComponent(url.pathname);
       let value: unknown = { items: [], nextCursor: null }, status = 200;
       const tail = (prefix: string) => path.slice(prefix.length).split("/");
-      if (path === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
+      if (path === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} };
       else if (path === "/api/projects") value = [{ id: projectId, title: "外壳夹具", createdAt: stamp }];
       else if (path === root) value = { id: projectId, title: "外壳夹具", createdAt: stamp };
       else if (path === `${root}/tasks`) value = { items: tasks, nextCursor: null };
@@ -160,7 +160,7 @@ test("the frame keeps each space's list, turns the right column to 信息, retur
   assert.match(listAddress, /state=all/);
   assert.match(listAddress, /q=/);
   await spaces.getByRole("link", { name: "智能体" }).click();
-  await page.getByRole("heading", { name: "统筹安排" }).waitFor();
+  await page.getByRole("heading", { name: "智能体", exact: true }).waitFor();
   const agentSearch = page.getByLabel("搜索智能体名称或职责");
   await agentSearch.fill("验收");
   await page.getByRole("region", { name: "智能体目录" }).getByRole("link", { name: /验收智能体/ }).waitFor();
@@ -183,7 +183,7 @@ test("the frame keeps each space's list, turns the right column to 信息, retur
   const documentSearch = page.getByRole("searchbox", { name: "搜索文档" }).first();
   await documentSearch.fill("总图");
   await spaces.getByRole("link", { name: "智能体" }).click();
-  await page.getByRole("heading", { name: "统筹安排" }).waitFor();
+  await page.getByRole("heading", { name: "智能体", exact: true }).waitFor();
   await spaces.getByRole("link", { name: "工作" }).click();
   assert.match(pathOf(page), /\/documents$/);
   assert.equal(await page.getByRole("searchbox", { name: "搜索文档" }).first().inputValue(), "总图");
@@ -197,7 +197,7 @@ test("the frame keeps each space's list, turns the right column to 信息, retur
   assert.equal(await main.getByRole("link", { name: "回到任务" }).getAttribute("href"), `/p/${projectId}/work`);
   await shot(page, "shell-1440-02-not-found");
   await spaces.getByRole("link", { name: "智能体" }).click();
-  await page.getByRole("heading", { name: "统筹安排" }).waitFor();
+  await page.getByRole("heading", { name: "智能体", exact: true }).waitFor();
   assert.match(await spaces.getByRole("link", { name: "工作" }).getAttribute("href") ?? "", /\/documents$/, "the wrong address is not where 工作 reopens");
   await go(page, `/p/${projectId}/task/${taskA}`);
   await main.getByRole("link", { name: "回到任务" }).click();

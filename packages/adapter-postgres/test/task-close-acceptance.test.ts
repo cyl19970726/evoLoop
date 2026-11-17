@@ -18,7 +18,7 @@ const workflow = new WorkflowService({
   ids: { next: randomUUID }, hasher: { hash: (value: string) => createHash("sha256").update(value).digest("hex") },
 });
 const projectId = randomUUID();
-const reviewer: Principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["read", "write", "review"] };
+const reviewer: Principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
 
 before(async () => {
   await migrate(url!, schema);

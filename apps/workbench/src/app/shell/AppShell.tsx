@@ -2,12 +2,13 @@
 // object list, and one raised work panel with the center column and the right column. The frame is built from
 // @evoloop/ui inside [data-ui]. Pages render in the center; the window scrolls the center.
 import * as React from "react";
-import { BriefcaseBusiness, ChevronsUpDown, Inbox, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Settings, Users, FolderGit2, Plug, TriangleAlert, X } from "lucide-react";
+import { BriefcaseBusiness, Check, ChevronsUpDown, Monitor, Moon, Sun, Inbox, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Settings, Users, FolderGit2, Plug, TriangleAlert, X } from "lucide-react";
 import {
   CountDot, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
   Button, IconButton, Logo, Notice, PersonAvatar, Sheet, SheetClose, SheetContent, SheetDescription, SheetTitle, cn, type NoticeTone,
 } from "@evoloop/ui";
 import { href, parseRoute, type Route, type Section } from "../../shared/routes";
+import { readThemePreference, setThemePreference, subscribeTheme, themeLabels, type ThemePreference } from "../../shared/theme";
 import { currentPath, navigate, onAddressChange } from "../../shared/navigation";
 import { SessionNavigation, emptySessionNavigationState, type SessionNavigationState } from "../../features/sessions/SessionNavigation";
 import { ContextPanelColumn, ContextPanelProvider } from "../../shared/ui/ContextPanel";
@@ -32,8 +33,9 @@ export interface AppShellProps {
   notices?: ShellNoticeItem[];
 }
 
+const permissionLabel: Record<string, string> = { task: "任务", document: "文档", session: "Session", management: "项目管理" };
 const permissionText = (permissions: readonly string[]) =>
-  permissions.includes("review") ? "可读写与复核" : permissions.includes("write") ? "可读写" : "只读";
+  permissions.length ? `可写：${permissions.map(permission => permissionLabel[permission] ?? permission).join("、")}` : "只读";
 
 export function AppShell(props: AppShellProps) {
   const { route, projectId, actor } = props;
@@ -46,6 +48,17 @@ export function AppShell(props: AppShellProps) {
   React.useEffect(() => { rememberSpace(store, actor, projectId, parseRoute(path), path); }, [store, actor, projectId, path]);
   const title = route.section === "sessions" || space === "agents" ? spaceLabels.agents : sectionLabels[route.section];
   React.useEffect(() => { document.title = `${title} · ${props.projectTitle || "evoLoop"}`; }, [title, props.projectTitle]);
+  // On a phone the top bar already names the page. A page title that says exactly the same (任务 / 过程文档 / 日程 …) is marked, and shown to screen readers only below 760px
+  // (the `max-compact:` class on <main>); a title that says more (a task's name, 项目总览 under 总览) stays. Wide screens have no top bar and keep every title (task 4f6c948f).
+  const mainRef = React.useRef<HTMLElement>(null);
+  React.useEffect(() => {
+    const main = mainRef.current; if (!main) return;
+    const mark = () => { for (const heading of main.querySelectorAll("h1")) { if (heading.textContent?.trim() === title) heading.setAttribute("data-echo", ""); else heading.removeAttribute("data-echo"); } };
+    mark();
+    const observer = new MutationObserver(mark);
+    observer.observe(main, { childList: true, subtree: true, characterData: true });
+    return () => observer.disconnect();
+  }, [title]);
   const [sessionStates, setSessionStates] = React.useState<Record<string, SessionNavigationState>>({});
   const scope = `${actor}:${projectId}`;
   const sessionState = sessionStates[scope] ?? emptySessionNavigationState();
@@ -118,7 +131,7 @@ export function AppShell(props: AppShellProps) {
         </nav>
         {!railHidden && <div className="sticky top-0 hidden h-dvh compact:block"><ContextRail {...railProps} /></div>}
         <div className="flex min-w-0 bg-background compact:m-2 compact:ml-0 compact:min-h-[calc(100dvh-16px)] compact:rounded-xl compact:shadow-lg">
-          <main id="workspace-main" tabIndex={-1} className="min-w-0 flex-1 outline-none max-compact:pb-20">{props.notices?.map(({ key, ...notice }) => <ShellNotice key={key} {...notice} />)}{props.children}</main>
+          <main id="workspace-main" ref={mainRef} tabIndex={-1} className="min-w-0 flex-1 outline-none max-compact:pb-20 max-compact:[&_h1[data-echo]]:sr-only">{props.notices?.map(({ key, ...notice }) => <ShellNotice key={key} {...notice} />)}{props.children}</main>
           <ContextPanelColumn />
         </div>
       </div>
@@ -135,7 +148,7 @@ export function AppShell(props: AppShellProps) {
 function RailLink({ href: target, label, selected, icon, count = 0 }: { href: string; label: string; selected: boolean; icon: React.ReactNode; count?: number | null }) {
   return <a href={target} aria-current={selected ? "page" : undefined}
     className={cn("relative flex w-[52px] flex-col items-center gap-1 rounded-lg py-2 text-caption text-muted-foreground hover:bg-selected hover:text-foreground focus-visible:shadow-[var(--focus-ring)] outline-none",
-      selected && "bg-selected font-medium text-foreground")}>
+      selected && "bg-accent font-medium text-accent-strong hover:bg-accent")}>
     {icon}{label}
     {count !== 0 && <CountDot count={count} className="absolute right-2 top-1" />}
   </a>;
@@ -194,17 +207,31 @@ function SectionList({ items, route, projectId, onNavigate }: { items: readonly 
       return <li key={item.section}>
         <a href={href(projectId, item.section)} onClick={onNavigate} aria-current={current && (!item.children || leaf === item.section) ? "page" : undefined}
           className={cn("flex items-center rounded-md px-3 py-2 text-text-secondary hover:bg-selected hover:text-foreground focus-visible:shadow-[var(--focus-ring)] outline-none",
-            current && "bg-selected font-medium text-foreground")}>{item.label}</a>
+            current && "bg-accent font-medium text-accent-strong hover:bg-accent")}>{item.label}</a>
         {current && item.children && <ul className="mb-1 ml-3 mt-0.5 flex flex-col gap-0.5 border-l border-border pl-2">
           {item.children.map(child => <li key={child.section}>
             <a href={href(projectId, child.section)} onClick={onNavigate} aria-current={leaf === child.section ? "page" : undefined}
               className={cn("block rounded-md px-2.5 py-1.5 text-small text-muted-foreground hover:bg-selected hover:text-foreground focus-visible:shadow-[var(--focus-ring)] outline-none",
-                leaf === child.section && "bg-raised font-medium text-foreground shadow-sm")}>{child.label}</a>
+                leaf === child.section && "bg-accent font-medium text-accent-strong hover:bg-accent")}>{child.label}{child.hint && <span className="block text-caption font-normal text-muted-foreground">{child.hint}</span>}</a>
           </li>)}
         </ul>}
       </li>;
     })}
   </ul>;
+}
+
+/** 外观: 跟随系统 / 浅色 / 深色, this browser's own preference (shared/theme.ts); in the account menu, so it is on every page. */
+function ThemeChoice() {
+  const preference = React.useSyncExternalStore(subscribeTheme, readThemePreference, () => "system" as ThemePreference);
+  return <div role="group" aria-label="外观">
+    <DropdownMenuLabel className="text-caption">外观</DropdownMenuLabel>
+    {(["system", "light", "dark"] as const).map(value => {
+      const Icon = value === "system" ? Monitor : value === "light" ? Sun : Moon;
+      return <DropdownMenuItem key={value} role="menuitemradio" aria-checked={preference === value} onSelect={() => setThemePreference(value)}>
+        <Icon size={16} aria-hidden="true" />{themeLabels[value]}{preference === value && <Check size={14} aria-hidden="true" className="ml-auto" />}
+      </DropdownMenuItem>;
+    })}
+  </div>;
 }
 
 function AccountMenu({ projectId, actor, permissions, receiptCount, logout, trigger }: AppShellProps & { trigger: React.ReactElement }) {
@@ -218,6 +245,8 @@ function AccountMenu({ projectId, actor, permissions, receiptCount, logout, trig
       <DropdownMenuItem onSelect={() => go("operations")}><TriangleAlert size={16} aria-hidden="true" />结果未知的操作{receiptCount > 0 && <span className="ml-auto text-caption text-warning">{receiptCount}</span>}</DropdownMenuItem>
       <DropdownMenuItem onSelect={() => go("repository")}><FolderGit2 size={16} aria-hidden="true" />仓库规范</DropdownMenuItem>
       <DropdownMenuItem onSelect={() => go("connectors")}><Plug size={16} aria-hidden="true" />微信连接</DropdownMenuItem>
+      <DropdownMenuSeparator />
+      <ThemeChoice />
       <DropdownMenuSeparator />
       <DropdownMenuItem onSelect={() => navigate("/")}><ChevronsUpDown size={16} aria-hidden="true" />切换项目</DropdownMenuItem>
       <DropdownMenuItem onSelect={logout}><LogOut size={16} aria-hidden="true" />退出</DropdownMenuItem>

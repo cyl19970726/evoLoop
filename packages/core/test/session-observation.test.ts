@@ -8,7 +8,7 @@ const projectId = "00000000-0000-4000-8000-000000000001";
 const taskId = "00000000-0000-4000-8000-000000000002";
 const linkId = "00000000-0000-4000-8000-000000000003";
 const key = `external:${linkId}`;
-const principal: Principal = { actorId: "reader", projectIds: [projectId], permissions: ["write", "read"] };
+const principal: Principal = { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session"] };
 
 function fixture() {
   let calls = 0;
@@ -32,14 +32,14 @@ function fixture() {
   return { service: new SessionObservationService({ uow }), get calls() { return calls; }, get scope() { return scope; }, reader };
 }
 
-test("every read checks actual project scope before touching the store", async () => {
+test("every read checks project membership before touching the store", async () => {
   const f = fixture();
   await assert.rejects(f.service.directory({ ...principal, projectIds: [] }, projectId, { limit: 50 }), { code: "FORBIDDEN" });
-  await assert.rejects(f.service.assignment({ ...principal, permissions: ["write"] }, projectId, taskId), { code: "FORBIDDEN" });
+  await assert.rejects(f.service.assignment({ ...principal, projectIds: [] }, projectId, taskId), { code: "FORBIDDEN" });
   assert.equal(f.calls, 0);
   await f.service.directory(principal, projectId, { limit: 50 });
   assert.equal(f.calls, 1);
-  assert.deepEqual(JSON.parse(f.scope), { actorId: "reader", permissions: ["read", "write"] });
+  assert.deepEqual(JSON.parse(f.scope), { actorId: "reader", permissions: ["document", "session", "task"] });
 });
 
 test("profile resolves an exact Session target and unknown Session or Task fails closed", async () => {

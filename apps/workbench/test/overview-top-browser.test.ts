@@ -34,7 +34,7 @@ test("overview top: goal, version, six phases with one current, the three blocks
       if (url.pathname.startsWith("/api/")) {
         const base = `/api/projects/${projectId}`;
         let value: unknown = { items: [], nextCursor: null }, status = 200;
-        if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read"] }, capabilities: {} };
+        if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: [] }, capabilities: {} };
         else if (url.pathname === "/api/version") {
           if (mode === "unread") value = { commit: null, builtAt: null, startedAt: stamp };
           else value = { commit: "9a4020a5886be01b2d74fe850687ca7355b2d226", builtAt: "2026-11-12T03:10:00.000Z", startedAt: stamp };
@@ -55,7 +55,10 @@ test("overview top: goal, version, six phases with one current, the three blocks
                 reviewedAt: linked && (id === "M0" || id === "M0.5") ? "2026-11-10T09:00:00.000Z" : null };
             }) };
         }
-        else if (url.pathname === `${base}/work-management/index`) value = { items: [], nextCursor: null, partial: false, changeSequence: 1, total: 0, counts: {}, observedAt: stamp };
+        else if (url.pathname === `${base}/orchestration/work-status`) value = { items: (url.searchParams.get("taskIds") ?? "").split(",").filter(Boolean).map(taskId => ({ taskId, cognition: false, dispatchId: null, dispatchState: null, outcome: null, runId: null, runState: null })) };
+        else if (url.pathname === `${base}/work-management/index`) value = { items: mode === "day1" ? [] : [{ kind: "task", taskId: "42000021-0000-4000-8000-000000000021", version: 1, currentRevisionId: "42000022-0000-4000-8000-000000000022", workChangeSequence: 1,
+          title: "等你判断的任务", taskKind: null, taskState: "todo", phase: "awaiting_acceptance", nextAction: "验收", responsible: { kind: "leader", id: null, label: "负责人" }, assignment: null, latestRun: null, delivery: null,
+          pendingImpactCount: 0, queueHold: null, goal: null, stage: null, plan: null, review: null, dates: { businessChangedAt: stamp } }], nextCursor: null, partial: false, changeSequence: 1, total: 0, counts: {}, observedAt: stamp };
         res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;
       }
       const file = join(dist, /^\/(?:$|p\/|ui$)/.test(url.pathname) ? "index.html" : url.pathname);
@@ -76,15 +79,17 @@ test("overview top: goal, version, six phases with one current, the three blocks
       await page.getByLabel("访问令牌").fill("fixture-token");
       await page.getByRole("button", { name: "进入", exact: true }).click();
       await page.locator("#workspace-main:focus").waitFor();
-      await page.locator("[data-overview-milestones] [data-phase]").first().waitFor({ timeout: 8000 });
+      await page.locator("[data-milestones-summary]").waitFor({ timeout: 8000 });
       return page;
     };
     const measure = async (page: import("playwright-core").Page, label: string) => {
       const result = await page.evaluate(`(() => {
         const top = (selector) => { const e = document.querySelector(selector); return e ? Math.round(e.getBoundingClientRect().bottom) : null; };
         const rows = [...document.querySelectorAll("[data-overview-milestones] [data-phase]")];
+        const att = document.querySelector(".overview-attention"), item = att && att.querySelector("h3 a"), h2 = att && att.querySelector("h2");
         return { viewport: innerWidth + 'x' + innerHeight, scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth,
-          goalBottom: top(".overview-goal"), versionBottom: top("[data-overview-version]"), milestonesBottom: top("[data-overview-milestones]"), lastPhaseBottom: Math.round(rows[rows.length - 1].getBoundingClientRect().bottom),
+          goalBottom: top(".overview-goal"), versionBottom: top("[data-overview-version]"), milestonesBottom: top("[data-overview-milestones]"), lastPhaseBottom: rows.length && rows[0].offsetParent ? Math.round(rows[rows.length - 1].getBoundingClientRect().bottom) : null,
+          attentionTitleBottom: h2 ? Math.round(h2.getBoundingClientRect().bottom) : null, attentionItemBottom: item ? Math.round(item.getBoundingClientRect().bottom) : null,
           attentionTop: Math.round(document.querySelector(".overview-attention").getBoundingClientRect().top), phaseCount: rows.length,
           pastRightEdge: [...document.querySelectorAll("main *")].filter(e => e.offsetParent && e.getBoundingClientRect().right > innerWidth + 0.5).length };
       })()`) as Record<string, number>;
@@ -95,6 +100,15 @@ test("overview top: goal, version, six phases with one current, the three blocks
     for (const [width, height] of [[1440, 900], [390, 844]] as const) {
       const page = await open(width, height, "linked");
       const blocks = page.locator("[data-overview-top]");
+      // Task 523a91e9: with the top compressed, the "本次优先核对" title and its first item are on the first screen (above the phone's 64px tab bar).
+      const first = await measure(page, `linked first screen ${width}x${height}`);
+      assert.ok(first.attentionTitleBottom! <= height - (width >= 1000 ? 0 : 64), `the attention title is on the first screen at ${width}x${height} (bottom ${first.attentionTitleBottom})`);
+      assert.ok(first.attentionItemBottom! <= height - (width >= 1000 ? 0 : 64), `the first attention item is on the first screen at ${width}x${height} (bottom ${first.attentionItemBottom})`);
+      assert.equal(await page.locator(".overview-attention h3 a").innerText(), "等你判断的任务");
+      assert.match(await page.locator("[data-page-role]").innerText(), /总览：差距与下一判断/);
+      assert.equal(await page.locator("[data-page-role] a").getAttribute("href"), `/p/${projectId}/journey`);
+      if (shots) await page.screenshot({ path: `${shots}/overview-first-screen-${width}.png` });
+      await page.locator("[data-milestones-summary]").click();
       // Six phases in roadmap order; exactly one current; the version in its own words.
       const ids = await page.locator("[data-overview-milestones] [data-phase]").evaluateAll(items => items.map(item => item.getAttribute("data-phase")));
       assert.deepEqual(ids, ["M0", "M0.5", "M1", "M2", "M3", "M4"]);
@@ -111,7 +125,6 @@ test("overview top: goal, version, six phases with one current, the three blocks
       assert.equal(m.scrollWidth <= m.clientWidth, true, `no horizontal overflow at ${width}`);
       assert.equal(m.pastRightEdge, 0, "nothing past the right edge");
             // The phone's bottom tab bar (about 64px) covers the lower edge of the screen, so "on the first screen" means above it.
-      assert.ok(m.lastPhaseBottom <= height - (width >= 1000 ? 0 : 64), `all six phases are on the first screen at ${width}x${height} (last bottom ${m.lastPhaseBottom})`);
       assert.ok(m.goalBottom! < m.versionBottom! + 1, "the goal is above the version and milestones");
       assert.ok(m.attentionTop >= m.milestonesBottom!, "the three blocks sit below the milestones");
       for (const label of ["本次优先核对", "最近使用反馈"]) assert.ok(await page.getByLabel(label).count() === 1, label);
@@ -119,6 +132,8 @@ test("overview top: goal, version, six phases with one current, the three blocks
     }
     // Day one: nothing linked, no goal: everything reads 未登记, no phase is highlighted, and the page says why.
     const day1 = await open(390, 844, "day1");
+    await day1.locator("[data-milestones-summary]").click();
+    assert.match(await day1.locator(".overview-attention").innerText(), /现在没有等你判断的事/);
     assert.equal(await day1.locator("[data-overview-milestones] [data-current='true']").count(), 0, "no guess at a current phase");
     assert.equal(await day1.locator("[data-current-note]").innerText(), "当前阶段未登记");
     assert.equal((await day1.locator("[data-overview-milestones]").innerText()).match(/未登记/g)!.length >= 6, true, "the status of all six phases says 未登记");
@@ -130,6 +145,11 @@ test("overview top: goal, version, six phases with one current, the three blocks
     // the goal, the version and all six phases at both sizes.
     for (const [width, height] of [[1440, 900], [390, 844]] as const) {
       const multi = await open(width, height, "multi");
+      const firstMulti = await measure(multi, `multi-active first screen ${width}x${height}`);
+      assert.ok(firstMulti.attentionItemBottom! <= height - (width >= 1000 ? 0 : 64), `the first attention item is on the first screen in the multi-active shape at ${width}x${height} (bottom ${firstMulti.attentionItemBottom})`);
+      assert.ok(firstMulti.versionBottom! <= height - (width >= 1000 ? 0 : 64));
+      if (shots) await multi.screenshot({ path: `${shots}/overview-first-screen-${width}-multi-active.png` });
+      await multi.locator("[data-milestones-summary]").click();
       assert.equal(await multi.locator("[data-overview-milestones] [data-current='true']").count(), 0, "no guess at a current phase");
       assert.equal(await multi.locator("[data-current-note]").innerText(), "有多个进行中的阶段，不猜哪个是当前");
       const picker = multi.locator("[data-stage-picker]");
@@ -141,9 +161,7 @@ test("overview top: goal, version, six phases with one current, the three blocks
       assert.equal(m.pastRightEdge, 0);
       assert.equal(m.phaseCount, 6);
       assert.ok(m.versionBottom! <= height - (width >= 1000 ? 0 : 64), `the version is on the first screen at ${width}x${height} (bottom ${m.versionBottom})`);
-      assert.ok(m.lastPhaseBottom <= height - (width >= 1000 ? 0 : 64), `all six phases are on the first screen at ${width}x${height} (last bottom ${m.lastPhaseBottom})`);
       assert.ok(LONG_GOAL.length >= 140, "the goal fixture is as long as the real one");
-      assert.ok(m.lastPhaseBottom < 784, `the last phase ends above the phone's bottom bar (top at 784), at ${m.lastPhaseBottom}`);
       await picker.locator("summary").click();
       assert.equal(await picker.locator("button").count(), 5, "opening the list shows all five stages");
       await multi.close();

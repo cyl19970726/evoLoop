@@ -86,7 +86,7 @@ test("Sessions is the sole directory and renders conversation, source, reply and
     if (url.pathname.startsWith("/api/")) {
       const root = `/api/projects/${projectId}`;
       let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
-      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} };
+      if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "Sessions 设计测试", createdAt: stamp };
       else if (url.pathname === `${root}/impacts`) value = [];
       else if (url.pathname === `${root}/runtime/sessions`) {
@@ -180,8 +180,10 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   await page.goto(`${base}/p/${projectId}/sessions`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
-  // Without a selected agent the Sessions space opens 统筹安排, not a second directory.
-  await page.getByRole("heading", { name: "统筹安排", exact: true }).waitFor();
+  // Without a selected agent the Sessions space opens the directory page (one directory: the rail), with a way to 统筹安排.
+  await page.getByRole("heading", { name: "智能体", exact: true }).waitFor();
+  assert.equal(await page.locator(".session-navigation").count(), 1, "one directory");
+  assert.equal(await page.locator("main [data-arrangement-entry]").getAttribute("href"), `/p/${projectId}/arrangement`);
   assert.deepEqual(await page.locator('[data-shell=rail] a:not([aria-label])').evaluateAll(links => links.map(link => link.firstChild?.nextSibling?.textContent ?? link.textContent)), ["工作", "智能体", "待我处理"]);
   if (await page.locator("[data-shell=frame]").getAttribute("data-rail") !== "shown") await page.getByRole("button", { name: "展开项目导航" }).click();
   const sidebar = page.locator("aside[aria-label=项目导航] .session-navigation");

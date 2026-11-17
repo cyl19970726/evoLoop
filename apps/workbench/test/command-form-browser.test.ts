@@ -46,7 +46,7 @@ test("the command form on the schedule page: @evoloop/ui markup, required fields
       }
       if (url.pathname.startsWith("/api/")) {
         const base = `/api/projects/${projectId}`;
-        if (url.pathname === "/api/session") return json({ principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} });
+        if (url.pathname === "/api/session") return json({ principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} });
         if (url.pathname === base) return json({ id: projectId, title: "表单项目", createdAt: stamp });
         if (url.pathname === `${base}/impacts`) return json([]);
         if (url.pathname === `${base}/schedules`) return json([]);
@@ -184,7 +184,7 @@ test("a field both the person and someone else changed is never kept silently; l
       }
       if (url.pathname.startsWith("/api/")) {
         const base = `/api/projects/${projectId}`;
-        if (url.pathname === "/api/session") return json({ principal: { actorId: "reader", projectIds: [projectId], permissions: ["read", "write", "review"] }, capabilities: {} });
+        if (url.pathname === "/api/session") return json({ principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} });
         if (url.pathname === base) return json({ id: projectId, title: "表单项目", createdAt: stamp });
         if (url.pathname === `${base}/impacts`) return json([]);
         if (url.pathname === `${base}/schedules`) return json([definition()]);

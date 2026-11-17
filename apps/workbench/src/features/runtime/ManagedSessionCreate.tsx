@@ -46,7 +46,7 @@ export function ManagedSessionCreate({ context, grants, roleName }: { context: M
             <option value="">请选择模型</option>
             {choices.map(item => <option key={item} value={item}>{item}</option>)}
           </Select>}</Field>)}
-      {grant && chosen && <ActionForm key={`${grantIndex}:${chosen}`} context={context} review embedded title="登记并创建智能体" fields={[]} build={() => {
+      {grant && chosen && <ActionForm key={`${grantIndex}:${chosen}`} context={context} requiredPermissions={["session"]} decision embedded title="登记并创建智能体" fields={[]} build={() => {
         if (!allowedModels(grant, models).includes(chosen)) throw new Error("模型不在授权与目录交集内");
         return { type: "runtime.session.reserve", sessionId: crypto.randomUUID(), roleId: grant.roleId,
           authorizationScope: grant.authorizationScope, cwd: grant.cwd, sandbox: "danger-full-access", approvalPolicy: "never", model: chosen };

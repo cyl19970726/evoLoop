@@ -58,6 +58,18 @@ const known: Record<string, string> = {
   SESSION_BUSY: "智能体正在处理别的请求",
   ROLE_UNAVAILABLE: "职责暂时不可用",
   MIGRATION_REQUIRED: "服务需要先完成数据升级",
+  // Behind the Hub (#219): where a project runs and whether that machine is reachable. None of these says anything about a Run or a delivery.
+  MACHINE_OFFLINE: "这个项目所在的机器现在没有连上 Hub，暂时不能读写；这不代表运行失败，运行和交付的状态没有改动",
+  MACHINE_TIMEOUT: "项目所在的机器没有及时回答，稍后重试；操作结果尚未确认",
+  MACHINE_DISCONNECTED: "项目所在的机器在回答前断开了连接；操作结果尚未确认",
+  MACHINE_RESPONSE_TOO_LARGE: "机器的回答超过了 Hub 转发的上限",
+  PROJECT_HAS_NO_MACHINE: "这个项目还没有登记在线的机器",
+  PROJECT_ACCESS_DENIED: "你不是这个项目的成员，或这个令牌不限于它",
+  INVALID_CREDENTIALS: "邮箱或密码不对",
+  LOGIN_RATE_LIMITED: "登录失败次数太多，请稍后再试",
+  AUTH_REQUIRED: "登录已失效，请重新登录",
+  SESSION_REQUIRED: "登录已失效，请重新登录",
+  CSRF_REQUIRED: "页面的登录凭据已过期，请刷新页面后再试",
   LEASE_LOST: "服务正在切换，请稍后重试",
   // What was sent does not fit.
   INVALID_INPUT: "填写的内容不符合要求",

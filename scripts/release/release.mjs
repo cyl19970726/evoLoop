@@ -44,7 +44,55 @@ export function loadConfig(text, path) {
   // "source" = a layout of <release>/source plus sibling directories (runtime, artifacts) that hooks fill in.
   if (config.sourceSubdir !== undefined && (typeof config.sourceSubdir !== "string" || isAbsolute(config.sourceSubdir) || config.sourceSubdir.split(/[\\/]/).includes("..") || /[\0]/.test(config.sourceSubdir))) throw new Error("config.sourceSubdir must be a relative path without ..");
   if (!config.database?.name) throw new Error("config.database.name is required: the release refuses a database other than the one it expects");
+  // The release proves what it deployed: after post-check, GET <versionUrl> must report the release commit (written to build-info.json by the build step).
+  // Without it a release can succeed while the page silently shows "version not read". Opting out must be explicit.
+  if (config.skipVersionCheck !== undefined && typeof config.skipVersionCheck !== "boolean") throw new Error("config.skipVersionCheck must be true or false");
+  if (!config.skipVersionCheck) {
+    let url; try { url = new URL(config.versionUrl); } catch { url = null; }
+    if (!url || !/^https?:$/.test(url.protocol)) throw new Error("config.versionUrl (the http(s) URL of GET /api/version of the service being released) is required, or set config.skipVersionCheck: true");
+  }
+  const check = config.versionCheck ?? {};
+  for (const key of ["retries", "intervalMs", "timeoutMs"]) if (check[key] !== undefined && (!Number.isInteger(check[key]) || check[key] < 0)) throw new Error(`config.versionCheck.${key} must be a non-negative integer`);
   return config;
+}
+
+/** The commit the service reports and the one released are the same when one is a prefix of the other (7–40 hex digits each). */
+export const sameCommit = (reported, expected) => {
+  const a = String(reported ?? "").toLowerCase(), b = String(expected ?? "").toLowerCase();
+  return /^[0-9a-f]{7,40}$/.test(a) && /^[0-9a-f]{7,40}$/.test(b) && (a.startsWith(b) || b.startsWith(a));
+};
+
+/** build-info.json in the deployed directory root: what GET /api/version and the roadmap's "deployed milestone" read. */
+export async function writeBuildInfo({ sourceDir, runner, env, now = () => new Date() }) {
+  const commit = String(await runner(["git", "-C", sourceDir, "rev-parse", "HEAD"], { cwd: sourceDir, env, capture: true })).trim();
+  if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error(`Cannot write build-info.json: HEAD of ${sourceDir} is not a commit hash`);
+  const info = { commit, builtAt: now().toISOString() };
+  await writeFile(join(sourceDir, "build-info.json"), `${JSON.stringify(info, null, 2)}\n`);
+  return info;
+}
+
+const fetchVersionJson = async (url, timeoutMs) => {
+  const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+  if (!response.ok) throw new Error(`GET /api/version answered ${response.status}`);
+  return response.json();
+};
+
+/**
+ * After the service is up: GET /api/version must report the commit that was released. A service that is not answering yet is asked again
+ * (`retries` times, `intervalMs` apart); an answer with another commit, or with none, fails at once at the last try. Throws on failure.
+ */
+export async function checkVersion({ url, expected, fetchVersion = fetchVersionJson, retries = 10, intervalMs = 3000, timeoutMs = 5000, sleep = ms => new Promise(done => setTimeout(done, ms)), log = () => {} }) {
+  let last = "no answer";
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const body = await fetchVersion(url, timeoutMs);
+      const commit = body?.commit ?? null;
+      if (sameCommit(commit, expected)) return { commit, builtAt: body?.builtAt ?? null, attempts: attempt + 1 };
+      last = commit === null ? "the service reports no commit (build-info.json missing or unreadable)" : `the service reports commit ${String(commit).slice(0, 12)}, not the release commit ${expected.slice(0, 12)}`;
+    } catch (error) { last = `no usable answer (${String(error.message).split("\n")[0].slice(0, 100)})`; }
+    if (attempt < retries) { log(`version check: ${last}; asking again in ${intervalMs} ms`); await sleep(intervalMs); }
+  }
+  throw new Error(`Version check failed after ${retries + 1} tries: ${last}`);
 }
 
 // The live database named by EVOLOOP_DATABASE_URL must be exactly the one the private config expects.
@@ -131,7 +179,7 @@ async function gitFacts({ runner, env, releaseDir, ref, remote, branch }) {
 }
 
 export async function run({ config, id, ref = "HEAD", execute = false, from = null, only = null, allowNoPrevious = false, allowOffMain = false, acknowledgeManualRecovery = false,
-  env: processEnv = process.env, log = console.log, runner = exec, readManifest = path => readFile(path, "utf8") }) {
+  env: processEnv = process.env, log = console.log, runner = exec, readManifest = path => readFile(path, "utf8"), fetchVersion = undefined, sleep = undefined, now = () => new Date() }) {
   const steps = selectSteps({ from, only });
   const releaseDir = join(config.releaseRoot, id);
   const sourceDir = config.sourceSubdir ? join(releaseDir, config.sourceSubdir) : releaseDir;
@@ -174,7 +222,8 @@ export async function run({ config, id, ref = "HEAD", execute = false, from = nu
   for (const step of steps) {
     const argv = commandFor(step, config, ctx);
     const action = step === "prepare" ? `git worktree add --detach ${sourceDir} ${ref}` : step === "switch" ? `link ${config.currentLink} -> ${releaseDir}` : argv ? argv.join(" ") : "(skipped)";
-    log(`${execute ? "RUN " : "PLAN"} ${step}: ${action}`);
+    const extra = step === "build" ? "; then write build-info.json (commit, builtAt) in the source directory" : step === "post-check" ? (config.skipVersionCheck ? "; then NO version check (config.skipVersionCheck)" : "; then GET /api/version must report the release commit") : "";
+    log(`${execute ? "RUN " : "PLAN"} ${step}: ${action}${extra}`);
     if (!execute) continue;
     const entry = { step, startedAt: new Date().toISOString() };
     state.steps = state.steps.filter(old => old.step !== step).concat(entry);
@@ -205,6 +254,22 @@ export async function run({ config, id, ref = "HEAD", execute = false, from = nu
           log(`carry-assets: oldest entry still usable after this release: ${carried.oldestUsable ? `${carried.oldestUsable.builtAt} (generation ${carried.oldestUsable.generation}, ${carried.retained} generations retained)` : "none (nothing carried)"}`);
         }
       }
+      if (step === "build") {
+        // Written after the build and the asset carry so the file describes exactly this build; the step fails (and nothing has been stopped) if it cannot be written.
+        const info = await writeBuildInfo({ sourceDir, runner, env, now });
+        state.buildInfo = info; acceptance.buildInfo = { commit: info.commit, builtAt: info.builtAt };
+        log(`build-info.json written: commit ${info.commit.slice(0, 8)}, builtAt ${info.builtAt}`);
+      }
+      if (step === "post-check") {
+        if (config.skipVersionCheck) { acceptance.versionCheck = "skipped by config"; log("WARN version check skipped by config.skipVersionCheck: a release that reports no version would pass"); }
+        else {
+          const expected = state.buildInfo?.commit ?? state.commit?.sha ?? String(await runner(["git", "-C", sourceDir, "rev-parse", "HEAD"], { cwd: sourceDir, env, capture: true })).trim();
+          const settings = config.versionCheck ?? {};
+          const seen = await checkVersion({ url: config.versionUrl, expected, fetchVersion, sleep, retries: settings.retries, intervalMs: settings.intervalMs, timeoutMs: settings.timeoutMs, log });
+          acceptance.versionCheck = { result: "passed", commit: seen.commit, builtAt: seen.builtAt, attempts: seen.attempts };
+          log(`version check passed: /api/version reports commit ${String(seen.commit).slice(0, 8)}`);
+        }
+      }
       if (step === "preflight") {
         // Record what is being released and how it relates to the remote main; an unmerged commit is refused unless allowed.
         state.commit = await gitFacts({ runner, env, releaseDir: sourceDir, ref, remote: config.remote ?? "origin", branch: config.baseBranch ?? "main" });
@@ -226,7 +291,7 @@ export async function run({ config, id, ref = "HEAD", execute = false, from = nu
       } else {
         // Past the stop the service is down: stop whatever is running, bring the old version back automatically.
         state.recovery = await recoverOldService({ config, state, execute, env, log, runner, switched: state.steps.some(item => item.step === "switch" && item.result === "ok") });
-        if (step === "post-check") acceptance.postCheck = "failed";
+        if (step === "post-check") { acceptance.postCheck = "failed"; if (/^Version check failed/.test(error.message)) acceptance.versionCheck = { result: "failed", error: error.message }; }
         acceptance.dataMayBeChanged = STEPS.indexOf(step) >= STEPS.indexOf("migrate");
         if (state.recovery.result === "restored") {
           // The system is back to the old version: the stop-and-after steps no longer describe it.

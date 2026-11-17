@@ -10,6 +10,7 @@ const entryOf = (r: Row): SessionLineEntry => ({ projectId: r.project_id, id: r.
   position: Number(r.position), state: r.state, step: r.step, attempt: r.attempt, stepTry: r.step_try, assignOperationId: r.assign_operation_id,
   startOperationId: r.start_operation_id, reassignOperationId: r.reassign_operation_id, reserveOperationId: r.reserve_operation_id, messageId: r.message_id,
   suspendReason: r.suspend_reason, withdrawnReason: r.withdrawn_reason, source: r.source, sourceActorId: r.source_actor_id,
+  reworkObservationId: r.rework_observation_id ?? null, reworkDeliveryId: r.rework_delivery_id ?? null,
   scheduleId: r.schedule_id, releaseRule: r.release_rule, runId: r.run_id, runEndedAt: r.run_ended_at ? iso(r.run_ended_at) : null, version: r.version,
   appendedAt: iso(r.appended_at), updatedAt: iso(r.updated_at) });
 const eventOf = (r: Row): SessionLineEvent => ({ projectId: r.project_id, seq: Number(r.event_seq), sessionId: r.session_id,
@@ -72,12 +73,15 @@ export class PgSessionLine implements SessionLineTransaction {
   }
   async insertSessionLineEntry(value: Omit<SessionLineEntry, "position">): Promise<SessionLineEntry> {
     const r = await this.client.query(`INSERT INTO session_line_entry(project_id,entry_id,session_id,task_id,position,state,step,attempt,
-      suspend_reason,withdrawn_reason,source,source_actor_id,schedule_id,release_rule,run_id,version,appended_at,updated_at)
+      suspend_reason,withdrawn_reason,source,source_actor_id,rework_observation_id,rework_delivery_id,schedule_id,release_rule,run_id,version,appended_at,updated_at)
       VALUES($1,$2,$3,$4,(SELECT COALESCE(max(position),0)+1 FROM session_line_entry WHERE project_id=$1 AND session_id=$3),
-      $5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,
+      $5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING *`,
     [this.projectId, value.id, value.sessionId, value.taskId, value.state, value.step, value.attempt, value.suspendReason,
-      value.withdrawnReason, value.source, value.sourceActorId, value.scheduleId, value.releaseRule, value.runId, value.version,
+      value.withdrawnReason, value.source, value.sourceActorId, value.reworkObservationId, value.reworkDeliveryId,
+      value.scheduleId, value.releaseRule, value.runId, value.version,
       value.appendedAt, value.updatedAt]).catch((error: { code?: string; constraint?: string }) => {
+      if (error.code === "23505" && error.constraint === "session_line_entry_rework_delivery")
+        throw new DomainError("TASK_REWORK_ALREADY_CREATED", "This Delivery already has its one internal rework entry");
       if (error.code === "23505" && error.constraint === "session_line_entry_task_live")
         throw new DomainError("TASK_ALREADY_QUEUED", "This Task is already waiting in a Session line");
       throw error;
@@ -87,10 +91,11 @@ export class PgSessionLine implements SessionLineTransaction {
   async updateSessionLineEntry(value: SessionLineEntry, expectedVersion: number): Promise<void> {
     const r = await this.client.query(`UPDATE session_line_entry SET state=$4,step=$5,attempt=$6,assign_operation_id=$7,start_operation_id=$8,
       reserve_operation_id=$9,message_id=$10,suspend_reason=$11,withdrawn_reason=$12,run_id=$13,version=$14,updated_at=$15,reassign_operation_id=$16,
-      step_try=$17,run_ended_at=$18
+      step_try=$17,run_ended_at=$18,rework_observation_id=$19,rework_delivery_id=$20
       WHERE project_id=$1 AND entry_id=$2 AND version=$3`, [this.projectId, value.id, expectedVersion, value.state, value.step,
       value.attempt, value.assignOperationId, value.startOperationId, value.reserveOperationId, value.messageId, value.suspendReason,
-      value.withdrawnReason, value.runId, value.version, value.updatedAt, value.reassignOperationId, value.stepTry, value.runEndedAt]);
+      value.withdrawnReason, value.runId, value.version, value.updatedAt, value.reassignOperationId, value.stepTry, value.runEndedAt,
+      value.reworkObservationId, value.reworkDeliveryId]);
     if (!r.rowCount) throw new DomainError("VERSION_CONFLICT", "Session line entry changed");
   }
   async swapSessionLineEntry(entryId: string, direction: "forward" | "back", at: string): Promise<boolean> {

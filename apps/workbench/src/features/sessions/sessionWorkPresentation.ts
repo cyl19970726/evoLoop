@@ -104,7 +104,7 @@ export function nowWork({ session, work, assignments, relationLabel, timing, mes
     return { badge: runStateLabel(run.state), tone: runTone[run.state] ?? "unknown", task: { id: run.taskId, title: titleOf(run.taskId) },
       summary: null, lines: ["有这项任务的运行记录；没有找到这个智能体的分派或领取，待核对。"], ...plain, recent: null };
   if (session.busy === true)
-    return { badge: "在途工作", tone: "waiting", task: null, summary: "有在途的运行或消息，还没有对应到任务；可在分工与运行里核对。", lines: [], ...plain, recent: null };
+    return { badge: "在途工作", tone: "waiting", task: null, summary: "有在途的运行或消息，还没有对应到任务；可在运行与接入里核对。", lines: [], ...plain, recent: null };
   if (session.kind === "external") return { badge: "外部接入", tone: "unknown", task: null,
     summary: "外部智能体的当前工作没有同步到这里；分派给它的任务列在下面。", lines: [], ...plain, recent: null };
   // Not busy is not free: a Session the coordinator judged unable to start a Run (no business identity, no native thread, the judgement failing) is
@@ -227,7 +227,7 @@ export function nextWork({ kind, currentTaskId, line, queue, assignments, partia
     seen.add(item.task.id);
     const phase = phaseOf(item.task.id);
     // Delivered and waiting for someone else's acceptance: the agent has nothing more to do on it.
-    if (phase === "awaiting_acceptance" || phase === "closed" || phase === "cancelled") {
+    if (phase === "awaiting_acceptance" || phase === "awaiting_prerequisite" || phase === "awaiting_release" || phase === "awaiting_close" || phase === "closed" || phase === "cancelled") {
       ended.push({ item, label: phase === "awaiting_acceptance" ? "已交付，等验收" : phaseStatus[phase].label });
       continue;
     }

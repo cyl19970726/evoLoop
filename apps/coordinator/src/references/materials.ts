@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Principal, RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts";
+import { isProjectMember, type Principal, type RuntimeRunRecord, type RuntimeSessionRecord } from "@evoloop/contracts";
 import type { ReferenceUnitOfWork, TaskExternalReferenceRecord } from "@evoloop/contracts/references";
 import type { DocumentSource } from "@evoloop/contracts/sources";
 import type { KnowledgeRepository, KnowledgeRevision } from "@evoloop/contracts/knowledge";
@@ -22,8 +22,8 @@ function fail(reason: string): never { throw new DomainError("BASIS_UNAVAILABLE"
 export async function readExternalMaterials(
   principal: Principal, projectId: string, taskId: string, taskRevisionId: string, options: ExternalMaterialOptions,
 ): Promise<string> {
-  if (!principal.projectIds.includes(projectId) || !principal.permissions.includes("read"))
-    throw new DomainError("FORBIDDEN", "Project reference read permission is required");
+  if (!isProjectMember(principal, projectId))
+    throw new DomainError("FORBIDDEN", "Project membership is required");
   const snapshot = await options.uow.read(projectId, reader => reader.listTaskExternalSnapshot(taskId, taskRevisionId));
   if (snapshot.length === 0) return "";
   if (snapshot.length > 100) fail("External reference snapshot exceeds 100 slots");
