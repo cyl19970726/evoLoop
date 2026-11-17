@@ -4,7 +4,7 @@
  * the user's authorization. Now only the user's own message says it is the user's request; every other sender is named, with its
  * class, and the text says what that is not.
  */
-export type SenderKind = "user" | "leader" | "requirements" | "session" | "system" | "unknown";
+export type SenderKind = "user" | "leader" | "requirements" | "session" | "system" | "hub" | "service" | "unknown";
 export interface SenderClass { kind: SenderKind; actorId: string; roleTitle?: string | null }
 
 const label: Record<Exclude<SenderKind, "user">, string> = {
@@ -13,9 +13,12 @@ const label: Record<Exclude<SenderKind, "user">, string> = {
   session: "another managed Session",
   system: "a platform notice (not a person)",
   unknown: "an identity whose class is not recorded",
+  hub: "an identity that came through the Hub, whose class is not recorded",
+  service: "a Hub service identity (not a person)",
 };
 const chinese: Record<Exclude<SenderKind, "user">, string> = {
   leader: "Leader", requirements: "需求 Session", session: "其他受管 Session", system: "系统通知", unknown: "未记录类别的身份",
+  hub: "经 Hub 的身份（未记录类别）", service: "Hub 服务身份",
 };
 
 /** The platform's opening line(s) for one ordinary message, naming its sender. Plain text; no secrets, only the actor ID and class. */
@@ -52,4 +55,34 @@ export function resolveSenderClass(identities: SenderIdentity[], notices: Sender
   // The Leader's own receiving identity is configured for notices: that is a statement of the same kind.
   if (notices?.receiverActorId === actorId) return { kind: "leader", actorId };
   return { kind: "unknown", actorId };
+}
+
+/**
+ * The class of a sender whose request the Hub signed (the message was stored with `sender_origin = hub`), from the explicit `sessionMessages.grants` entry that let this sender
+ * talk to this Session and nothing else: `senderClass: "user"` is the user themself (the person's own Hub account), `"service"` a Hub service identity that is not a person.
+ * A Hub sender whose grant states no class, or whose grant is gone, is "an identity that came through the Hub": never the user. Nothing is inferred from the account's name,
+ * its kind (human or service) or a Role (Task bedd0ef3). A message without the Hub origin never comes here: a local identity gets no class from a Hub grant, whatever its actor ID.
+ */
+export interface HubSenderGrant { enabled: boolean; projectId: string; sessionId: string; senderActorId: string; senderKind?: "local" | "hub" | undefined; senderClass?: "user" | "service" | undefined }
+export function resolveHubSenderClass(grants: readonly HubSenderGrant[], projectId: string, sessionId: string | null, actorId: string): SenderClass {
+  const grant = sessionId ? grants.find(g => g.enabled && g.senderKind === "hub" && g.projectId === projectId && g.sessionId === sessionId && g.senderActorId === actorId) : undefined;
+  return { kind: grant?.senderClass ?? "hub", actorId };
+}
+
+/** Who a message came from, as far as the class is concerned: the actor, where the request came from, and the Session it is for. */
+export interface SenderFrom { projectId: string; actorId: string; origin?: "hub" | null | undefined; sessionId?: string | null | undefined }
+
+/** What decides a stored message's sender class: the actor, the origin stored with the message, and the Session it was sent to (never the actor ID's spelling). */
+export function senderFromMessage(message: { projectId: string; senderActorId: string; senderOrigin?: "hub" | null | undefined; target: { kind: string; sessionId?: string } }): SenderFrom {
+  return { projectId: message.projectId, actorId: message.senderActorId, origin: message.senderOrigin ?? null, sessionId: message.target.kind === "owned" ? message.target.sessionId ?? null : null };
+}
+
+/**
+ * The one judgment of a sender's class, for the receiving Session's opening line and for the page alike. A request the Hub signed takes its class only from the explicit Hub
+ * grant for this Session; everything else is judged as before from the identity file, so a local identity — even one with the same actor ID — never gets a class from a Hub grant.
+ */
+export function createSenderClassOf(inputs: { identities: SenderIdentity[]; notices(projectId: string): SenderNotices | null | undefined; grants: readonly HubSenderGrant[] }): (from: SenderFrom) => SenderClass {
+  return from => from.origin === "hub"
+    ? resolveHubSenderClass(inputs.grants, from.projectId, from.sessionId ?? null, from.actorId)
+    : resolveSenderClass(inputs.identities, inputs.notices(from.projectId), from.projectId, from.actorId);
 }
