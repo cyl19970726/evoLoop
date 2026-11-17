@@ -3,6 +3,7 @@
 // identity file comes from a private config file outside the repository (EVOLOOP_RELEASE_CONFIG).
 // Default is a dry run that prints the plan. Nothing is executed without --execute.
 import { carryAssets, DEFAULT_KEEP, DEFAULT_KEEP_DAYS } from "./carry-assets.mjs";
+import { checkSkillSync, syncSkills } from "./sync-skills.mjs";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, stat, symlink, readlink, rm, writeFile } from "node:fs/promises";
@@ -20,6 +21,7 @@ const OPTIONAL_HOOKS = new Set(["repoint-cli"]);
 // optional: data-counts prints a stable text snapshot of row counts (run while the service is stopped);
 // post-migrate runs project-specific checks right after the migration, still before the switch.
 const EXTRA_HOOKS = new Set(["data-counts", "post-migrate"]);
+const SKILLS_DIR_LABEL = ".agents/skills/";
 const fromRepo = path => resolve(path).startsWith(repoRoot + sep) || resolve(path) === repoRoot;
 
 export function loadConfig(text, path) {
@@ -51,6 +53,10 @@ export function loadConfig(text, path) {
     let url; try { url = new URL(config.versionUrl); } catch { url = null; }
     if (!url || !/^https?:$/.test(url.protocol)) throw new Error("config.versionUrl (the http(s) URL of GET /api/version of the service being released) is required, or set config.skipVersionCheck: true");
   }
+  // After the release, the skills the managed Sessions' workspaces read are made the same as this release's (scripts/release/sync-skills.mjs); the
+  // workspaces are named here, in the private config, never in the repository.
+  const skillSync = checkSkillSync(config.skillSync);
+  for (const path of skillSync?.workspaces ?? []) if (fromRepo(path)) throw new Error(`config.skillSync.workspaces must be outside the repository: ${path}`);
   const check = config.versionCheck ?? {};
   for (const key of ["retries", "intervalMs", "timeoutMs"]) if (check[key] !== undefined && (!Number.isInteger(check[key]) || check[key] < 0)) throw new Error(`config.versionCheck.${key} must be a non-negative integer`);
   return config;
@@ -322,8 +328,18 @@ export async function run({ config, id, ref = "HEAD", execute = false, from = nu
     }
     await save();
   }
+  if (!execute && steps.includes("post-check") && config.skillSync) log(`PLAN skill-sync: after post-check, check ${config.skillSync.workspaces.length} workspace(s) and make their ${SKILLS_DIR_LABEL} the release's, or list why not in the release record`);
   if (execute && stopAt) { acceptance.downtimeSeconds = Math.round((Date.now() - stopAt) / 1000); log(`downtime (stop to last step): ${acceptance.downtimeSeconds}s`); }
   if (execute && typeof acceptance.countsBefore === "string" && typeof acceptance.countsAfter === "string") acceptance.countsEqual = acceptance.countsBefore === acceptance.countsAfter;
+  if (execute && steps.includes("post-check") && config.skillSync) {
+    // Recorded, never acted on: a workspace that cannot be synced is listed with the reason and tried again at the next release.
+    try {
+      const sha = state.buildInfo?.commit ?? state.commit?.sha ?? String(await runner(["git", "-C", sourceDir, "rev-parse", "HEAD"], { cwd: sourceDir, env, capture: true })).trim();
+      acceptance.skillSync = await syncSkills({ workspaces: config.skillSync.workspaces, sourceDir, sha, baseBranch: config.skillSync.baseBranch ?? config.baseBranch ?? "main", remote: config.skillSync.remote ?? config.remote ?? "origin", lister: config.skillSync.lister });
+      log(acceptance.skillSync.summary);
+      for (const item of acceptance.skillSync.unsynced) log(`  未同步 ${item.path}：${item.reason}`);
+    } catch (error) { acceptance.skillSync = { error: error.message, summary: `技能同步：没有完成（${error.message}）` }; log(`WARN ${acceptance.skillSync.summary} (the release continues)`); }
+  }
   if (execute && steps.includes("post-check")) {
     // A successful run clears the failure that was being resumed; the history stays in `failures`.
     delete state.failedAt; delete state.recovery; acceptance.postCheck = "passed"; delete acceptance.dataMayBeChanged;

@@ -923,7 +923,7 @@ export async function buildServer(options: {
   if (options.collaboration) registerCollaborationRoutes(app, { ...options.collaboration, workflow: options.service });
   await registerWorkManagementRoutes(app, options.service, options.workIndex);
   if (options.workBoard) registerWorkBoardRoutes(app, { service: options.service, ...options.workBoard });
-  if (options.drain) registerDrainRoutes(app, options.drain);
+  if (options.drain) registerDrainRoutes(app, { ...options.drain, projectAccess: (principal, projectId) => options.service.getProject(principal, projectId) });
   if (options.acceptanceRelay) registerAcceptanceRelayRoutes(app, options.service, options.acceptanceRelay, options.workIndex);
   if (options.milestones) registerMilestoneRoutes(app, { service: options.service, ...options.milestones });
   if (options.leaderNotices) registerLeaderNoticeRoutes(app, options.service, options.leaderNotices);

@@ -11,6 +11,7 @@ export type { DocumentRevisionPage, DocumentRevisionState, DocumentRevisionSumma
 import type { WorkTaskStatus } from "./workStatusPresentation";
 import { authMode, reportUnauthorized, requestAuth, setCsrfToken } from "./identity";
 import { describeError } from "./errorPresentation";
+import { busyRetryDelayMs, createRequestPacer, maxBusyRetries } from "./requestPacing";
 export { errorCode, errorDiagnostic } from "./errorPresentation";
 import type {
   LeaderWorkChangesPage, LeaderWorkDependenciesCommand, LeaderWorkDocument, LeaderWorkPage,
@@ -41,7 +42,30 @@ export class ApiError extends Error {
   }
 }
 
+/** Behind the Hub every request of this page goes through one pacer (shared/requestPacing.ts): the machine behind it refuses more than 8 forwarded requests at a time. */
+const hubPacer = createRequestPacer({ maxInflight: 4, minGapMs: 40 });
+const LONG_WAIT_MS = 20_000;
+/** Whether this page was served by the Hub. A page without a usable document (a test, a worker) is not behind it. */
+const isBehindHub = (): boolean => { try { return authMode() === "hub"; } catch { return false; } };
+
 async function requestJson<T>(token: string, path: string, timeoutMs: number, init?: RequestInit, allowNull = false): Promise<T> {
+  const behindHub = isBehindHub(), method = (init?.method ?? "GET").toUpperCase();
+  for (let attempt = 0; ; attempt += 1) {
+    try { return await requestOnce<T>(token, path, timeoutMs, init, allowNull, behindHub); }
+    catch (error) {
+      // "Busy" is the machine saying it did not take the request at all: a read can simply be asked again, a little later. A write is left to its own recovery by operation ID.
+      const busy = error instanceof ApiError && error.status === 429 && (error.detail as { code?: unknown } | undefined)?.code === "CONNECTOR_BUSY";
+      if (!behindHub || method !== "GET" || !busy || attempt >= maxBusyRetries || init?.signal?.aborted) throw error;
+      await new Promise<void>(done => setTimeout(done, busyRetryDelayMs(attempt + 1)));
+    }
+  }
+}
+
+async function requestOnce<T>(token: string, path: string, timeoutMs: number, init: RequestInit | undefined, allowNull: boolean, behindHub: boolean): Promise<T> {
+  // The wait for a place in line is not part of the request's own time limit.
+  let release: (() => void) | null = null;
+  // A long wait (the live read holds the request open for up to 15 s) is not a burst: it would sit on one of the places for its whole wait and starve the short reads behind it.
+  if (behindHub && timeoutMs < LONG_WAIT_MS) { try { release = await hubPacer.acquire(init?.signal ?? null); } catch { throw new ApiError(0, "连接中断或超时，操作结果尚未确认"); } }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -69,7 +93,7 @@ async function requestJson<T>(token: string, path: string, timeoutMs: number, in
   } catch (cause) {
     if (cause instanceof ApiError) throw cause;
     throw new ApiError(0, "连接中断或超时，操作结果尚未确认");
-  } finally { clearTimeout(timeout); }
+  } finally { clearTimeout(timeout); release?.(); }
 }
 
 export function request<T>(token: string, path: string, timeoutMs: number, init?: RequestInit): Promise<T> {
@@ -155,7 +179,7 @@ export function api(token = "", timeoutMs = 15000) {
       call<{ id: string; recordedAt: string; duplicate: boolean }>(`${projectPath(p)}/client-errors`, { method: "POST", body: JSON.stringify(body) }),
     clientErrors: (p: string, limit = 20) => call<{ items: Array<{ id: string; actorId: string; route: string; message: string; componentStack: string; commit: string | null; occurredAt: string; recordedAt: string }> }>(`${projectPath(p)}/client-errors?limit=${limit}`),
     /** The deployed version (public: no login): commit, build time and process start time. */
-    version: (signal?: AbortSignal) => call<import("@evoloop/contracts/milestones").VersionInfo>("/api/version", { signal }),
+    version: (signal?: AbortSignal, projectId?: string) => call<import("@evoloop/contracts/milestones").VersionInfo>(isBehindHub() && projectId ? `${projectPath(projectId)}/version` : "/api/version", { signal }),
     /** The roadmap phases with the status and date of the stage linked to each. */
     milestones: (p: string, signal?: AbortSignal) => call<import("@evoloop/contracts/milestones").MilestonesView>(`${projectPath(p)}/milestones`, { signal }),
     stageReviews: (p: string, id: string) => call<StageReview[]>(`${projectPath(p)}/stages/${key(id)}/reviews`),
@@ -220,7 +244,8 @@ export function api(token = "", timeoutMs = 15000) {
       return page;
     },
     /** Drain mode: instance-wide state of the release gate (not project scoped). */
-    instanceDrain: (signal?: AbortSignal) => requestJson<import("@evoloop/contracts/instance-drain").InstanceDrainView>(token, "/api/instance/drain", timeoutMs, { signal }),
+    /** Drain state. Behind the Hub (which forwards only a project's own API) it is read at the project's path; a local login reads the instance path as before. */
+    instanceDrain: (signal?: AbortSignal, projectId?: string) => requestJson<import("@evoloop/contracts/instance-drain").InstanceDrainView>(token, isBehindHub() && projectId ? `${projectPath(projectId)}/instance-drain` : "/api/instance/drain", timeoutMs, { signal }),
     taskRevisions: (p: string, id: string) => call<Array<{ revision: TaskRevision; basis: BasisSet | null }>>(`${projectPath(p)}/tasks/${key(id)}/revisions`),
     taskRevision: (p: string, id: string, revision: string) => call<{ revision: TaskRevision; basis: BasisSet | null }>(`${projectPath(p)}/tasks/${key(id)}/revisions/${key(revision)}`),
     evaluations: (p: string, cursor?: string, taskId?: string, knowledgePageId?: string) => call<Page<EvaluationRevision>>(`${projectPath(p)}/evaluations?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}${taskId ? `&taskId=${key(taskId)}` : ""}${knowledgePageId ? `&knowledgePageId=${key(knowledgePageId)}` : ""}`),
