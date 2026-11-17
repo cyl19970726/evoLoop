@@ -1,4 +1,4 @@
-import type { SessionActivityPage, SessionChanges, SessionDirectory, SessionSnapshot } from "@evoloop/contracts/session-observation";
+import type { SessionActivityPage, SessionChanges, SessionDirectory } from "@evoloop/contracts/session-observation";
 import type { SessionProfileRecord, TaskSessionAssignment, SessionAssignmentPage } from "@evoloop/contracts/session-assignments";
 import type { SessionMessageProcessing, SessionMessageRecord } from "@evoloop/contracts/session-messages";
 import type { ObservationMetadata } from "@evoloop/contracts/session-work";
@@ -8,7 +8,7 @@ import type { WorkspaceEntry } from "@evoloop/contracts/session-timeline";
 import type { SessionRecoveryView } from "@evoloop/contracts/session-recovery";
 import type { SessionLine, SessionLineEntry } from "@evoloop/contracts/session-line";
 import { request, requestNullable } from "./api";
-import { checkedLiveRead, checkedTimelinePage } from "./sessionShapes";
+import { checkedLiveRead, checkedSessionSnapshot, checkedTimelinePage } from "./sessionShapes";
 
 const part = encodeURIComponent;
 export type SessionConversationItem = SessionMessageRecord & {
@@ -28,7 +28,7 @@ export function sessionClient(token: string, projectId: string) {
   return {
     directory: (options: { limit?: number; cursor?: string; search?: string; membership?: string } = {}, signal?: AbortSignal) =>
       get<SessionDirectory>(`${base}/session-work?${query({ limit: 50, ...options })}`, signal),
-    snapshot: (key: string, signal?: AbortSignal) => get<SessionSnapshot>(`${base}/session-work/${part(key)}`, signal),
+    snapshot: async (key: string, signal?: AbortSignal) => checkedSessionSnapshot(await get<unknown>(`${base}/session-work/${part(key)}`, signal)),
     recovery: (sessionId: string, signal?: AbortSignal) => get<SessionRecoveryView>(`${base}/runtime/sessions/${part(sessionId)}/recovery`, signal),
     runtimeSessions: (signal?:AbortSignal) => get<RuntimeSessionRecord[]>(`${base}/runtime/sessions`,signal),
     models: (signal?:AbortSignal) => get<{status:'available'|'empty'|'unavailable';models:string[];
