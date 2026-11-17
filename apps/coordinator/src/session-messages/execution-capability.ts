@@ -11,7 +11,7 @@ export interface MessageExecutionReaderDeps {
   canExecuteSession(session:RuntimeSessionRecord):Promise<boolean>;
   isProjectWriter(projectId:string,actorId:string):Promise<boolean>;
   /** The sender alone; a Hub account with an explicit `senderKind:"hub"` grant counts. Absent: checked like the receiver. */
-  isSenderWriter?(projectId:string,actorId:string):Promise<boolean>;
+  isSenderWriter?(projectId:string,actorId:string,origin?:"hub"|undefined):Promise<boolean>;
   readSession(projectId:string,sessionId:string):Promise<RuntimeSessionRecord|null>;
   turnsUsed(projectId:string,sessionId:string,senderActorId:string):Promise<number>;
   cwdIsCurrent(cwd:string):Promise<boolean>;
@@ -66,7 +66,7 @@ export function createMessageExecutionReader(deps:MessageExecutionReaderDeps){
         item.receiverRoleId===session.roleId&&item.cwd===session.cwd&&
         !!item.receiverActorId.trim()&&item.receiverActorId!==principal.actorId&&
         (item.maxTurns===undefined||Number.isSafeInteger(item.maxTurns)&&item.maxTurns>=1));
-      if(!grant||!await (deps.isSenderWriter??deps.isProjectWriter)(projectId,principal.actorId)||
+      if(!grant||!await (deps.isSenderWriter??deps.isProjectWriter)(projectId,principal.actorId,principal.origin)||
         !await deps.isProjectWriter(projectId,grant.receiverActorId))
         return result("blocked","MESSAGE_GRANT_MISSING","当前发送人与接收会话没有完整的精确授权。");
       if(!await deps.cwdIsCurrent(session.cwd))
