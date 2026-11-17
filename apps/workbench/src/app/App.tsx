@@ -208,7 +208,7 @@ export function App() {
   // Behind the Hub the project read also says whether the project's machine is connected; it is read again often enough to show a machine coming back.
   const projectRead = useProjectQuery(projectId ?? "", ["project"], () => client.project(projectId!), { enabled: !!session, ...authMode() === "hub" ? { refetchInterval: 10_000 } : {} });
   // Drain mode: the instance is being emptied for a release; read often while it is.
-  const drainRead = useProjectQuery(projectId ?? "", ["instance", "drain"], signal => client.instanceDrain(signal), { enabled: !!session && !!projectId, refetchInterval: 15_000, retry: false });
+  const drainRead = useProjectQuery(projectId ?? "", ["instance", "drain"], signal => client.instanceDrain(signal, projectId ?? undefined), { enabled: !!session && !!projectId, refetchInterval: 15_000, retry: false });
   const drain = drainNotice(drainRead.data, iso => new Date(iso).toLocaleString("zh-CN"));
   const projectTitle = projectRead.data?.title ?? "";
   const holdsRead = useProjectQuery(projectId ?? "", ["provider-holds"], () => client.providerHolds(projectId!), { enabled: !!session && !!projectId, refetchInterval: 30_000 });
