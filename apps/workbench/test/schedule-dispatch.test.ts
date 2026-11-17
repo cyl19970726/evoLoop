@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Occurrence } from "@evoloop/contracts/scheduling";
 import type { ScheduleDispatchLog } from "@evoloop/contracts/schedule-dispatch";
-import { dispatchReasonText, triggerRows } from "../src/features/scheduling/dispatch";
+import { dispatchReasonKnown, dispatchReasonText, triggerRows } from "../src/features/scheduling/dispatch";
 
 const occ = (day: number, state: Occurrence["state"], reason: string, taskId: string | null): Occurrence => ({ projectId: "p", scheduleId: "s", revisionId: "r",
   plannedAtUtc: `2026-11-${day}T01:00:00.000Z`, observedAtUtc: `2026-11-${day}T01:00:00.000Z`, state, taskId, operationId: `o${day}`, reason });
@@ -29,5 +29,8 @@ test("trigger rows: an unread dispatch log leaves the occurrence wording and cla
 test("dispatch reasons: known codes in words, unknown codes say so", () => {
   assert.match(dispatchReasonText("DAILY_BUDGET"), /预算/);
   assert.match(dispatchReasonText("APPEND_REJECTED"), /REJECTED/);
-  assert.match(dispatchReasonText("SOMETHING_NEW"), /未收录/);
+  assert.match(dispatchReasonText("SOMETHING_NEW"), /未收录：SOMETHING_NEW/);
+  for (const code of ["DIRECT_LIST_EMPTY", "NOT_AVAILABLE:SESSION_NOT_READY", "NOT_AVAILABLE:RECOVERY_GATE_CLOSED", "NOT_AVAILABLE:EXECUTION_PROFILE_UNAVAILABLE", "NOT_AVAILABLE:HEAD_SUSPENDED",
+    "NOT_AVAILABLE:CONTROLLER_SESSION", "NOT_AUTHORIZED:X", "RECIPIENT_UNAVAILABLE:Y"]) { assert.doesNotMatch(dispatchReasonText(code), /未收录/, code); assert.ok(dispatchReasonKnown(code), code); }
+  assert.match(dispatchReasonText("NOT_AVAILABLE:NEW_THING"), /NEW_THING/, "an unknown detail still names itself");
 });

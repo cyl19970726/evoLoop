@@ -14,7 +14,7 @@ const shots = process.env.EVOLOOP_SCHEDULE_SCREENSHOT_DIR;
 const dist = resolve(import.meta.dirname, "../dist");
 const id = (n: number) => `43000${String(n).padStart(3, "0")}-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const projectId = id(1), roleId = id(2), directId = id(3), plainId = id(4), sessionId = id(5), entryId = id(6);
-const taskDispatched = id(11), taskFellBack = id(12), taskGenerated = id(13), taskOpen = id(14);
+const taskDispatched = id(11), taskFellBack = id(12), taskGenerated = id(13), taskOpen = id(14), taskGate = id(15);
 const stamp = "2026-11-17T01:00:00.000Z";
 const at = (day: number) => `2026-11-${String(day).padStart(2, "0")}T01:00:00.000Z`;
 
@@ -50,7 +50,7 @@ test("schedule triggers: five samples, dispatch facts, unknown on a failed read,
         else if (url.pathname === `${base}/schedules/${plainId}/revisions`) value = [revision(plainId, "每日评估")];
         else if (url.pathname === `${base}/schedules/${directId}/occurrences`) value = [
           occurrence(12, "created", taskDispatched, "scheduled"), occurrence(13, "created", taskFellBack, "scheduled"), occurrence(14, "created", taskGenerated, "scheduled"),
-          occurrence(15, "skipped", null, "overlap skipped"), occurrence(16, "skipped", null, "overlap skipped")];
+          occurrence(15, "skipped", null, "overlap skipped"), occurrence(16, "skipped", null, "overlap skipped"), occurrence(17, "created", taskGate, "scheduled")];
         else if (url.pathname === `${base}/schedules/${plainId}/occurrences`) value = [{ ...occurrence(12, "created", taskGenerated, "scheduled"), scheduleId: plainId, revisionId: plainId }];
         else if (url.pathname === `${base}/schedules/${directId}/dispatch`) {
           if (mode === "fail") { status = 500; value = { message: "boom" }; }
@@ -62,7 +62,8 @@ test("schedule triggers: five samples, dispatch facts, unknown on a failed read,
           if (mode === "fail") { status = 500; value = { message: "boom" }; }
           else value = { items: [
             log(12, "dispatched", "", taskDispatched, { sessionId, entryId, dispatchedAt: at(12), escalatedAt: at(12) }), log(13, "fell_back", "POLICY_PAUSED", taskFellBack),
-            log(15, "skipped", "PREVIOUS_STILL_OPEN", taskOpen), log(16, "skipped", "PREVIOUS_STILL_OPEN", taskOpen)], nextCursor: null };
+            log(15, "skipped", "PREVIOUS_STILL_OPEN", taskOpen), log(16, "skipped", "PREVIOUS_STILL_OPEN", taskOpen),
+            log(17, "fell_back", "NOT_AVAILABLE:RECOVERY_GATE_CLOSED", taskGate)], nextCursor: null };
         }
         else if (url.pathname === `${base}/schedules/${plainId}/dispatches`) value = { items: [], nextCursor: null };
         else if (url.pathname === `${base}/work-management/notices`) value = { items: url.searchParams.get("taskId") === taskOpen ? [{ id: id(200), projectId, kind: "schedule_skips_escalated", level: "digest",
@@ -103,14 +104,16 @@ test("schedule triggers: five samples, dispatch facts, unknown on a failed read,
       assert.match(text, /连续跳过已升级：读到 1 条通知/); assert.match(text, /等过上限，已告知 Leader/);
       await card.locator("[data-trigger-list] li").first().waitFor();
       const rows = await card.locator("[data-trigger-list] li").evaluateAll(items => items.map(item => ({ state: item.getAttribute("data-trigger-state"), text: (item as HTMLElement).innerText })));
-      assert.equal(rows.length, 5, "all five triggers, newest first");
-      // Newest first: day 16 skipped, 15 skipped, 14 generated (no log row), 13 fell back, 12 dispatched.
-      assert.deepEqual(rows.map(row => row.state), ["skipped", "skipped", "created", "fell_back", "dispatched"]);
-      assert.match(rows[0].text, /已跳过，没有生成任务/); assert.match(rows[0].text, /上一次生成的任务还没关闭/); assert.match(rows[0].text, /PREVIOUS_STILL_OPEN/);
-      assert.doesNotMatch(rows[0].text, /已创建待办任务|已直派/, "a skip is never shown as a success");
-      assert.match(rows[2].text, /已创建待办任务 · 没有直派记录/);
-      assert.match(rows[3].text, /交回 Leader 安排/); assert.match(rows[3].text, /POLICY_PAUSED/); assert.doesNotMatch(rows[3].text, /已直派到队伍/, "fell_back is not shown as dispatched");
-      assert.match(rows[4].text, /已直派到队伍/); assert.match(rows[4].text, /放进队伍不等于已开始/);
+      assert.equal(rows.length, 6, "all six triggers, newest first");
+      // Newest first: day 17 fell back (no session available), day 16 skipped, 15 skipped, 14 generated (no log row), 13 fell back, 12 dispatched.
+      assert.deepEqual(rows.map(row => row.state), ["fell_back", "skipped", "skipped", "created", "fell_back", "dispatched"]);
+      // A real "no session can take it" reason is in words in the main view, with the code beside it; never "未收录".
+      assert.match(rows[0].text, /恢复门还没打开/); assert.match(rows[0].text, /NOT_AVAILABLE:RECOVERY_GATE_CLOSED/); assert.doesNotMatch(rows[0].text, /未收录/);
+      assert.match(rows[1].text, /已跳过，没有生成任务/); assert.match(rows[1].text, /上一次生成的任务还没关闭/); assert.match(rows[1].text, /PREVIOUS_STILL_OPEN/);
+      assert.doesNotMatch(rows[1].text, /已创建待办任务|已直派/, "a skip is never shown as a success");
+      assert.match(rows[3].text, /已创建待办任务 · 没有直派记录/);
+      assert.match(rows[4].text, /交回 Leader 安排/); assert.match(rows[4].text, /POLICY_PAUSED/); assert.doesNotMatch(rows[4].text, /已直派到队伍/, "fell_back is not shown as dispatched");
+      assert.match(rows[5].text, /已直派到队伍/); assert.match(rows[5].text, /放进队伍不等于已开始/);
       const links = await card.locator("[data-trigger-list] li a").evaluateAll(items => items.map(item => ({ text: item.textContent, href: item.getAttribute("href") })));
       assert.ok(links.some(link => link.text === "仍未关闭的上一个任务" && link.href!.includes(`/tasks/${taskOpen}`)), "a skip links the open Task it waited for");
       assert.ok(links.some(link => link.text === "阅读此任务" && link.href!.includes(`/tasks/${taskDispatched}`)));
@@ -131,7 +134,7 @@ test("schedule triggers: five samples, dispatch facts, unknown on a failed read,
     const failed = await open(390, 844, directId, "fail");
     await failed.locator("[data-dispatch-facts]").getByText(/当前方式未知，不推断为交 Leader/).waitFor();
     await failed.getByText(/派发记录本次没有读到/).waitFor();
-    assert.equal(await failed.locator("[data-trigger-list] li").count(), 5);
+    assert.equal(await failed.locator("[data-trigger-list] li").count(), 6);
     assert.doesNotMatch(await failed.locator("[data-trigger-list]").innerText(), /已直派到队伍|交回 Leader/);
     if (shots) await failed.screenshot({ path: `${shots}/schedule-dispatch-390-unknown.png`, fullPage: true });
     await failed.close();

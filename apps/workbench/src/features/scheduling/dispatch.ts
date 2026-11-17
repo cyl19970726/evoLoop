@@ -23,14 +23,25 @@ const reasons: Record<string, string> = {
   NO_AVAILABLE_SESSION: "名单里没有能接收的会话，交给 Leader",
   BUSINESS_IDENTITY_UNBOUND: "名单里的会话没有绑定业务身份，交给 Leader",
 };
-/** A dispatch reason code in words; a code the page does not know says so and keeps the original. */
+// Reasons a direct dispatch could not go to a line (apps/coordinator/src/scheduling/direct-dispatch.ts `choose`): a fixed code, or `PREFIX:DETAIL`.
+const unavailable: Record<string, string> = {
+  SESSION_NOT_READY: "名单里的会话还没就绪", RECOVERY_GATE_CLOSED: "名单里的会话正在恢复，恢复门还没打开",
+  EXECUTION_PROFILE_UNAVAILABLE: "名单里的会话的执行配置不可用", HEAD_SUSPENDED: "名单里的会话队头的项被挂起",
+  CONTROLLER_SESSION: "名单里的会话就是负责统筹的会话，不能接自己排的活",
+};
+reasons.DIRECT_LIST_EMPTY = "直派名单是空的，没有可接收的会话，交给 Leader";
+/** A dispatch reason code in words; a code the page does not know says so and names it right there. */
 export function dispatchReasonText(code: string): string {
   if (!code) return "";
   if (reasons[code]) return reasons[code];
   if (code.startsWith("APPEND_")) return `加入队伍被拒绝（${code.slice(7)}），交给 Leader`;
-  return "原因代码页面未收录，原文见完整标识";
+  const colon = code.indexOf(":"), prefix = colon < 0 ? "" : code.slice(0, colon), detail = colon < 0 ? "" : code.slice(colon + 1);
+  if (prefix === "NOT_AVAILABLE") return `${unavailable[detail] ?? `名单里的会话暂不可用（${detail}）`}，交给 Leader`;
+  if (prefix === "NOT_AUTHORIZED") return `名单里的会话没有被授权接直派（${detail}），交给 Leader`;
+  if (prefix === "RECIPIENT_UNAVAILABLE") return `名单里的会话不能接收消息（${detail}），交给 Leader`;
+  return `原因代码页面未收录：${code}`;
 }
-export const dispatchReasonKnown = (code: string): boolean => !code || !!reasons[code] || code.startsWith("APPEND_");
+export const dispatchReasonKnown = (code: string): boolean => !code || dispatchReasonText(code) !== `原因代码页面未收录：${code}`;
 
 export const policyStateLabel: Record<ScheduleDispatchPolicy["state"], string> = {
   active: "生效中", paused: "已暂停", revoked: "已撤销", circuit_open: "已熔断（运行连续失败后退回交 Leader）",
