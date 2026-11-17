@@ -45,7 +45,7 @@ export interface DirectInputServiceDeps {
   /** Existing owned binding for read-only reconciliation; a revoked sender grant cannot erase prior evidence. */
   bindingFor(projectId:string,sessionId:string):Promise<RuntimeBinding>;
   /** Who is sending and its class, for the opening line of an idle start. Absent: named with an unrecorded class, never as the user. */
-  senderClass?(principal:Principal,projectId:string):Promise<SenderClass>;
+  senderClass?(principal:Principal,projectId:string,sessionId?:string):Promise<SenderClass>;
   /** Records the requested effort beside the one the Thread reported for the started Turn. Best effort. */
   observeEffort?(projectId:string,sessionId:string,inputId:string,turn:RuntimeTurn,requested:string|null):Promise<void>;
 }
@@ -177,7 +177,7 @@ export class DirectInputService {
         return publicDirectInput(await this.deps.store.accept(projectId,record.inputId,receipt.turnId,receipt.itemId));
       }
       // The opening line names who is sending (this is a person at the workbench or an agent on the CLI); only the user's own says so.
-      const sender=await this.deps.senderClass?.(principal,projectId)??{kind:"unknown" as const,actorId:principal.actorId};
+      const sender=await this.deps.senderClass?.(principal,projectId,record.sessionId)??{kind:"unknown" as const,actorId:principal.actorId};
       const input=`${marker(record.operationId)}\n${senderPreamble(sender)} A reply does not itself record Task delivery or acceptance.\n${record.content}`;
       const turn=await runtime.startConversationTurn(binding,input,record.inputId);
       const accepted=publicDirectInput(await this.deps.store.accept(projectId,record.inputId,turn.id,null));

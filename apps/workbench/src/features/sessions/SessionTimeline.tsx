@@ -3,6 +3,7 @@
 // (failures and the running step stay in sight), a finished turn closes with one line of what it produced, and a live
 // status line ends the flow while a turn runs. The composer stays at the bottom. Reading position, history paging
 // and the long poll come from useSessionTimeline and are kept as they were.
+import { senderClassLabel } from "./senderClassPresentation";
 import { nativeFailureLine } from "./nativeFailurePresentation";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowDown, FileText, Info, LoaderCircle, MessageCircle, Users } from "lucide-react";
@@ -279,7 +280,7 @@ function MessageInspector({ id, context, snapshot, onApplied }: { id: string; co
   return <div className="flex min-w-0 flex-col gap-3 text-small">
     {read.isError && <Notice tone="error">重新读取失败：{errorText(read.error)}；下面是上次读回，当前待核对。</Notice>}
     <h3 className="text-label font-semibold">消息详情 · {messageStates[message.state]}</h3>
-    <p className="text-caption text-muted-foreground">发送于 {date(message.createdAt)}{message.senderActorId === context.principal.actorId ? " · 由我发送" : ""}</p>
+    <p className="text-caption text-muted-foreground">发送于 {date(message.createdAt)}{message.senderActorId === context.principal.actorId ? " · 由我发送" : ""}{senderClassLabel(message.senderClass) ? ` · 发送者：${senderClassLabel(message.senderClass)}` : ""}</p>
     <div className={replyProse}><MarkdownBody source={message.content} identity={`message-detail-${message.id}`} projectId={context.projectId} topHeading={4} /></div>
     {processing?.response && <><h3 className="text-label font-semibold">回复</h3><div className={replyProse}><MarkdownBody source={processing.response} identity={`message-response-${processing.id}`} projectId={context.projectId} topHeading={4} /></div></>}
     {processing?.failure && <Notice tone="error">{nativeFailureLine(processing.failureCategory)}处理失败：{processing.failure}</Notice>}
@@ -288,7 +289,7 @@ function MessageInspector({ id, context, snapshot, onApplied }: { id: string; co
     {canRead && <ActionForm context={{ ...context, draftScope: `message-read:${message.id}` }} requiredPermissions={["session"]} title="记录本人已读原消息" fields={[{ name: "evidence", label: "阅读证据", kind: "textarea" }]} build={v => ({ type: "session.message.receipt", messageId: message.id, stage: "read", evidence: v.evidence })} onApplied={applied} />}
     {(["queued", "manual_pending"].includes(message.state)) && message.senderActorId === context.principal.actorId && <ActionForm context={{ ...context, draftScope: `message-cancel:${message.id}`, draftBaseline: String(message.version) }} requiredPermissions={["session"]} title="取消待处理消息" fields={[{ name: "reason", label: "取消原因", kind: "textarea" }]} build={v => ({ type: "session.message.cancel", messageId: message.id, expectedVersion: message.version, reason: v.reason })} onApplied={applied} />}
     {message.state === "manual_pending" && <p className="text-caption text-muted-foreground">外部消息仍待人工转交；保存不代表已送达或已读。</p>}
-    <FullIdentifiers rows={[{ label: "消息 ID", value: message.id }, { label: "发送者", value: message.senderActorId }, { label: "处理记录 ID", value: processing?.id }, { label: "原轮次 ID", value: processing?.nativeTurnId }]} />
+    <FullIdentifiers rows={[{ label: "消息 ID", value: message.id }, { label: "发送者", value: message.senderActorId }, { label: "发送者类别", value: senderClassLabel(message.senderClass) ?? undefined }, { label: "处理记录 ID", value: processing?.id }, { label: "原轮次 ID", value: processing?.nativeTurnId }]} />
   </div>;
 }
 

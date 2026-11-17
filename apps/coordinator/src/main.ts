@@ -107,7 +107,7 @@ import { SessionTimelineService } from "./session-timeline/index.js";
 import { OrdinaryRunSubmissionService, leaseCheckedUnitOfWork } from "./ordinary-run-submission/service.js";
 import { createOrdinaryRunSealer } from "./ordinary-run-submission/seal.js";
 import { OrdinaryRunSealPump } from "./ordinary-run-submission/pump.js";
-import { resolveSenderClass, type SenderClass } from "./session-messages/sender.js";
+import { createSenderClassOf, senderFromMessage, type SenderClass, type SenderFrom } from "./session-messages/sender.js";
 import { resolveLineRecipient } from "./session-line/recipient.js";
 import { createSessionUsability } from "./runtime/session-usability.js";
 import { acceptanceCapabilityProblemsFor } from "./acceptance-relay/capability.js";
@@ -784,16 +784,18 @@ const opsAlertPump = new OpsAlertPump({ pool, canWrite: lease.canWrite,
 const businessBeforeMessage = sessionMessageCanStart({ workflow: service, service: messageService, principals: currentIdentity,
   onError: () => console.error("Task answer continuation requires review; inspect the saved queue and message reason.") });
 /** Who sent a message, as the receiving Session is told (sender.ts resolveSenderClass): from the identity file's stated senderClass, never from a Role. */
-const senderClassOf = async (projectId: string, actorId: string): Promise<SenderClass> => {
+const senderClassResolver = async (): Promise<(from: SenderFrom) => SenderClass> => {
   const current = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
-  return resolveSenderClass(await currentIdentity(), current.leaderResultNotices?.targets.find(t => t.projectId === projectId), projectId, actorId);
+  return createSenderClassOf({ identities: await currentIdentity(), notices: projectId => current.leaderResultNotices?.targets.find(t => t.projectId === projectId),
+    grants: current.sessionMessages?.enabled ? current.sessionMessages.grants : [] });
 };
+const senderClassOf = async (from: SenderFrom): Promise<SenderClass> => (await senderClassResolver())(from);
 const refusalSink = createRefusalSink();
 const messagePump = runner ? new SessionMessagePump({ service: messageService, runtime: () => runner.nativeAdapter(),
   lock: sessionSteerLock,
   resumeRefusal: { ...defaultResumeRefusalPolicy, record: refusal => refusalSink(refusal),
     remedy: async refusal => (await runner.replaceProvider("codex", () => codexWorkInFlight(pool, refusal.messageId))) ? "replaced" : "skipped" },
-  senderClass: message => senderClassOf(message.projectId, message.senderActorId),
+  senderClass: message => senderClassOf(senderFromMessage(message)),
   roleContext: async message => {
     if(message.target.kind!=="owned")return null;
     const session=await messageService.session(message.projectId,message.target.sessionId);
@@ -927,7 +929,7 @@ const sessionAttentionPump = new SessionAttentionPump({ store: pgSessionAttentio
     const found: string[] = [];
     for (const row of live) {
       const recipient = await lineRecipient(projectId, row.session_id);
-      if (recipient && typeof recipient === "string" && (await senderClassOf(projectId, recipient)).kind === "requirements") found.push(row.session_id);
+      if (recipient && typeof recipient === "string" && (await senderClassOf({ projectId, actorId: recipient })).kind === "requirements") found.push(row.session_id);
     }
     return found;
   },
@@ -993,7 +995,7 @@ const directInput = runner && integrations.runtime?.enabled ? createDirectInputS
   canWrite: () => lease.canWrite() && runner.nativeStartsAvailable(),
   configuration: () => loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE),
   holdNewStarts: () => drain.holdNewStarts(),
-  senderClass: (principal, projectId) => senderClassOf(projectId, principal.actorId),
+  senderClass: (principal, projectId, sessionId) => senderClassOf({ projectId, actorId: principal.actorId, origin: principal.origin ?? null, sessionId: sessionId ?? null }),
   currentProjectWriter, currentSessionExecutionAuthority,
   allowedCwd: async (projectId,cwd) => {
     const current = await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
@@ -1067,7 +1069,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
   },
   sessionWork, sessionTimeline, ...(directInput ? {directInput} : {}),
   allocationRelations: new AllocationRelationsService({ uow }),
-  sessionMessages: messageService, nativeInputs, nativeObservation,
+  sessionMessages: messageService, senderClassResolver, nativeInputs, nativeObservation,
   usage, usageBudget: async () => (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).runtime?.dailyBudget ?? null,
   contextBudget: async () => (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).runtime?.contextBudget ?? null,
   ...(runner ? {manualStop: {

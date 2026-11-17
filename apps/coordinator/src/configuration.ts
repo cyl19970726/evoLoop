@@ -110,7 +110,13 @@ const integrationSchema = z.strictObject({
        * a local identity (#219, Task 9ea06625).
        */
       senderKind: z.enum(["local", "hub"]).default("local"),
-    })).max(200).refine(values => new Set(values.map(g => `${g.projectId}:${g.sessionId}:${g.senderActorId}`)).size === values.length,
+      /**
+       * What a `hub` sender is, as the receiving Session is told in the opening line of the message (Task bedd0ef3): `user` is the user's own Hub account (the message is
+       * the user's request), `service` a Hub service identity that is not a person. Left out, the sender is "an identity that came through the Hub": never the user. It is
+       * only ever read for a message stored with the Hub origin, and only from this entry; nothing is inferred from the account's name or kind. A `local` grant cannot carry it.
+       */
+      senderClass: z.enum(["user", "service"]).optional(),
+    }).refine(grant => grant.senderClass === undefined || grant.senderKind === "hub", "senderClass can only be stated on a grant whose senderKind is hub")).max(200).refine(values => new Set(values.map(g => `${g.projectId}:${g.sessionId}:${g.senderActorId}`)).size === values.length,
       "Ordinary conversation grants must be unique per project, recipient Session and sender"),
     /** Separate from full-access ordinary grants; each entry names one reviewed conversation route. */
     connectorReceivers: z.array(z.strictObject({projectId:z.uuid(),bindingId:z.uuid(),sessionId:z.uuid(),

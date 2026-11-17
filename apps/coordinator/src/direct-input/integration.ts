@@ -83,7 +83,7 @@ export function createDirectInputService(deps:{
    *  saved as an ordinary queued one); adding to a Turn already running is unaffected. */
   holdNewStarts?():Promise<boolean>;
   /** Who is sending, for the opening line of an idle start. */
-  senderClass?(principal:Principal,projectId:string):Promise<SenderClass>;
+  senderClass?(principal:Principal,projectId:string,sessionId?:string):Promise<SenderClass>;
 }):DirectInputService{
   const {session,admission}=createDirectInputAdmission(deps);
   return new DirectInputService({

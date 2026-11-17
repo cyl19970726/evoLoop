@@ -117,6 +117,8 @@ export async function buildServer(options: {
   sessionWork?: SessionObservationService;
   allocationRelations?: AllocationRelationsService;
   sessionMessages?: SessionMessageService;
+  /** Who sent a message, as the receiving Session is told: the page shows the same class (Task bedd0ef3). */
+  senderClassResolver?: () => Promise<(from: import("./session-messages/sender.js").SenderFrom) => import("./session-messages/sender.js").SenderClass>;
   directInput?: DirectInputService;
   connectorRoutes?: ConnectorRouteReader;
   connectorDeliveries?: ConnectorDeliveryReader;
@@ -695,6 +697,7 @@ export async function buildServer(options: {
   }, (projectId, sessions) => dispatchOfSessions(options.sessionUsability, projectId, sessions));
   if (options.sessionWork && options.sessionMessages) registerSessionMessageRoutes(app, {
     workflow: options.service, observation: options.sessionWork, messages: options.sessionMessages,
+    ...(options.senderClassResolver ? { senderClassResolver: options.senderClassResolver } : {}),
   });
   if (options.directInput) registerDirectInputRoutes(app, options.directInput);
   if (options.connectorRoutes) registerConnectorRouteReads(app, options.service, options.connectorRoutes,
