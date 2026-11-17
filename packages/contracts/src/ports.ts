@@ -79,8 +79,10 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
   listTaskJudgements(taskId: string): Promise<TaskJudgement[]>;
   getDelivery(id: string): Promise<Delivery | null>;
   listDeliveries(taskId: string): Promise<Delivery[]>;
-  /** The explicit mark that a delivery's acceptance precondition is met; null while nobody has stated it. */
-  getPreconditionMark(deliveryId: string): Promise<{ markId: string; actorId: string; evidence: string; createdAt: string } | null>;
+  /** The explicit mark that a delivery's acceptance precondition is met; null while nobody has stated it, or after it was withdrawn. */
+  getPreconditionMark(deliveryId: string): Promise<{ markId: string; actorId: string; evidence: string; createdAt: string; satisfiedAt: string | null } | null>;
+  /** The newest mark of the delivery, withdrawn or not, so a new one can follow a withdrawn one (generation counts them). */
+  latestPreconditionMark(deliveryId: string): Promise<{ markId: string; generation: number; voided: boolean } | null>;
   listObservations(taskId: string): Promise<ConsumerObservation[]>;
   listTaskClosures(taskId: string): Promise<TaskClosure[]>;
   getProject(): Promise<Project | null>;
@@ -180,7 +182,8 @@ export interface Transaction extends Reader, Omit<RoleTransaction, "getTask" | "
   insertTaskProposal(proposal: TaskProposal): Promise<void>;
   insertTaskJudgement(judgement: TaskJudgement): Promise<void>;
   insertDelivery(delivery: Delivery): Promise<void>;
-  insertPreconditionMark(mark: { projectId: string; markId: string; taskId: string; deliveryId: string; actorId: string; evidence: string; createdAt: string }): Promise<void>;
+  insertPreconditionMark(mark: { projectId: string; markId: string; taskId: string; deliveryId: string; actorId: string; evidence: string; satisfiedAt: string; generation: number; createdAt: string }): Promise<void>;
+  insertPreconditionVoid(entry: { projectId: string; markId: string; taskId: string; deliveryId: string; actorId: string; reason: string; createdAt: string }): Promise<void>;
   insertObservation(observation: ConsumerObservation): Promise<void>;
   insertTaskClosure(closure: TaskClosure): Promise<void>;
   savepoint<T>(action: () => Promise<T>): Promise<T>;
