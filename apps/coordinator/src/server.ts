@@ -1,4 +1,5 @@
 import { registerWorkBoardRoutes, type WorkBoardRouteDeps } from "./work-board/routes.js";
+import { clientRenderErrorSchema } from "./client-errors/index.js";
 import { registerReferenceRoutes, type ReferenceRouteOptions } from "./references/routes.js";
 import Fastify from "fastify";
 import staticPlugin from "@fastify/static";
@@ -176,6 +177,8 @@ export async function buildServer(options: {
   workIndex?: LeaderWorkIndexReader;
   /** The work board and the scheduling event stream (DEC-045 Q2). */
   workBoard?: Omit<WorkBoardRouteDeps, "service">;
+  /** Pages the workbench could not render, posted by its page boundary and listed back (Task c3a8e5d1). */
+  clientErrors?: import("./client-errors/index.js").ClientErrorStore;
   /** Where each repeated-cause attention item went (delivered, blocked with its reason, skipped for lack of a requirements Session). */
   sessionAttention?: (projectId: string) => Promise<unknown>;
   /** Whether each Session can start work now: shown on `list sessions`, the Session directory and snapshot, and the work board. Without it nothing is judged and nothing claims usable. */
@@ -600,6 +603,21 @@ export async function buildServer(options: {
   });
   app.get("/api/projects/:projectId/runtime/provider-holds", async request =>
     options.service.listProviderHolds(who(request.principal), params(request.params).projectId!));
+  if (options.clientErrors) {
+    // Any caller who may read the project may leave and read these: the page that broke may be a read-only viewer's. The body is strict, bounded and redacted before it is stored.
+    app.post("/api/projects/:projectId/client-errors", async request => {
+      const projectId = params(request.params).projectId!;
+      await options.service.getProject(who(request.principal), projectId);
+      const result = await options.clientErrors!.record(projectId, who(request.principal).actorId, clientRenderErrorSchema.parse(request.body));
+      return { id: result.record.id, recordedAt: result.record.recordedAt, duplicate: result.duplicate };
+    });
+    app.get("/api/projects/:projectId/client-errors", async request => {
+      const projectId = params(request.params).projectId!;
+      await options.service.getProject(who(request.principal), projectId);
+      const limit = z.strictObject({ limit: z.coerce.number().int().min(1).max(50).default(20) }).parse(request.query).limit;
+      return { items: await options.clientErrors!.list(projectId, limit) };
+    });
+  }
   if (options.sessionAttention) app.get("/api/projects/:projectId/session-attention", async request => {
     const projectId = params(request.params).projectId!;
     await options.service.getProject(who(request.principal), projectId);

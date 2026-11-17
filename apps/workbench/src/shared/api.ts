@@ -150,6 +150,10 @@ export function api(token = "", timeoutMs = 15000) {
     goalRevisions: (p: string, id: string) => call<GoalRevision[]>(`${projectPath(p)}/goals/${key(id)}/revisions`),
     stageRevisions: (p: string, id: string) => call<StageRevision[]>(`${projectPath(p)}/stages/${key(id)}/revisions`),
     stages: (p: string) => call<Stage[]>(`${projectPath(p)}/stages`),
+    /** What the page boundary caught, kept by the service so it can be read back without the console (Task c3a8e5d1). Bounded and redacted there. */
+    reportClientError: (p: string, body: { route: string; message: string; componentStack: string; commit: string | null; occurredAt: string }) =>
+      call<{ id: string; recordedAt: string; duplicate: boolean }>(`${projectPath(p)}/client-errors`, { method: "POST", body: JSON.stringify(body) }),
+    clientErrors: (p: string, limit = 20) => call<{ items: Array<{ id: string; actorId: string; route: string; message: string; componentStack: string; commit: string | null; occurredAt: string; recordedAt: string }> }>(`${projectPath(p)}/client-errors?limit=${limit}`),
     /** The deployed version (public: no login): commit, build time and process start time. */
     version: (signal?: AbortSignal) => call<import("@evoloop/contracts/milestones").VersionInfo>("/api/version", { signal }),
     /** The roadmap phases with the status and date of the stage linked to each. */

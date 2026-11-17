@@ -3,6 +3,7 @@
 // Each check either returns a value the page can use, with what was missing named in `limitations`, or throws an ApiError the page already shows as a failed read while it
 // keeps the content it has. Nothing here makes up data.
 import type { SessionTimelinePage, WorkspaceLiveRead } from "@evoloop/contracts/session-timeline";
+import type { ObservedResource, SessionSnapshot } from "@evoloop/contracts/session-observation";
 import { ApiError } from "./api";
 
 const isObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
@@ -36,4 +37,32 @@ export function checkedTimelinePage(value: unknown): SessionTimelinePage {
   return { ...value, entries, pending, turns, live, limitations, capabilities,
     unsupportedKinds: Array.isArray(value.unsupportedKinds) ? value.unsupportedKinds : [],
     nextCursor: typeof value.nextCursor === "string" ? value.nextCursor : null, messagesCursor: typeof value.messagesCursor === "string" ? value.messagesCursor : null } as SessionTimelinePage;
+}
+
+const missingResource = (): ObservedResource => ({ value: null, unit: "", source: null, scope: "session", observedAt: null, interval: null, unavailableReason: "服务没有返回这一项" });
+const RESOURCES = ["configuredModel", "actualModel", "inputTokens", "outputTokens", "cost", "processMemory"] as const;
+
+/**
+ * A Session's snapshot (Task c3a8e5d1). Its lists and resource block are iterated and spread all over the page; one of them null or of the wrong type — what a partial answer or
+ * a proxy can give — used to take the whole page into the error boundary. Without a Session that carries its key there is nothing to show, so that is a failed read; a missing
+ * list is empty and a missing resource says it was not returned, and what was missing is named in `metadata.limitations` (`partial`) instead of being made up.
+ */
+export function checkedSessionSnapshot(value: unknown): SessionSnapshot {
+  if (!isObject(value) || !isObject(value.session) || typeof value.session.key !== "string" || !isObject(value.session.target))
+    throw new ApiError(0, "会话快照的响应不是预期的格式（没有这个会话），没有采用；已显示的内容保留，稍后会重读。");
+  const missing: string[] = [];
+  const list = <T>(name: string) => arrayOr<T>(value[name], name, missing);
+  const lists = { assignments: list("assignments"), roleTasks: list("roleTasks"), queue: list("queue"), results: list("results"), questions: list("questions"), activity: list("activity") };
+  const resources = isObject(value.resources) ? value.resources : (missing.push("resources"), {});
+  const checkedResources = Object.fromEntries(RESOURCES.map(name => [name, isObject(resources[name]) ? resources[name] : (isObject(value.resources) && missing.push(`resources.${name}`), missingResource())]));
+  const metadata = isObject(value.metadata) ? value.metadata : (missing.push("metadata"), {});
+  const limitations = Array.isArray(metadata.limitations) ? metadata.limitations.filter((item): item is string => typeof item === "string") : [];
+  if (missing.length) limitations.push(`会话快照缺少 ${missing.join("、")}，按空处理；这一页可能不完整。`);
+  return { ...value, ...lists,
+    nativeInputRequests: Array.isArray(value.nativeInputRequests) ? value.nativeInputRequests : [],
+    currentWork: isObject(value.currentWork) ? value.currentWork : null,
+    observationCursor: typeof value.observationCursor === "string" ? value.observationCursor : "",
+    resources: checkedResources,
+    metadata: { generatedAt: typeof metadata.generatedAt === "string" ? metadata.generatedAt : "", sourceObservedAt: typeof metadata.sourceObservedAt === "string" ? metadata.sourceObservedAt : null,
+      partial: metadata.partial === true || missing.length > 0, limitations } } as unknown as SessionSnapshot;
 }

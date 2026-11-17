@@ -90,6 +90,7 @@ import { pgLeaderPacketPorts } from "./leader-results/packet-ports.js";
 import { readDecisionsForMe } from "@evoloop/adapter-postgres/decisions-for-me";
 import { ResidentQueuePump } from "./resident-queue/pump.js";
 import { SessionLinePump } from "./session-line/pump.js";
+import { createClientErrorStore } from "./client-errors/index.js";
 import { OpsAlertPump } from "./ops-alerts/pump.js";
 import type { AlertOutletConfig } from "./ops-alerts/outlet.js";
 import { SessionObservationService } from "@evoloop/core/session-observation";
@@ -1036,6 +1037,7 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
   workIndex: createLeaderWorkIndexReader(pool),
   workBoard: { reads: workBoardReads, hub: schedEventHub, usability: sessionUsability }, sessionUsability,
   sessionAttention: projectId => listSessionAttention(pool as never, projectId),
+  clientErrors: createClientErrorStore(pool),
   decisionsForMe: (projectId, actorId, canDecide) => readDecisionsForMe(pool, projectId, actorId, canDecide),
   leaderNotices: {
     packet: async (projectId, packetId) => {
