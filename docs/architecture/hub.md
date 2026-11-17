@@ -263,6 +263,8 @@ coordinator 收到带 `x-evoloop-hub-identity` 头的请求时，**只**按身�
 
 服务身份的权限：服务身份没有账号成员行，所以创建时（`POST /api/admin/service-identities`）可以带 `permissions`（`task`/`document`/`session`）、`sessionIds` 与 `decisions`，按项目范围下发；不带就是只读，决定类只在明确 `decisions:true` 时才有（DEC-048）。
 
+**机器答复的大小（Task b5fe71c8）。** 机器把转发的答复以 base64 放进一个小 JSON 帧里 POST 到 `/api/machine/respond`，所以请求体比答复本身大约 4/3。这条路由有自己的 `bodyLimit`，由 `HUB_MAX_RESPONSE_BYTES`（默认 8 MB，Hub 转发的最大答复）换算：`ceil(最大答复/3)×4` 加 8 KB 的帧余量（`respondBodyLimit`）；其他路由仍是 `HUB_BODY_LIMIT_BYTES`（默认 64 KB），不因答复变大而调大。连接器自己也只转发不超过 8 MB 的答复，超过就回一个小的 502 `ANSWER_TOO_LARGE`。Hub 拒收机器的答复（非 2xx）时，连接器记一行日志（状态码与字节数，不含正文），并为同一个请求补发一个小的 502 `ANSWER_REJECTED`，让 Hub 立刻失败，不等转发超时；Hub 说请求已不在等待（404）或不认机器的签名（401/403）时不补发。coordinator 拒绝转发身份时，调用方只听到“转发身份未被接受。”，原因写在 coordinator 的 stderr：`<时间> Hub identity rejected: <原因>`（`apps/coordinator/src/hub/log.ts`）；连接器看到 coordinator 回 401 时也记一行（不含原因，原因在 coordinator 日志里）。coordinator 重启会使连接器重连，重启前 Hub 已签的身份会因“签发早于本 coordinator 启动”被拒（见 12.4），重启窗口里可以看到几次 401 后自行恢复。
+
 ### 12.5 机器上的 Agent 团队与目录
 
 机器上的 Agent 团队继续用本机令牌文件里的身份，走 `127.0.0.1`，**不经过 Hub**：coordinator 的执行、Run、队列、泵都不读 Hub，Hub 停止、断网或机器被移除时它们照常运行，只是暂时不能远程查看。机器加入后 coordinator 的监听地址不变（仍只听 `127.0.0.1`），没有新增任何监听端口。
