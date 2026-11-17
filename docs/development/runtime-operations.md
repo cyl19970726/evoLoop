@@ -110,6 +110,23 @@ Leader 读到交付后，按 Task 声明的验收方式，用 `acceptance.assign
 
 `work board`、`list sessions`、Session 目录（`dispatch`）、容量和工作台状态行里写“不可用”的 Session 不要派活，原因和补法写在旁边：没有绑定业务身份或身份不是项目写入者（给这个 Session 配 `runtime.materialCli` 精确绑定，同 Role 只有一个 Session 时才可由 `residentQueue.roleActors` 代替，身份须是项目写入者；两处每次使用重读，不需要重启）、没有原生线程记录或状态不是 ready（恢复或重建 Session）、`USABILITY_UNKNOWN`（判断本身出错：读私有配置或身份文件失败，查服务日志；没有结果前一律按不可用处理）。向它预留 Run 得到 `SESSION_UNUSABLE` 或 `SESSION_USABILITY_UNKNOWN`，没有 Run 产生，对每个需要执行的 Task 都一样。补齐后下次读取即恢复。同一 Session 连续三次以同一原因没能开工（预检失败的 Run 和被拒的预留算同一序列）时，Leader 收到一条 `session_repeated_failure`（立即级），需求 Session 也各收到一条消息；项目里没有受管的需求 Session（正式项目常见）时，不会丢：`get /api/projects/PROJECT/session-attention` 里该项带 `skipped: NO_REQUIREMENTS_SESSION`，投递失败的带原因，Leader 的通知照常；需求 Session 是身份文件里 `senderClass` 为 `requirements` 的身份所对应的 Session，消息用 Leader 通知的发送者发出，所以该项目要配置了 `leaderResultNotices` 的发送者，没配置时投递行记 `NOTICE_SENDER_UNAVAILABLE` 并每轮重试。处理原因后不需要手动清除。**判断不到的**：原生线程在运行时一侧不可用而数据库里仍有线程记录的情形，数据库看不出来，这类 Session 仍可能显示可用，直到 Run 失败；连续三次同因失败的通知会兜住它。
 
+## Leader 停摆时的代派预案（草稿）
+
+**状态：草稿。** 只在自建隔离实例上用真实 CLI 实跑过（脚本 `tests/manual/leader-down-dispatch.ts`，替身与未走的部分见下），没有在正式环境做过，也不是已采纳的分工；分工文字由需求 Session 在使用者取舍后决定。
+
+- **触发。** Leader 的 Session 因提供方暂停（`work board` 里 Leader 那一行 `held`）或别的原因超过 30 分钟没有回合，且需要派的 Task 只需要没被暂停的提供方（例如 Claude）。
+- **范围。** 已就绪（`todo`、不在任何队伍里、没有分派）、负责 Role 在没被暂停的提供方上有可用 Session 的 Task。暂停只按目标 Session 的提供方判断：Codex 暂停时，追加给 Claude Session 的队伍项照常开始，追加给 Codex Session 的则等在确认一步、不产生 Run（自建实例读回）。
+- **身份。** 需要读、写、**审阅**三项权限的非 Leader 身份；只有读写的身份 `line.append` 与 `acceptance.assign` 都得到 `FORBIDDEN`（读回）。队伍的推进（确认、预留、开始）由协调服务的队伍泵做，不需要 Leader 的模型回合；泵要能解析目标 Session 的业务身份（该 Session 自己的 `runtime.materialCli` 条目）。
+- **步骤与命令。**
+  1. `work board --project P --brief`：确认目标 Session 没被暂停、不是“不可用”，Task 在“已就绪、没在队伍里”里。
+  2. `command run`：`{"type":"line.append","sessionId":S,"taskId":T,"expectedTaskVersion":V,"reason":"Leader 停摆，由需求 Session 代派：<原因与时间>"}`。读回 `applied`。
+  3. 等目标 Session 做执行确认（它自己的回合，`task.assignment.acknowledge` verdict=confirm）；确认后泵开出 Run，队伍项为 `started`。
+  4. 交付后安排验收：**只发一条普通消息不够**——它让验收 Session 知道有活，但验收接力记录为空，之后没有可链接的安排；用 `request acceptance.assign --project P --id T --file BODY.json`（`mode: session`，`sessionId` 是验收 Session，`senderActorId` 是自己），读回接力 `linked`、消息 `queued`；验收者用自己的身份读 `acceptance-relay/mine?direct=1` 能看到这一项。
+  5. 记录：`reason` 里写明代派与时间；事后在需求 Session 的过程文档里留一条。
+- **Leader 恢复后对账。** 额度释放后 Leader 的看板不会把该 Task 当作“已就绪、没在队伍里”再提；它的 `task.start` 因 `QUEUED_IN_SESSION_LINE` 被拒。对当前修订已交付的 Task，Leader（或任何有审阅权限的身份）再 `line.append`（给原 Session 或同一职责的另一个 Session）、`task.assignment.set`、`runtime.run.reserve`，在当前 main（含 1314c6f5 守卫）上**都返回 `TASK_ALREADY_DELIVERED`**，Run 数、assignment 和队伍项都不变（自建实例读回，原文返回见 Task b6afe4a5 的复跑报告）。要重做同一个 Task，只能由声明的消费者对最新交付记 `notUsed`／`failed`，服务端只为原交付登记一条 `source=rework` 的内部队伍项，原 Session 确认后开出一个新 Run（并派生新的 Task 修订），新交付登记后外部三入口对新修订同样被拒。Leader 的“新 Task 待分诊”类通知可能仍在待处理，它的通知泵在这个实例里没有运行，是否会被判过期没有验证。
+- **没验证的部分。** 原生步骤（开始派发、绑定 Turn、记录完成）由脚本替身；交付行直接写入（真实交付要经 Run 的签名提交）；验收 Session 对消息的处理与已读回执、观察链接与 `task.close` 没有走；没有在正式环境做任何一步。
+- **产品守卫已有。** 原先的缺口（对已交付 Task 再 `line.append` 会开出第二个 Run）已由 1314c6f5 的 `TASK_ALREADY_DELIVERED` 守卫关闭，见上一条。
+
 ## 2. 即时输入
 
 即时输入让用户从工作台发给 owned Session 的消息立即进入执行：Session 正在跑时补入当前 Turn，空闲时直接在原会话开一个新 Turn。设计和规则见 [Session 运行时 §3](../architecture/session-runtime.md#3-即时输入执行中收到的消息怎样处理)。
