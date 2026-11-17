@@ -38,7 +38,7 @@ export async function applySessionMessage(tx:Transaction,principal:Principal,com
       if(!sameTarget(prior.target,command.target))throw new DomainError('REPLY_TARGET_MISMATCH','reply target has another recipient');
     }
     const item:SessionMessageRecord={projectId:command.projectId,id:command.messageId,operationId:command.operationId,
-      target:command.target,senderActorId:principal.actorId,content:command.content,context:command.context??null,
+      target:command.target,senderActorId:principal.actorId,...(principal.origin==='hub'?{senderOrigin:'hub' as const}:{}),content:command.content,context:command.context??null,
       replyToMessageId:command.replyToMessageId??null,state:command.target.kind==='owned'?'queued':'manual_pending',
       version:1,blockedReason:null,readReceipt:null,createdAt:now,updatedAt:now};
     await store.insertSessionMessage(item);
