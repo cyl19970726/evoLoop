@@ -40,6 +40,8 @@ export type SessionMessageState = "queued" | "processing" | "replied" | "complet
 export type SessionMessageResponseKind = "native" | "bounded_unread";
 export interface SessionMessageRecord {
   projectId: string; id: string; operationId: string; target: SessionTarget; senderActorId: string;
+  /** Where the sender's principal came from when the message was posted (`Principal.origin`): `hub` only for an identity the Hub signed; absent for this machine's own identities and for every message stored before this field existed. Fixed at posting, never inferred from the actor ID (Task db48f6cd). */
+  senderOrigin?: "hub";
   content: string; context: { taskId: string; taskRevisionId: string } | null;
   replyToMessageId: string | null; state: SessionMessageState; version: number;
   /** Set when a Run stop made this queued message superseded; it is not delivered until its sender confirms it (or cancels it). */

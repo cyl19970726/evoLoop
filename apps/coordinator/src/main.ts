@@ -65,7 +65,7 @@ import { activeTaskTimingGrants, drivenRuntimeProviders, hasExactEngineeringActi
 import { OpenVikingKnowledgeRepository } from "@evoloop/adapter-wiki-openviking";
 import { DomainError } from "@evoloop/contracts/ports";
 import { DrainControl, isInstanceMaintainer } from "./drain/service.js";
-import { ordinaryMessageGrantProblem } from "./session-messages/send-authority.js";
+import { findDispatchGrant, ordinaryMessageGrantProblem } from "./session-messages/send-authority.js";
 import { createSenderWriter } from "./session-messages/sender-writer.js";
 import type { Principal } from "@evoloop/contracts";
 import { LocalBlobStore } from "@evoloop/adapter-local-blobs";
@@ -649,7 +649,9 @@ const messageService = new SessionMessageService({ uow, clock, ids,
   usageDay: at => usageDay(at, configuredUsageTimeZone), grantFor: async (message, session) => {
   const configured=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);
   const current = configured.sessionMessages;
-  if (!current?.enabled || !await currentProjectWriter(message.projectId, message.senderActorId)) return null;
+  // The sender is judged the way it was at posting: by the origin stored with the message (a Hub-signed sender only through an explicit `senderKind:"hub"` grant, a
+  // local identity only through the identity file), the same test the send check and the work snapshot use (Task db48f6cd). Nothing is inferred from the actor ID.
+  if (!current?.enabled || !await currentSenderWriter(message.projectId, message.senderActorId, message.senderOrigin ?? undefined)) return null;
   const link=await connectorLinks.getByMessageId(message.projectId,message.id);
   if (link) {
     const route=await connectorRoutes.get(message.projectId,link.bindingId);
@@ -670,8 +672,7 @@ const messageService = new SessionMessageService({ uow, clock, ids,
       epoch:link.routeEpoch,policyHash:link.routePolicyHash}};
   }
   if (!await currentSessionExecutionAuthority(session)) return null;
-  const grant = current.grants.find(g => g.enabled && g.projectId === message.projectId && g.sessionId === session.id &&
-    g.senderActorId === message.senderActorId && g.receiverRoleId === session.roleId && g.cwd === session.cwd);
+  const grant = findDispatchGrant(current, message, session);
   if (!grant || !await currentProjectWriter(message.projectId, grant.receiverActorId)) return null;
   try { return await realpath(session.cwd) === session.cwd ? grant : null; } catch { return null; }
 } });

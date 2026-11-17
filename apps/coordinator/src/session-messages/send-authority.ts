@@ -39,3 +39,10 @@ async function check({ projectId, senderActorId, senderOrigin, session, sessionM
     return fail(`没有发送这条消息的授权：授权里的接收方身份 ${exact.receiverActorId} 在身份文件里对本项目没有 read 与 write。消息没有保存。`);
   return null;
 }
+
+/** The dispatch-time half: the grant entry that lets this stored message start a Turn in this Session (same match as the send check's exact grant). Whether the SENDER may use it at all is decided before, by the sender writer test with the origin stored on the message. */
+export function findDispatchGrant<G extends OrdinaryMessageGrant>(sessionMessages: { grants: G[] }, message: { projectId: string; senderActorId: string },
+  session: { id: string; roleId: string; cwd: string }): G | undefined {
+  return sessionMessages.grants.find(g => g.enabled && g.projectId === message.projectId && g.sessionId === session.id &&
+    g.senderActorId === message.senderActorId && g.receiverRoleId === session.roleId && g.cwd === session.cwd);
+}
