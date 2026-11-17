@@ -4,7 +4,7 @@ import { href, type Route, type Section } from "../../shared/routes";
 
 export type Space = "work" | "agents" | "inbox";
 
-export interface NavItem { section: Section; label: string; children?: readonly NavItem[] }
+export interface NavItem { section: Section; label: string; /** One line under a child entry, for siblings that are easy to mix up. */ hint?: string; children?: readonly NavItem[] }
 
 /** The work space's sections. Pages that used to open only from deep links are listed under their section. */
 export const workNavigation: readonly NavItem[] = [
@@ -15,13 +15,14 @@ export const workNavigation: readonly NavItem[] = [
     { section: "evaluations", label: "评价与后果" },
   ] },
   { section: "documents", label: "文档与知识", children: [
-    { section: "documents", label: "过程文档" },
-    { section: "knowledge", label: "知识空间" },
-    { section: "repository", label: "仓库规范" },
+    { section: "documents", label: "过程文档", hint: "工作依据与报告" },
+    { section: "knowledge", label: "知识空间", hint: "长期的知识页" },
+    { section: "repository", label: "仓库规范", hint: "固定 Git 来源" },
   ] },
   { section: "schedules", label: "日程" },
-  { section: "runtime", label: "团队", children: [
-    { section: "runtime", label: "分工与运行" },
+  { section: "arrangement", label: "团队", children: [
+    { section: "arrangement", label: "统筹安排" },
+    { section: "runtime", label: "运行与接入" },
     { section: "roles", label: "职责" },
     { section: "discussions", label: "分工讨论" },
     { section: "reviews", label: "组织复盘" },
@@ -41,12 +42,12 @@ export const spaceLabels: Record<Space, string> = { work: "工作", agents: "智
 export const sectionLabels: Record<Section, string> = {
   overview: "总览", work: "任务", "create-task": "新建任务", inbox: "待我验收与判断", task: "任务", documents: "过程文档",
   document: "文档", knowledge: "知识空间", sessions: "智能体", journey: "目标与阶段", discussions: "分工讨论", reviews: "组织复盘",
-  collaboration: "协作回执", runtime: "分工与运行", schedules: "日程", roles: "职责", repository: "仓库规范",
+  collaboration: "协作回执", runtime: "运行与接入", arrangement: "统筹安排", schedules: "日程", roles: "职责", repository: "仓库规范",
   operations: "结果未知的操作", evaluations: "评价与后果", settings: "项目设置", connectors: "微信连接", "not-found": "找不到页面",
 };
 
 export function spaceOf(route: Route): Space {
-  // `/runtime?session=owned:…` is an old conversation link (redirected to /sessions); `?session={uuid}` is 分工与运行.
+  // `/runtime?session=owned:…` is an old conversation link (redirected to /sessions); `?session={uuid}` is 运行与接入.
   if (route.section === "sessions" || route.section === "runtime" && !!route.session?.includes(":")) return "agents";
   if (route.section === "inbox" || route.section === "operations") return "inbox";
   return "work";
@@ -56,7 +57,7 @@ export function spaceOf(route: Route): Space {
 export function workSectionOf(section: Section): Section | null {
   if (["work", "task", "create-task", "journey", "evaluations"].includes(section)) return "work";
   if (["documents", "document", "knowledge", "repository"].includes(section)) return "documents";
-  if (["runtime", "roles", "discussions", "reviews", "collaboration"].includes(section)) return "runtime";
+  if (["arrangement", "runtime", "roles", "discussions", "reviews", "collaboration"].includes(section)) return "arrangement";
   if (section === "overview" || section === "schedules") return section;
   return null;
 }

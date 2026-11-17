@@ -115,7 +115,7 @@ export function adjustBlocked({ permitted, pendingOperation, runtimeReady, fullA
   if (!permitted) return { text: "需要写入与复核权限", link: null };
   if (pendingOperation) return { text: "有结果未确认的操作", link: { label: "去核对", place: "operations" } };
   if (runtimeReady === false) return { text: "智能体还没有就绪", link: null };
-  if (fullAccess === false) return { text: "不是完整权限", link: { label: "去分工与运行", place: "runtime" } };
+  if (fullAccess === false) return { text: "不是完整权限", link: { label: "去运行与接入", place: "runtime" } };
   if (catalog === "empty" || catalog === "unavailable") return { text: catalog === "empty" ? "模型目录为空" : "模型目录读不到", link: null };
   if (viewMismatch) return { text: "两次读取的修订不一致，请重新读取", link: null };
   return null;

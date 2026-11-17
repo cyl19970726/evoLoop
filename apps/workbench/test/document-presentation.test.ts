@@ -66,8 +66,8 @@ test("the return link names where it goes back to", () => {
   assert.equal(label(`/p/${projectId}/tasks/${projectId}?tab=runtime`), "返回任务");
   assert.equal(label(`/p/${projectId}/sessions?session=owned:${projectId}&tab=results`), "返回智能体");
   assert.equal(label(`/p/${projectId}/runtime?session=owned:${projectId}`), "返回智能体", "an older agent link opens the conversation");
-  assert.equal(label(`/p/${projectId}/runtime?session=${projectId}`), "返回分工与运行");
-  assert.equal(label(`/p/${projectId}/runtime`), "返回分工与运行");
+  assert.equal(label(`/p/${projectId}/runtime?session=${projectId}`), "返回运行与接入");
+  assert.equal(label(`/p/${projectId}/runtime`), "返回运行与接入");
   assert.equal(label(`/p/${projectId}/work`), "返回任务列表");
   assert.equal(label(`/p/${projectId}/overview`), "返回总览");
   assert.equal(documentReturnPlace("/", projectId).href, `/p/${projectId}/documents`, "outside the project: back to the list");

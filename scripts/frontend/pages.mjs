@@ -91,17 +91,18 @@ export const scenes = [
   // 定时任务 beside the definitions; the link back from a timed Task lands on its item (`?timing=`).
   { name: "schedules-timed", path: p(`schedules?timing=${timedFocus}`), ready: both(heading("日程"), text("定时任务"), text("已停止，不再复制后续时点")) },
 
-  // Agents: the directory with 统筹安排, one agent's conversation.
-  { name: "arrangement", path: p("sessions"), drawer: true, ready: both(heading("统筹安排"), text("前端实现")) },
+  // 统筹安排 under 团队 (the one Leader home), the agent directory page, one agent's conversation.
+  { name: "arrangement", path: p("arrangement"), drawer: true, ready: both(heading("统筹安排"), text("前端实现")) },
+  { name: "agents-directory", path: p("sessions"), drawer: true, ready: heading("智能体") },
   // 项目用量 at the foot of 统筹安排, reached the way an agent's reminder links to it (the page scrolls to the anchor).
-  { name: "arrangement-usage", path: p("sessions#project-usage"), ready: both(heading("项目用量"), text("今日与每日上限")) },
+  { name: "arrangement-usage", path: p("arrangement#project-usage"), ready: both(heading("项目用量"), text("今日与每日上限")) },
   { name: "agent", path: p(`sessions?session=${encodeURIComponent(agentKey("dev"))}`), drawer: true, ready: text("已核对：1024 下右栏默认收起") },
   // An idle agent with two Tasks in its Session line: 接下来 in order, the second paused. At 390 the column rises from the bottom.
   { name: "agent-queued", path: p(`sessions?session=${encodeURIComponent(agentKey("docs"))}`), widths: [1440], drawer: [390], ready: text("从这里开始沟通") },
 
   // Team.
   { name: "team-roles", path: p(`roles?role=${roles.dev.id}`), drawer: true, ready: both(heading("功能开发", 1), text("提出依据")) },
-  { name: "team-runtime", path: p("runtime"), drawer: true, ready: both(heading("分工与运行"), text("受管智能体")) },
+  { name: "team-runtime", path: p("runtime"), drawer: true, ready: both(heading("运行与接入"), text("受管智能体")) },
   { name: "team-discussions", path: p("discussions"), drawer: true, ready: heading("分工讨论") },
   { name: "team-reviews", path: p("reviews"), ready: both(heading("组织复盘"), text(docs.review.title)) },
   { name: "team-collaboration", path: p("collaboration"), ready: heading("协作回执") },

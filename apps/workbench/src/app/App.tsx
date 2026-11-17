@@ -51,6 +51,8 @@ const SessionWorkspace = named(() => import("../features/sessions/SessionWorkspa
 const FlowPage = named(() => import("../features/sessions/flow/FlowPage"), "FlowPage");
 const FlowGlance = named(() => import("../features/sessions/flow/FlowGlance"), "FlowGlance");
 const ArrangementPage = named(() => import("../features/sessions/ArrangementPage"), "ArrangementPage");
+const AgentDirectory = named(() => import("../features/sessions/AgentDirectory"), "AgentDirectory");
+const ArrangementOperations = named(() => import("../features/team/ArrangementOperations"), "ArrangementOperations");
 // The execution queue (features/workflow) shown in an agent's right column; passed in so the two features do not import each other.
 const ResidentQueuePanel = named(() => import("../features/workflow"), "ResidentQueuePanel");
 const ConnectorPage = named(() => import("../features/connectors/ConnectorPage"), "ConnectorPage");
@@ -373,7 +375,8 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
     if (r.section === "repository") return <RepositoryPage projectId={projectId} reference={<ReferencePanel context={context} />} />;
     if (r.section === "sessions") return r.session
       ? <SessionWorkspace context={context} refresh={refresh} sessionKey={r.session} active={active} queue={queue => <ResidentQueuePanel context={context} titled={false} {...queue} />} />
-      : <ArrangementPage context={context} refresh={refresh} flow={({ leaderSessionId, active: shown }) => <FlowPage token={token} projectId={projectId} leaderSessionId={leaderSessionId} active={shown} />} />;
+      : <AgentDirectory projectId={projectId} />;
+    if (r.section === "arrangement") return <ArrangementPage context={context} refresh={refresh} flow={({ leaderSessionId, active: shown }) => <FlowPage token={token} projectId={projectId} leaderSessionId={leaderSessionId} active={shown} />} operations={<ArrangementOperations context={context} refresh={refresh} />} />;
     if (r.section === "schedules") return <SchedulingPanel context={context} refresh={refresh} />;
     if (r.section === "overview") return <ProjectSummary token={token} projectId={projectId} refresh={refresh} active={active}
       flowGlance={<Suspense fallback={null}><FlowGlance token={token} projectId={projectId} active={active} /></Suspense>} />;

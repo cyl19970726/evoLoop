@@ -83,7 +83,7 @@ test("the workbench labels an unusable Session 不可用 with its reason and doe
 
   // 统筹安排 at 1440 and 390, light and dark.
   for (const [w, h, scheme] of [[1440, 900, "light"], [1440, 900, "dark"], [390, 844, "light"]] as const) {
-    const r = await open(w, h, "/sessions", scheme);
+    const r = await open(w, h, "/arrangement", scheme);
     await r.page.getByRole("heading", { name: "统筹安排", exact: true }).waitFor({ timeout: 30000 });
     await r.page.getByText("没绑身份的开发").first().waitFor({ timeout: 30000 });
     await r.theme(scheme);
@@ -115,10 +115,10 @@ test("the workbench labels an unusable Session 不可用 with its reason and doe
   if (shots) await s.page.screenshot({ path: `${shots}/session-header-1440-light.png`, fullPage: true });
   await s.context.close();
 
-  // 分工与运行: the rail groups a ready-but-unusable Session under 不可用, not under 就绪, and says why.
+  // 运行与接入: the rail groups a ready-but-unusable Session under 不可用, not under 就绪, and says why.
   for (const [w, h] of [[1440, 900], [390, 844]] as const) {
     const e = await open(w, h, "/runtime");
-    await e.page.getByText("不可用 · 没有绑定业务身份").first().waitFor({ timeout: 30000 }).catch(async () => { if (w < 760) { await e.page.getByRole("button", { name: /项目导航/ }).first().click(); await e.page.getByText("不可用 · 没有绑定业务身份").first().waitFor({ timeout: 30000 }); } else throw new Error("no 不可用 line on the 分工与运行 rail"); });
+    await e.page.getByText("不可用 · 没有绑定业务身份").first().waitFor({ timeout: 30000 }).catch(async () => { if (w < 760) { await e.page.getByRole("button", { name: /项目导航/ }).first().click(); await e.page.getByText("不可用 · 没有绑定业务身份").first().waitFor({ timeout: 30000 }); } else throw new Error("no 不可用 line on the 运行与接入 rail"); });
     const rail = await e.page.locator("nav[aria-label=受管智能体]").evaluate((el: HTMLElement) => el.innerText.replace(/\s+/g, " "));
     const ready = rail.slice(rail.indexOf("就绪"), rail.indexOf("不可用 ·") > rail.indexOf("就绪") ? rail.indexOf("不可用 ·") : undefined);
     assert.match(rail, /不可用 · 1/, `${w}: the group 不可用 lists the Session`); assert.match(rail, /就绪 · 1/, `${w}: only the bound Session is under 就绪 (${rail})`);
@@ -129,7 +129,7 @@ test("the workbench labels an unusable Session 不可用 with its reason and doe
 
   // An older server (no `dispatch`): the old wording, nothing invented.
   await (await fetch(`${base}/__fixture/older`)).text();
-  const o = await open(1440, 900, "/sessions");
+  const o = await open(1440, 900, "/arrangement");
   await o.page.getByText("没绑身份的开发").first().waitFor({ timeout: 30000 });
   const old = await o.page.locator(".arrangement-page").innerText();
   assert.ok(!/不可用/.test(old), "a server that does not judge shows no 不可用 label");

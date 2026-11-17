@@ -30,7 +30,7 @@ const grants=[
   {projectId,actorId:"reader",roleId,authorizationScope:"固定任务",cwd:"/tmp/fixture",sandbox:"danger-full-access",approvalPolicy:"never",networkAccess:true,model:"gpt-6-sol"},
 ];
 
-test("managed agents in 分工与运行 keep Role names, full grants and activation state", {skip:!modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE"}, async t => {
+test("managed agents in 运行与接入 keep Role names, full grants and activation state", {skip:!modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE"}, async t => {
   const {chromium} = (await import(pathToFileURL(modulePath!).href)).default;
   let fail=false, hold=false, held=0, hideGrants=false, release:(()=>void)|null=null;
   let reservedCommand:Record<string,unknown>|null=null;
@@ -80,7 +80,7 @@ test("managed agents in 分工与运行 keep Role names, full grants and activat
   await page.goto(`${base}/p/${projectId}/runtime?view=execution`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button",{name:"进入",exact:true}).click();
-  // 分工与运行 lists every managed agent with its Role name, state and short identity.
+  // 运行与接入 lists every managed agent with its Role name, state and short identity.
   const row=(index:number)=>page.locator(`[data-session-id="${sessions[index]!.id}"]`);
   await row(0).getByText(/开发流程与规范负责人/).waitFor();
   assert.match(await row(0).innerText(),/开发流程与规范负责人.*智能体（.*就绪/s);

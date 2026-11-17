@@ -1,7 +1,7 @@
 // 执行队列: the order in which a project's own agents take tasks, with what currently occupies each agent, what is
 // next (which is not the same as startable), what is held and why, and each entry's attempts. Adopting the order,
 // moving an entry forward, holding and releasing a hold are written from here. Used by the task's 运行与关联 (one
-// task's queues) and by the team's 分工与运行 (all queues, or one agent's).
+// task's queues) and by the team's 运行与接入 (all queues, or one agent's).
 import React from "react";
 import { useQueries } from "@tanstack/react-query";
 import { hasPermission, type Task, type TaskDetail } from "@evoloop/contracts";

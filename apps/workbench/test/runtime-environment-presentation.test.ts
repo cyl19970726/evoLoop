@@ -84,7 +84,7 @@ test("the project's daily limit is one reminder line only when it is close or re
 test("why the model cannot be adjusted is one short reason, with where to fix it when there is such a place", () => {
   const ok = { permitted: true, pendingOperation: false, runtimeReady: true, fullAccess: true, catalog: "available" as const, viewMismatch: false };
   assert.equal(adjustBlocked(ok), null);
-  assert.deepEqual(adjustBlocked({ ...ok, fullAccess: false }), { text: "不是完整权限", link: { label: "去分工与运行", place: "runtime" } });
+  assert.deepEqual(adjustBlocked({ ...ok, fullAccess: false }), { text: "不是完整权限", link: { label: "去运行与接入", place: "runtime" } });
   assert.deepEqual(adjustBlocked({ ...ok, pendingOperation: true }), { text: "有结果未确认的操作", link: { label: "去核对", place: "operations" } });
   assert.deepEqual(adjustBlocked({ ...ok, permitted: false, fullAccess: false }), { text: "需要写入与复核权限", link: null }, "the first reason that applies");
   assert.deepEqual(adjustBlocked({ ...ok, runtimeReady: false }), { text: "智能体还没有就绪", link: null });

@@ -2,7 +2,7 @@
 import { appHistory, currentPath, onNavigate } from "./navigation";
 
 /** `not-found` is an address inside a project that names no page (a mistyped or outdated link); it is never linked to. */
-export type Section = "overview" | "work" | "create-task" | "knowledge" | "sessions" | "task" | "document" | "documents" | "inbox" | "journey" | "discussions" | "reviews" | "collaboration" | "runtime" | "schedules" | "roles" | "repository" | "operations" | "evaluations" | "settings" | "connectors" | "not-found";
+export type Section = "overview" | "work" | "create-task" | "knowledge" | "sessions" | "task" | "document" | "documents" | "inbox" | "journey" | "discussions" | "reviews" | "collaboration" | "runtime" | "arrangement" | "schedules" | "roles" | "repository" | "operations" | "evaluations" | "settings" | "connectors" | "not-found";
 export type Route = { projectId: string | null; section: Section; id?: string; revision?: string; action?: string; session?: string };
 
 
@@ -10,7 +10,7 @@ export type Route = { projectId: string | null; section: Section; id?: string; r
 export function readRoute(): Route { return parseRoute(currentPath()); }
 
 /** Sections whose address is one segment, `/p/{project}/{section}`. */
-const singleSections = ["overview", "work", "knowledge", "sessions", "documents", "inbox", "journey", "discussions", "reviews", "collaboration", "runtime", "schedules", "roles", "repository", "operations", "settings", "connectors"];
+const singleSections = ["overview", "work", "knowledge", "sessions", "documents", "inbox", "journey", "discussions", "reviews", "collaboration", "runtime", "arrangement", "schedules", "roles", "repository", "operations", "settings", "connectors"];
 
 /**
  * `/p/{project}/{section}/…?…` → section route; anything outside a project is the project list, and `/p/{project}`
@@ -35,22 +35,25 @@ export function parseRoute(path: string): Route {
   if (section === "tasks" && parts[3]) return { projectId: parts[1], section: "task", id: parts[3], revision };
   if (section === "documents" && parts[3]) return { projectId: parts[1], section: "document", id: parts[3], revision };
   if (section === "evaluations") return { projectId: parts[1], section: "evaluations", id: parts[3], revision };
-  if (["work", "knowledge", "sessions", "documents", "inbox", "journey", "discussions", "reviews", "collaboration", "runtime", "schedules", "roles", "repository", "operations", "settings", "connectors"].includes(section ?? "")) return { projectId: parts[1], section: section as Section, action, ...(["sessions", "runtime"].includes(section ?? "") ? { session } : {}) };
+  if (["work", "knowledge", "sessions", "documents", "inbox", "journey", "discussions", "reviews", "collaboration", "runtime", "arrangement", "schedules", "roles", "repository", "operations", "settings", "connectors"].includes(section ?? "")) return { projectId: parts[1], section: section as Section, action, ...(["sessions", "runtime"].includes(section ?? "") ? { session } : {}) };
   return { projectId: parts[1], section: "overview" };
 }
 
 /**
  * Older team addresses and where they open now: `/runtime?session={key with a colon}` is an agent conversation
  * (`/sessions?session=`), `/runtime?view=roles|discussions` is its own section, and `?view=execution` is plain
- * `/runtime`. `/runtime?session={uuid}` stays: it selects that managed agent in 分工与运行. Null when nothing changes.
+ * `/runtime`. `/runtime?session={uuid}` stays: it selects that managed agent in 运行与接入. Null when nothing changes.
  */
 export function legacyTeamAddress(path: string): string | null {
   const [pathname = "", query = ""] = path.split("?");
   const parts = pathname.split("/");
-  // `/p/{project}/runtime` or the same with a trailing slash.
-  if (!(parts.length === 4 || parts.length === 5 && parts[4] === "") || parts[1] !== "p" || !parts[2] || parts[3] !== "runtime") return null;
+  // `/p/{project}/runtime` or `/p/{project}/sessions`, or the same with a trailing slash.
+  if (!(parts.length === 4 || parts.length === 5 && parts[4] === "") || parts[1] !== "p" || !parts[2] || parts[3] !== "runtime" && parts[3] !== "sessions") return null;
   const params = new URLSearchParams(query);
   const rest = (section: string) => { const text = params.toString(); return `/p/${parts[2]}/${section}${text ? `?${text}` : ""}`; };
+  // The agent directory no longer carries the arrangement board: its 动态 view (`/sessions?view=flow`) lives on 统筹安排 (`/arrangement?view=flow`).
+  // Every other `/sessions` address (the directory, `?session=`) stays where it is.
+  if (parts[3] === "sessions") return !params.get("session") && params.get("view") === "flow" ? rest("arrangement") : null;
   if (params.get("session")?.includes(":")) { params.delete("view"); return rest("sessions"); }
   const view = params.get("view");
   if (!params.has("view")) return null;

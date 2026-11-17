@@ -23,10 +23,12 @@ test("only pages of this project are places to come back to", () => {
   assert.deepEqual(returnPlaceOf(`${p}/tasks/${task}?tab=runtime`, project), { kind: "task", taskId: task });
   assert.deepEqual(returnPlaceOf(`${p}/work?state=all&selected=${task}`, project), { kind: "tasks", selected: task });
   assert.deepEqual(returnPlaceOf(`${p}/work`, project), { kind: "tasks", selected: null });
-  assert.deepEqual(returnPlaceOf(`${p}/sessions`, project), { kind: "arrangement" }, "/sessions without an agent is 统筹安排");
+  assert.deepEqual(returnPlaceOf(`${p}/arrangement`, project), { kind: "arrangement" });
+  assert.deepEqual(returnPlaceOf(`${p}/arrangement?view=flow`, project), { kind: "arrangement" });
+  assert.deepEqual(returnPlaceOf(`${p}/sessions`, project), { kind: "page", section: "sessions" }, "/sessions without an agent is the agent directory now (统筹安排 has its own address)");
   assert.deepEqual(returnPlaceOf(`${p}/sessions?session=${encodeURIComponent(agent)}&tab=queue`, project), { kind: "agent", sessionKey: agent });
   assert.deepEqual(returnPlaceOf(`${p}/runtime?session=${encodeURIComponent(agent)}`, project), { kind: "agent", sessionKey: agent }, "an older agent link");
-  assert.deepEqual(returnPlaceOf(`${p}/runtime?session=${task}`, project), { kind: "page", section: "runtime" }, "a managed agent in 分工与运行 stays there");
+  assert.deepEqual(returnPlaceOf(`${p}/runtime?session=${task}`, project), { kind: "page", section: "runtime" }, "a managed agent in 运行与接入 stays there");
   assert.deepEqual(returnPlaceOf(`${p}/documents/${task}?revision=${other}`, project), { kind: "document", documentId: task });
   assert.deepEqual(returnPlaceOf(`${p}/overview`, project), { kind: "page", section: "overview" });
   for (const bad of [`/p/${other}/tasks/${task}`, `${p}/tasks/not-a-task`, `${p}/sessions?session=garbage`, `${p}/unknown`,
@@ -86,14 +88,14 @@ test("an agent page comes back to a task, the task table or 统筹安排, never 
   const open = (from: string, title?: string) => withReturn(`${p}/sessions?session=${encodeURIComponent(agent)}`, { href: from, actorId: "me", title: title ?? null });
   assert.equal(sessionTaskReturn(open(`${p}/tasks/${task}?tab=runtime`, "任务甲"), project, agent, "me")?.label, "返回任务：任务甲");
   assert.equal(sessionTaskReturn(open(`${p}/work?selected=${task}`, "任务甲"), project, agent, "me")?.href, `${p}/work?selected=${task}`);
-  assert.equal(sessionTaskReturn(open(`${p}/sessions`), project, agent, "me")?.label, "返回统筹安排");
+  assert.equal(sessionTaskReturn(open(`${p}/arrangement`), project, agent, "me")?.label, "返回统筹安排");
   assert.equal(sessionTaskReturn(open(`${p}/sessions?session=${encodeURIComponent(agent)}`), project, agent, "me"), null);
   assert.equal(sessionTaskReturn(open(`${p}/tasks/${task}`), project, "owned:other", "me"), null, "a link made for another agent");
 });
 
 test("a task page comes back to an agent, 统筹安排 or a document, and keeps it across its tabs", () => {
   const taskPath = `${p}/tasks/${task}`;
-  const fromArrangement = withReturn(taskPath, { href: `${p}/sessions`, actorId: "me" });
+  const fromArrangement = withReturn(taskPath, { href: `${p}/arrangement`, actorId: "me" });
   assert.equal(taskSessionReturn(fromArrangement, project, task, "me")?.label, "返回统筹安排");
   const fromAgent = withReturn(taskPath, { href: `${p}/sessions?session=${encodeURIComponent(agent)}`, actorId: "me" });
   assert.equal(taskSessionReturn(fromAgent, project, task, "me")?.label, "返回智能体", "without a name the agent page's link names the place only");
@@ -103,7 +105,7 @@ test("a task page comes back to an agent, 统筹安排 or a document, and keeps 
   assert.equal(taskSessionReturn(fromInbox, project, task, "me")?.label, "返回待我验收与判断", "the link 待我处理 writes (inboxModel.deliveryLink)");
   assert.equal(taskSessionReturn(withReturn(taskPath, { href: taskPath, actorId: "me" }), project, task, "me"), null, "never to itself");
   const next = new URLSearchParams(taskTabHref(fromArrangement, project, task, "runtime", "me").split("?")[1]);
-  assert.equal(next.get("return"), `${p}/sessions`);
+  assert.equal(next.get("return"), `${p}/arrangement`);
   assert.equal(next.get("returnTitle"), null, "no name is invented for a page without one");
 });
 

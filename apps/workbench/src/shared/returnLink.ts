@@ -37,12 +37,15 @@ export function returnPlaceOf(target: string | null | undefined, projectId: stri
   if (route.section === "document") return route.id && uuid.test(route.id) && path === `${project}/documents/${route.id}` ? { kind: "document", documentId: route.id } : null;
   if (route.section === "evaluations") return path === `${project}/evaluations` || route.id && uuid.test(route.id) && path === `${project}/evaluations/${route.id}`
     ? { kind: "page", section: "evaluations" } : null;
+  // 统筹安排 moved from `/sessions` to `/arrangement`; a saved return link to the old address still means it and is read as the new one.
+  if (route.section === "arrangement" && path === `${project}/arrangement` && one("view")) return { kind: "arrangement" };
   if (!pages.has(route.section) && route.section !== "sessions" || path !== `${project}/${route.section}` || !one("session") || !one("selected")) return null;
   const session = params.get("session");
   // `/sessions?session={uuid}` is an older link to a managed agent (routes.ts reads it as `owned:{uuid}`).
-  if (route.section === "sessions") return session === null ? { kind: "arrangement" } : agentKey.test(session) ? { kind: "agent", sessionKey: session }
+  // `/sessions` alone is now the agent directory (an older link to it meant 统筹安排, which has its own address).
+  if (route.section === "sessions") return session === null ? { kind: "page", section: "sessions" } : agentKey.test(session) ? { kind: "agent", sessionKey: session }
     : uuid.test(session) ? { kind: "agent", sessionKey: `owned:${session}` } : null;
-  // `/runtime?session=owned:…` is an older agent link (it opens the conversation); `?session={uuid}` stays 分工与运行.
+  // `/runtime?session=owned:…` is an older agent link (it opens the conversation); `?session={uuid}` stays 运行与接入.
   if (route.section === "runtime" && session !== null && agentKey.test(session)) return { kind: "agent", sessionKey: session };
   if (route.section === "work") {
     const selected = params.get("selected");
@@ -53,7 +56,7 @@ export function returnPlaceOf(target: string | null | undefined, projectId: stri
 
 const pageNames: Partial<Record<Section, string>> = {
   overview: "总览", work: "任务列表", inbox: "待我验收与判断", documents: "文档列表", knowledge: "知识空间", journey: "目标与阶段",
-  discussions: "分工讨论", reviews: "组织复盘", collaboration: "协作回执", runtime: "分工与运行", schedules: "日程", roles: "职责",
+  discussions: "分工讨论", reviews: "组织复盘", collaboration: "协作回执", runtime: "运行与接入", arrangement: "统筹安排", sessions: "智能体目录", schedules: "日程", roles: "职责",
   repository: "仓库规范", operations: "结果未知的操作", evaluations: "评价与后果", settings: "项目设置", connectors: "微信连接",
 };
 

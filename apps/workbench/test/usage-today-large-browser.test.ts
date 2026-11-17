@@ -73,7 +73,7 @@ test("the 今日 figures stay readable with their unit at billion-scale token co
     huge.daily = huge.daily.map((day: Record<string, unknown>, index: number) => ({ ...day, inputTokens: 3_300_000_000 + index, outputTokens: 214_258_000_000, cachedInputTokens: 1_650_000_000 }));
     huge.budget = { ...huge.budget, configured: true, state: "warning", limitKind: "input_tokens", limit: 4_000_000_000, used: 3_300_000_000, ratio: 0.825 };
     const { page, errors, context } = await open(width, height, huge);
-    await page.goto(`${fixture.base}/p/${projectId}/sessions#project-usage`);
+    await page.goto(`${fixture.base}/p/${projectId}/arrangement#project-usage`);
     await page.getByLabel("访问令牌").fill(token); await page.getByRole("button", { name: "进入", exact: true }).click();
     const block = page.locator("#project-usage");
     await block.getByText("今日与每日上限").waitFor();

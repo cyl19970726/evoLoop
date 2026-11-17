@@ -1,4 +1,4 @@
-// Runs in 分工与运行: each recorded run, the task and agent it belongs to, what the service saved about its result, and
+// Runs in 运行与接入: each recorded run, the task and agent it belongs to, what the service saved about its result, and
 // the checks a reader may make on it (native answer, receipts, terminal reconcile, interrupt, handoff use). A run's
 // state never stands for task acceptance; the task page keeps the full task context.
 import { useState } from "react";
