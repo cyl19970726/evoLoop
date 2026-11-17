@@ -30,6 +30,7 @@ import { createChildDetailSink, createRefusalSink } from "./runtime/child-detail
 import { HubConnector } from "./hub/connector.js";
 import { MachineCredentialSource } from "./hub/credentials.js";
 import { HubIdentityVerifier } from "./hub/identity.js";
+import { logHubIdentityRejected } from "./hub/log.js";
 import { acquireCoordinatorLease, leaseFencedUnitOfWork } from "./lease.js";
 import { RuntimeWorkflowService } from "@evoloop/core/runtime";
 import { CodexAppServerAdapter } from "@evoloop/adapter-codex-app-server";
@@ -65,6 +66,7 @@ import { OpenVikingKnowledgeRepository } from "@evoloop/adapter-wiki-openviking"
 import { DomainError } from "@evoloop/contracts/ports";
 import { DrainControl, isInstanceMaintainer } from "./drain/service.js";
 import { ordinaryMessageGrantProblem } from "./session-messages/send-authority.js";
+import { createSenderWriter } from "./session-messages/sender-writer.js";
 import type { Principal } from "@evoloop/contracts";
 import { LocalBlobStore } from "@evoloop/adapter-local-blobs";
 import { setupManagedLoops } from "./orchestration/setup.js";
@@ -152,13 +154,11 @@ const currentProjectWriter = async (projectId:string,actorId:string) =>
 /**
  * A Hub account has no entry in this machine's token file, so the "current writer" test cannot find it there. It sends only on an explicit grant: an enabled
  * `sessionMessages.grants` entry for this project and sender marked `"senderKind":"hub"`. The request itself still arrived with a signed identity holding the
- * Session permission. Used for the sender alone; receivers and every other writer test are unchanged (Task 9ea06625).
+ * Session permission. Used for the sender alone; receivers and every other writer test are unchanged (Task 9ea06625). Which way in applies is decided by where the principal came
+ * from (`Principal.origin`), see session-messages/sender-writer.ts (Task e1f2b996).
  */
-const currentSenderWriter = async (projectId:string,actorId:string) => {
-  if(await currentProjectWriter(projectId,actorId))return true;
-  const messages=(await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).sessionMessages;
-  return !!messages?.enabled&&messages.grants.some(g=>g.enabled&&g.projectId===projectId&&g.senderActorId===actorId&&g.senderKind==="hub");
-};
+const currentSenderWriter = createSenderWriter({ isProjectWriter: currentProjectWriter,
+  loadSessionMessages: async () => (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).sessionMessages });
 const resolveSessionLineRecipient=async(projectId:string,sessionId:string)=>{
     // The Session's own signing identity, never its creator or a guess from the Role.
     const row=(await pool.query(`SELECT s.role_id,s.actor_id,(SELECT count(*)::int FROM runtime_session o WHERE o.project_id=s.project_id
@@ -1019,7 +1019,7 @@ const machineCredentials = new MachineCredentialSource();
 const hubIdentity = { verifier: new HubIdentityVerifier({ credentials: () => machineCredentials.current(),
   isLocalProject: async projectId => (await pool.query("SELECT 1 FROM project WHERE project_id=$1", [projectId])).rowCount === 1,
   localActorIds: () => new Set(credentials.map(entry => entry.actorId)) }),
-  onRejected: (reason: string) => console.warn(`Hub identity rejected: ${reason}`) };
+  onRejected: (reason: string) => logHubIdentityRejected(reason) };
 const hubConnector = new HubConnector({ credentials: machineCredentials, coordinatorUrl: `http://127.0.0.1:${port}`, log: message => console.log(message) });
 const app = await buildServer({ service, credentials, canWrite: lease.canWrite, ordinarySubmissions, hubIdentity,
   acceptanceRelay, milestones: { repoRoot: resolve(fileURLToPath(new URL("../../..", import.meta.url))), startedAt: new Date().toISOString() },
@@ -1129,9 +1129,9 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
     if (!mayAccessSession(principal, projectId, sessionId))
       return { code: "MESSAGE_GRANT_MISSING", message: "This identity is not granted access to that Session" };
     const session = await service.getRuntimeSession(principal, projectId, sessionId);
-    return ordinaryMessageGrantProblem({ projectId, senderActorId: principal.actorId, session,
+    return ordinaryMessageGrantProblem({ projectId, senderActorId: principal.actorId, senderOrigin: principal.origin, session,
       sessionMessages: (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).sessionMessages,
-      isProjectWriter: actorId => currentProjectWriter(projectId, actorId), isSenderWriter: actorId => currentSenderWriter(projectId, actorId) });
+      isProjectWriter: actorId => currentProjectWriter(projectId, actorId), isSenderWriter: (actorId, origin) => currentSenderWriter(projectId, actorId, origin) });
   },
   sessionPreparation: async input => {
     const current=await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE);

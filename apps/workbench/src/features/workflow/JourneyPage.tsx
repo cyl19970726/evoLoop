@@ -121,7 +121,7 @@ export function JourneyPage({ context, active, propose }: { context: MutationCon
     <div className="min-w-0">
       {returnTo && <ReturnLink projectId={projectId} href={returnTo.href} place={returnTo.place} label={returnTo.label} className="mb-1" />}
       <h1 tabIndex={-1} className="text-title font-semibold text-foreground outline-none">目标与阶段</h1>
-      <p className="mt-1 text-small text-text-secondary">目标、阶段和阶段下的任务都来自本项目的记录；不按工程里程碑推算完成比例。</p>
+      <p className="mt-1 text-small text-text-secondary" data-page-role="">目标与阶段：阶段全文、任务与回看，来自本项目的记录，不按工程里程碑推算完成比例。差距与下一判断回到<a className="text-primary hover:underline" data-back-overview="" href={href(projectId, "overview")}>总览</a>。</p>
       <p className={cn(muted, "mt-1")} role="status" data-read-scope="">{scopeLine(goalsRead.data, stagesKnown ? stages.length : stagesUnknown, work, goalsKnown, fetching)}</p>
     </div>
     <div className="flex flex-wrap items-center gap-2">

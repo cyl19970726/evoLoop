@@ -263,6 +263,8 @@ coordinator 收到带 `x-evoloop-hub-identity` 头的请求时，**只**按身�
 
 服务身份的权限：服务身份没有账号成员行，所以创建时（`POST /api/admin/service-identities`）可以带 `permissions`（`task`/`document`/`session`）、`sessionIds` 与 `decisions`，按项目范围下发；不带就是只读，决定类只在明确 `decisions:true` 时才有（DEC-048）。
 
+**机器答复的大小（Task b5fe71c8）。** 机器把转发的答复以 base64 放进一个小 JSON 帧里 POST 到 `/api/machine/respond`，所以请求体比答复本身大约 4/3。这条路由有自己的 `bodyLimit`，由 `HUB_MAX_RESPONSE_BYTES`（默认 8 MB，Hub 转发的最大答复）换算：`ceil(最大答复/3)×4` 加 8 KB 的帧余量（`respondBodyLimit`）；其他路由仍是 `HUB_BODY_LIMIT_BYTES`（默认 64 KB），不因答复变大而调大。连接器自己也只转发不超过 8 MB 的答复，超过就回一个小的 502 `ANSWER_TOO_LARGE`。Hub 拒收机器的答复（非 2xx）时，连接器记一行日志（状态码与字节数，不含正文），并为同一个请求补发一个小的 502 `ANSWER_REJECTED`，让 Hub 立刻失败，不等转发超时；Hub 说请求已不在等待（404）或不认机器的签名（401/403）时不补发。coordinator 拒绝转发身份时，调用方只听到“转发身份未被接受。”，原因写在 coordinator 的 stderr：`<时间> Hub identity rejected: <原因>`（`apps/coordinator/src/hub/log.ts`）；连接器看到 coordinator 回 401 时也记一行（不含原因，原因在 coordinator 日志里）。coordinator 重启会使连接器重连，重启前 Hub 已签的身份会因“签发早于本 coordinator 启动”被拒（见 12.4），重启窗口里可以看到几次 401 后自行恢复。
+
 ### 12.5 机器上的 Agent 团队与目录
 
 机器上的 Agent 团队继续用本机令牌文件里的身份，走 `127.0.0.1`，**不经过 Hub**：coordinator 的执行、Run、队列、泵都不读 Hub，Hub 停止、断网或机器被移除时它们照常运行，只是暂时不能远程查看。机器加入后 coordinator 的监听地址不变（仍只听 `127.0.0.1`），没有新增任何监听端口。
@@ -285,7 +287,7 @@ coordinator 收到带 `x-evoloop-hub-identity` 头的请求时，**只**按身�
 - **会话与项目列表。** `GET /api/session` 除原有字段外还带 `permissions`、`projectPermissions`、`identityKind`、`capabilities`（工作台的 session 形状）；`GET /api/projects` 与 `GET /api/projects/{id}` 带 `machine`（`{machineId,name,state,online}`，没有登记机器时为 `null`）。人只看到自己是成员的项目，Hub 管理员不因此看到任何项目；别人的项目 403。
 - **离线。** 项目所在的机器没有连上时，项目仍然列出，写“机器 名称 · 离线 · 暂不可读写（不代表运行失败）”，转发请求得到 `503 MACHINE_OFFLINE`；这是对连接的描述，**不改写任何 Run 或交付的状态**（机器上的运行不依赖 Hub）。机器被移除后项目不再指向它。
 - **查看规则（DEC-048 第 1 项）。** 项目成员能看项目里的任务、文档，以及 Session 的存在、状态、摘要和一般对话；完整原生记录与工具输入输出需要对这个 Session 的 Session 权限（`session` 类别，且成员的 Session 列表不限定到别的 Session）。这条规则在 coordinator 一侧，用 PR3 的签名身份里带来的权限与 Session 列表判断（`session-timeline` 对 `originalToolDetail` 与完整原生记录的检查）；没有 Session 权限时页面写“完整原生记录需要此 Session 的 Session 权限”。
-- **Hub 账号发送消息要显式授权。** 本机“当前写入者”检查只认本机令牌文件里的身份。经 Hub 来的 Hub 账号要给 Session 发消息，需要私有配置 `sessionMessages.grants` 里有一项把 `senderActorId` 写成这个 Hub 账号的 actor ID 并带 `"senderKind":"hub"`（其余字段与本机授权相同：Session、接收方身份、职责、目录）；没有这一项仍然被拒，并提示要加什么。这只放宽**发送者**的“当前写入者”检查，不把 Hub 账号当成任何本机身份，接收方与别处的写入者检查不变；请求本身仍要带 Session 权限的签名身份。
+- **Hub 账号发送消息要显式授权。** 本机“当前写入者”检查只认本机令牌文件里的身份。经 Hub 来的 Hub 账号要给 Session 发消息，需要私有配置 `sessionMessages.grants` 里有一项把 `senderActorId` 写成这个 Hub 账号的 actor ID 并带 `"senderKind":"hub"`（其余字段与本机授权相同：Session、接收方身份、职责、目录）；没有这一项仍然被拒，并提示要加什么。这只放宽**发送者**的“当前写入者”检查，不把 Hub 账号当成任何本机身份，接收方与别处的写入者检查不变；请求本身仍要带 Session 权限的签名身份。**这一项只对经 Hub 签名身份进来的请求生效：** `HubIdentityVerifier` 验过签名后给 principal 标 `origin: "hub"`（本机令牌文件的身份没有这个字段，也写不出来），发送者检查按这个来源分两条路——本机来源只走本机写入者检查，同名的 hub 授权对它没有任何作用；Hub 来源只看 hub 授权，不看令牌文件。来源不由 actor ID 的写法推断（Task e1f2b996）。
 - **签名身份重启后仍只能用一次。** PR3 的单次使用记录在内存里。现在 coordinator 拒绝**早于它启动时间签发**的身份：重启前抓到的、用过的或没用过的身份，重启后都不能再用；代价是重启瞬间在途的请求会失败一次，重试时重新签发。Hub 与机器的时钟若相差数秒，重启后头几秒签发的身份也会被拒一次。
 - **服务身份**按项目授权、默认只读，不变（需求 Session 已确认）。
 - **深链。** 交付里记的工作台链接若写着页面当前打开的地址（Hub 的地址），在同一标签里打开；别的主机与相似的主机仍是外部链接（`shared/api.ts` 的 `ownWorkbenchAddress`）。
