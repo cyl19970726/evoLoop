@@ -1,4 +1,4 @@
-// What 分工与运行 says about managed agents (Session) and their runs, apart from rendering so each rule can be tested.
+// What 运行与接入 says about managed agents (Session) and their runs, apart from rendering so each rule can be tested.
 // Service states reach the screen as short Chinese labels; a close is offered only when no recorded fact blocks it.
 import type { ResidentQueue } from "@evoloop/contracts/queues";
 import type { RuntimeRunRecord, RuntimeSessionRecord } from "@evoloop/contracts/runtime";
@@ -106,7 +106,7 @@ export function closeBlockers(session: RuntimeSessionRecord, read: CloseRead): s
   return blockers;
 }
 
-/** The address of one managed agent in 分工与运行. */
+/** The address of one managed agent in 运行与接入. */
 export const executionHref = (projectId: string, sessionId: string) => `/p/${projectId}/runtime?session=${encodeURIComponent(sessionId)}`;
 
 /** A linked agent that is not on screen: still being read, unreadable, or read back and not there — never guessed. */

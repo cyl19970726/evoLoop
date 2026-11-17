@@ -1,4 +1,4 @@
-// 统筹安排: the /sessions page when no agent is selected. The center shows the board (each agent with what it is
+// 统筹安排 (`/arrangement`, under 团队; Task 0f8c7a15): the one Leader home — the only page that shows who is free, the queues and the conflicts. The center shows the board (each agent with what it is
 // doing, what is assigned and what is queued; unassigned Tasks apart), the right column the conflicts the records
 // prove. The Leader's own overview document has no marker yet, so the page says so instead of guessing one.
 // A read that is still running or failed is never shown as "free", "no conflict" or 0; a failed reread that keeps
@@ -207,8 +207,10 @@ function Waiting({ attention, stale }: { attention: SessionDirectory["attention"
   </p>;
 }
 
-export function ArrangementPage({ context, refresh, flow }: { context: MutationContext; refresh: number;
-  flow: (props: { leaderSessionId: string | null; active: boolean }) => ReactNode }) {
+export function ArrangementPage({ context, refresh, flow, operations }: { context: MutationContext; refresh: number;
+  flow: (props: { leaderSessionId: string | null; active: boolean }) => ReactNode;
+  /** 编排与队列: the loops and queues, shown under the board (supplied by the app: a feature does not import its siblings' pages). */
+  operations?: ReactNode }) {
   const { token, projectId } = context;
   const panel = useContextPanel();
   const pageActive = useContext(PageActive);
@@ -216,9 +218,9 @@ export function ArrangementPage({ context, refresh, flow }: { context: MutationC
   useEffect(() => onNavigate(() => setView(viewOfAddress())), []);
   const chooseView = (next: View) => {
     setView(next);
-    replaceQuietly(next === "flow" ? `${href(projectId, "sessions")}?view=flow` : href(projectId, "sessions"));
+    replaceQuietly(next === "flow" ? `${href(projectId, "arrangement")}?view=flow` : href(projectId, "arrangement"));
   };
-  const from: ReturnFrom = { href: href(projectId, "sessions"), actorId: context.principal.actorId };
+  const from: ReturnFrom = { href: href(projectId, "arrangement"), actorId: context.principal.actorId };
   const sessions = useProjectQuery(projectId, ["arrangement", "agents"],
     signal => readSessionDirectoryPages(sessionClient(token, projectId), "current", "", maxSessionPages, signal));
   const tasks = useProjectQuery(projectId, ["arrangement", "tasks"], signal => readOpenTasks(token, projectId, signal));
@@ -254,7 +256,7 @@ export function ArrangementPage({ context, refresh, flow }: { context: MutationC
     <header className="flex flex-wrap items-start justify-between gap-3">
       <div className="min-w-0">
         <h1 className="text-title font-semibold text-foreground" tabIndex={-1}>统筹安排</h1>
-        <p className="mt-1 text-small text-text-secondary">谁在做什么、谁空闲、哪里有冲突。要调整安排，回到与统筹的对话。</p>
+        <p className="mt-1 text-small text-text-secondary" data-page-role="">统筹安排：谁在做什么、谁空闲、队伍与冲突，是唯一显示安排的页面。要调整安排，回到与统筹的对话；执行服务、连接与恢复看<a href={href(projectId, "runtime")} className="text-primary hover:underline">运行与接入</a>，具体的智能体看<a href={href(projectId, "sessions")} className="text-primary hover:underline">智能体目录</a>。</p>
       </div>
       <div className="flex items-center gap-2">
         {board?.leader && <Button asChild variant="primary"><a href={sessionHref(projectId, board.leader.key, from)}><MessageSquare aria-hidden="true" />与统筹对话</a></Button>}
@@ -315,6 +317,7 @@ export function ArrangementPage({ context, refresh, flow }: { context: MutationC
           {/* The project's daily limit and recent days; an agent's card links here when the project is near its limit. */}
           <ProjectUsageSection projectId={projectId} token={token} />
           <p className="flex items-center gap-1.5 text-caption text-muted-foreground"><CalendarClock size={14} aria-hidden="true" />优先级、截止时间和依赖由统筹经 CLI 设置；这里只读。</p>
+          {operations}
           <ArrangementPanel projectId={projectId} board={board} reads={reads} from={from} directoryComplete={!moreAgents} />
         </>}
   </div>;

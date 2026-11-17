@@ -98,7 +98,7 @@ test("Session navigation retains order, pages and filters across selection, back
   await page.goto(`${base}/p/${projectId}/sessions`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
-  await page.locator(".arrangement-page").waitFor();  // the Sessions root without a selection is 统筹安排
+  await page.locator(".agent-directory").waitFor();  // the Sessions root without a selection is the directory page; 统筹安排 is under 团队
   const navigationToggle = page.getByRole("button", { name: /^(展开|收起)项目导航$/ });
   if (await navigationToggle.getAttribute("aria-expanded") !== "true") await navigationToggle.click();
   const sidebar = page.locator("aside[aria-label=项目导航] .session-navigation");

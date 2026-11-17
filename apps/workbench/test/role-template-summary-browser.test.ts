@@ -55,7 +55,7 @@ test("seven template states appear on 职责 with truthful refresh and target li
   const browser = await chromium.launch({ headless: true, ...(process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH ? { executablePath: process.env.EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH } : {}) }); t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.stack ?? error.message));
-  // 基础职责 lives on the 职责 overview; 分工与运行 no longer repeats it.
+  // 基础职责 lives on the 职责 overview; 运行与接入 no longer repeats it.
   await page.goto(`${base}/p/${projectId}/roles`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();

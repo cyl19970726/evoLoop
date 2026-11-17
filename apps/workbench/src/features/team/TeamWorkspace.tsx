@@ -1,5 +1,5 @@
-// 团队: the shell's 团队 navigation picks the view (分工与运行、职责、分工讨论、组织复盘). The app passes the section the
-// page was opened for, so a page mounted late or kept hidden never takes another address's view. 职责 and 分工与运行
+// 团队: the shell's 团队 navigation picks the view (运行与接入、职责、分工讨论、组织复盘). The app passes the section the
+// page was opened for, so a page mounted late or kept hidden never takes another address's view. 职责 and 运行与接入
 // fill the inner rail and the right column themselves, and so does 分工讨论.
 import { OrganizationReviewList } from "./OrganizationReviewList";
 import type { MutationContext } from "../../shared/ActionForm";

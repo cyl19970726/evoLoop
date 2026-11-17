@@ -62,7 +62,7 @@ export function SessionUsageView({ usage, sessionId, projectId, nativeUsage = nu
       <p className="text-caption text-text-secondary tabular-nums">{gauge.detail}</p>
       {gauge.handoff && <Notice tone="waiting" title="请交接新线程" className="mt-1">
         上下文已到交接阈值：普通结果通知会留在队列里暂停，业务任务的运行不受影响。请用同一职责开新线程，并在交接里写明原智能体、原线程和固定任务。
-        {" "}<a className="text-primary hover:underline" href={href(projectId, "runtime")}>去分工与运行</a>
+        {" "}<a className="text-primary hover:underline" href={href(projectId, "runtime")}>去运行与接入</a>
       </Notice>}
     </div>
     <div className="session-usage-today flex min-w-0 flex-col gap-1">
@@ -77,7 +77,7 @@ export function SessionUsageView({ usage, sessionId, projectId, nativeUsage = nu
       </div>)}</dl> : <p className="text-small text-text-secondary">{session ? "今日没有用量记录，不按 0 计" : "这个智能体还没有用量记录，不按 0 计"}</p>}
     </div>
     {reminder && <p className={cn("text-caption [overflow-wrap:anywhere]", reminder.tone === "blocked" ? "text-destructive" : "text-warning")}>
-      {reminder.text} · <a className="text-primary hover:underline" href={`${href(projectId, "sessions")}#${projectUsageAnchor}`}>查看项目用量</a></p>}
+      {reminder.text} · <a className="text-primary hover:underline" href={`${href(projectId, "arrangement")}#${projectUsageAnchor}`}>查看项目用量</a></p>}
     {(session?.recorded || nativeUsage) && <details className="min-w-0 text-caption text-text-secondary">
       <summary className="w-fit cursor-pointer text-muted-foreground hover:text-foreground">本会话累计</summary>
       <div className="mt-1 flex min-w-0 flex-col gap-0.5 [overflow-wrap:anywhere]">

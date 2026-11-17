@@ -26,7 +26,9 @@ test("every address belongs to one space, and every work page is reachable from 
   }
   assert.equal(leafOf("task"), "work");
   assert.equal(workSectionOf("document"), "documents");
-  assert.equal(workSectionOf("roles"), "runtime");
+  assert.equal(workSectionOf("roles"), "arrangement");
+  assert.equal(workSectionOf("runtime"), "arrangement");
+  assert.equal(workSectionOf("arrangement"), "arrangement");
 });
 
 test("each space reopens where the reader left it, only inside the same project", () => {
