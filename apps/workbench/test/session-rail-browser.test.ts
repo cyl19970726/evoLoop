@@ -69,8 +69,8 @@ test("the agent's right column shows what it does now and next on its first scre
       const blocked = config.locator(".session-adjust-blocked");
       if (item.name === "dev") assert.equal(await blocked.count(), 0, "a full-access agent can adjust: no reason shown");
       else {
-        assert.equal((await blocked.innerText()).trim(), "不能调整：不是完整权限 · 去分工与运行");
-        assert.match(await blocked.getByRole("link", { name: "去分工与运行" }).getAttribute("href") ?? "", /\/runtime$/);
+        assert.equal((await blocked.innerText()).trim(), "不能调整：不是完整权限 · 去运行与接入");
+        assert.match(await blocked.getByRole("link", { name: "去运行与接入" }).getAttribute("href") ?? "", /\/runtime$/);
         const box = (await blocked.boundingBox())!;
         assert.ok(box.height < 24, `${item.name}: the reason is one line (${box.height}px)`);
       }
@@ -103,7 +103,7 @@ test("the agent's right column shows what it does now and next on its first scre
     }
     if (name === "lead") {
       assert.match(text, /需交接新线程[\s\S]*21\.2 万 \/ 20 万（106%）[\s\S]*请交接新线程/, text);
-      assert.match(await usage.getByRole("link", { name: "去分工与运行" }).getAttribute("href") ?? "", /\/runtime$/);
+      assert.match(await usage.getByRole("link", { name: "去运行与接入" }).getAttribute("href") ?? "", /\/runtime$/);
     }
     if (name === "design") assert.match(text, /上下文\s*没有记录[\s\S]*这个智能体还没有用量记录，不按 0 计/, text);
     for (const projectWide of ["每日上限", "用量时区", "项目用量", "Asia/Shanghai"]) assert.equal(text.includes(projectWide), false, `${name}: ${projectWide}`);
@@ -119,7 +119,7 @@ test("the agent's right column shows what it does now and next on its first scre
   const reminder = budgeted.panel.locator("section[aria-label=上下文与用量]").getByText(/项目今日用量接近每日上限（86%）/);
   await reminder.waitFor();
   const toUsage = budgeted.panel.getByRole("link", { name: "查看项目用量" });
-  assert.match(await toUsage.getAttribute("href") ?? "", new RegExp(`/p/${projectId}/sessions#project-usage$`));
+  assert.match(await toUsage.getAttribute("href") ?? "", new RegExp(`/p/${projectId}/arrangement#project-usage$`));
   // Following it lands on 统筹安排 with 项目用量 in view: the limit as a bar, seven days, the time zone below.
   await toUsage.click();
   const block = budgeted.page.locator("#project-usage");
@@ -160,7 +160,7 @@ test("the agent's right column shows what it does now and next on its first scre
     const card = quiet.panel.locator("section[aria-label=上下文与用量]");
     await card.getByText("今日没有用量记录，不按 0 计").waitFor();
     assert.equal(await card.locator(".session-usage-today dl").count(), 0, "no figure tiles");
-    await quiet.page.goto(`${fixture.base}/p/${projectId}/sessions#project-usage`);
+    await quiet.page.goto(`${fixture.base}/p/${projectId}/arrangement#project-usage`);
     await quiet.page.getByLabel("访问令牌").fill(token); await quiet.page.getByRole("button", { name: "进入", exact: true }).click();
     const block = quiet.page.locator("#project-usage");
     await block.getByText("今日没有记录，不按 0 计 · 每日上限 150 万").waitFor();

@@ -1,4 +1,4 @@
-// 分工与运行 wording and rules: managed agents group by state, only full grants create agents, and a close names
+// 运行与接入 wording and rules: managed agents group by state, only full grants create agents, and a close names
 // every recorded blocker instead of being offered on an incomplete read.
 import assert from "node:assert/strict";
 import test from "node:test";

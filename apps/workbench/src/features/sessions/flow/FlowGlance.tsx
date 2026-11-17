@@ -9,7 +9,7 @@ import { href } from "../../../shared/ui/shared";
 import { readBoard, readEventsPage } from "./flowClient";
 import { isStuck, stuckSpots, styleOf } from "./flowModel";
 
-export const flowHref = (projectId: string) => `${href(projectId, "sessions")}?view=flow`;
+export const flowHref = (projectId: string) => `${href(projectId, "arrangement")}?view=flow`;
 
 /** The card is an extra on 总览: if it ever fails to draw, it says so and the page around it stays. */
 class GlanceBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {

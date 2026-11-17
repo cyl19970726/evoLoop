@@ -1,4 +1,4 @@
-// One managed agent (受管 Session) in 分工与运行: identity and permissions, its queue and runs, the old full-access
+// One managed agent (受管 Session) in 运行与接入: identity and permissions, its queue and runs, the old full-access
 // upgrade, and closing it. A close is offered only when nothing in what was read blocks it, and every blocker is
 // named; the service checks again when the request is sent.
 import { useState } from "react";

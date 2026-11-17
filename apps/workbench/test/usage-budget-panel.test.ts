@@ -58,7 +58,7 @@ test("a project close to its daily limit is one reminder line linking to 统筹�
   const warning = { ...overview, budget: { ...overview.budget, state: "warning" as const, ratio: 0.86 } };
   const html = renderToStaticMarkup(createElement(SessionUsageView, { usage: warning, sessionId: "session", projectId: "project" }));
   assert.match(html, /项目今日用量接近每日上限（86%）/);
-  assert.match(html, /href="\/p\/project\/sessions#project-usage"[^>]*>查看项目用量/);
+  assert.match(html, /href="\/p\/project\/arrangement#project-usage"[^>]*>查看项目用量/);
   const none = renderToStaticMarkup(createElement(SessionUsageView, { usage: overview, sessionId: "other", projectId: "project" }));
   assert.match(none, /没有记录/);
   assert.match(none, /这个智能体还没有用量记录，不按 0 计/);

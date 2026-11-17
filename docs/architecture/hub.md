@@ -237,13 +237,15 @@ sequenceDiagram
 | `evoloop machine status` | 只写公开事实：机器 ID、名称、Hub 地址、根目录、加入时间；再用机器自己的签名问 Hub 当前状态与是否在线。永不打印私钥；Hub 不可达只写 `hubReachable:false` |
 | `evoloop machine leave [--local-only]` | 先用签名通知 Hub 移除，再删除本机凭据。Hub 不可达时什么也不删，除非 `--local-only`（那时 Hub 管理员必须另行移除机器）。**不碰项目数据库、项目数据和 coordinator** |
 
-凭据只有一个文件：`$EVOLOOP_MACHINE_DIR/machine.json`（默认 `~/.evoloop/machine/`），目录 0700、文件 0600，不在任何仓库里。这些命令不需要 coordinator 令牌，也不经过 `EVOLOOP_API_URL`。coordinator 每次用到凭据都先看文件（只在变化时重读），所以 `machine leave` 对下一次请求就生效：没有凭据就不接受任何 Hub 身份，连接器也停下。
+凭据只有一个文件：`$EVOLOOP_MACHINE_DIR/machine.json`（`machine join` 在没指定目录时写到 `~/.evoloop/machine/`），目录 0700、文件 0600，不在任何仓库里。**coordinator 只读 `EVOLOOP_MACHINE_DIR` 指的目录，没有默认**：没设这个变量的 coordinator（测试、隔离或本地实例）不读默认位置的凭据，也不连 Hub，启动时若默认位置有凭据会写一行说明；这台机器自己的那个 coordinator 必须带 `EVOLOOP_MACHINE_DIR` 启动（Task b8460d62，原因见下一节）。这些命令不需要 coordinator 令牌，也不经过 `EVOLOOP_API_URL`。coordinator 每次用到凭据都先看文件（只在变化时重读），所以 `machine leave` 对下一次请求就生效：没有凭据就不接受任何 Hub 身份，连接器也停下。
 
 Hub 侧（迁移 `002_machines.sql`，Hub 自己的迁移号）：`hub_machine`（机器、公钥、状态 `pending|active|removed`、根目录、最后在线）、`hub_machine_join_code`（只存 SHA-256、10 分钟、一次）、`hub_signing_key`（签发身份的 Ed25519 密钥，`kid` 为日后换钥留位），以及 `hub_service_identity_project` 新增的每项目权限列。移除机器会立即把该机器标为 `removed`、删掉未用的加入码、关闭它的连接，并把放在它上面的项目的机器占位清空（项目记录和机器上的数据都保留）。
 
 ### 12.2 连接器与在线状态
 
 连接器在 coordinator 进程里，**只向外连，不监听任何端口**。它向 Hub 发一个带签名的 `POST /api/machine/connect`，Hub 的响应一直不结束：每行一个 JSON 帧（`hello`、`ping`、`request`、`bye`）。这样不需要新依赖，也能穿过普通反向代理；它不是 WebSocket。Hub 的请求从这条连接发出，机器的结果用单独的签名 `POST /api/machine/respond` 送回。机器每个心跳间隔（默认 15 秒）发 `POST /api/machine/heartbeat`；三个间隔没有心跳，Hub 认为机器离线并关闭这条连接。连接器侧三个间隔没有收到任何帧就自己断开重连。断线按 1 秒起、最长 30 秒指数退避重连；Hub 说机器已被移除（`MACHINE_REMOVED`）就不再重连，直到凭据文件变成另一台机器。
+
+**一台机器同一时间只有一个存活连接，第二个进程得到明确冲突。** 两个进程共用一份机器凭据时（例如隔离实例读到了正式机器的默认凭据），旧实现里每次新连接都静默替换旧连接：两边每隔约一秒互相踢掉对方再重连，机器端的 connect 与 heartbeat 从每分钟个位数升到约 50 次，转发请求一半落在没有这个项目的那个进程上，得到 401“转发身份未被接受”或 502。2026-11-17 正式 Hub 验收里见到的就是这个（Task 48417d4f 观察 3c6ba3b3；自建 Hub 加两个真实 coordinator 复现：connect 由 0 升到每分钟约 570 次，24 次转发读 12 次 200、12 次 401）。现在：连接器每个进程自生成一个随机 `instance` ID（不是凭据）随每个机器请求发送（`x-evoloop-machine-instance`）。Hub 对同一机器：同一 instance 重连，立即替换它自己的旧链路；另一个 instance 在现有连接仍存活（三个心跳间隔内有心跳）时被拒，返回 `409 MACHINE_CONNECTION_CONFLICT`，现有连接不动；现有连接静默超过三个心跳间隔后，另一个 instance 可以接管（记为“替换了已静默的旧连接”），所以不会永久锁死；没有发 instance 的旧版连接器视为另一个进程。心跳与答复只对自己 instance 的连接有效，被拒进程的心跳不会让对方“续命”。被拒的 coordinator 写一行可读的话（机器 ID、不要共用 `EVOLOOP_MACHINE_DIR`），以最长退避重试，对方退出后自己接上；老 Hub 反复替换同一连接时，连接器在一分钟内第 3 次被替换会写出同样的提示。冲突与替换的记录：Hub 日志里的 `machine connection REFUSED …`、`replaced: the previous connection had gone quiet`（只有机器 ID、连接 ID 与 instance 前 8 位，没有密钥、令牌或签名），管理员接口 `GET /api/admin/machines` 每台机器的 `connectionConflicts`（自 Hub 启动起被拒次数与最近时间，只在内存里），以及 coordinator 的日志。已知取舍：连接异常断开而 Hub 还没发现时，从另一个进程重启的 coordinator 最多要等三个心跳间隔（默认 45 秒）加一次退避才能接上。
 
 机器每个请求都带签名：机器 ID、动作、毫秒时间、一次性 nonce 和请求体 SHA-256，用机器私钥签；Hub 用加入时上传的公钥验，时间窗 ±60 秒，nonce 只用一次。未加入、已移除、签名不对、时间过期、重放，各自拒绝，已移除的机器哪怕签名正确也立即被拒。Hub 的连接表在内存里：Hub 重启后没有连接，机器会自己重连；Hub 只部署一个进程。
 
