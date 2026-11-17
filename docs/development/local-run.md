@@ -368,6 +368,23 @@ git diff --check
 - **挂住。** 内存不足后曾有测试进程不再结束，会拖到整个作业超时。运行器给每个文件设单文件超时（`EVOLOOP_INTEGRATION_FILE_TIMEOUT_SECONDS`，默认 600 秒，最大的文件约 60 秒），超时即杀掉并计为失败；两个测试作业另设 `timeout-minutes`。
 - **范围外。** 没有改 90 个测试文件的清理方式（例如按库删除代替删 schema）：能把每个文件的占用降到接近零，但要逐个动夹具，留作建议。
 
+### 候选验收里的假执行服务
+
+自建的候选实例没有真实的执行服务时，涉及消息派发、Session 或原生回合的验收条件，可以用仓库测试里的假执行服务走通，不用模型、不花额度。它证明的是“消息被保存、被派发、进了原生回合并有回复”这条路径；模型的行为和真实提供方的故障不在它的范围里。
+
+- **夹具。** `packages/adapter-claude-agent-sdk/test/fake-claude.mjs` 是假的 Claude Code 命令行，按固定版本 SDK 的控制协议应答，不调用任何模型接口。`packages/adapter-codex-app-server/test/fixture.mjs` 是假的 Codex App Server，同目录还有 `direct-input-fixture.mjs` 和 `native-input-fixture.mjs`。两个夹具都不用改代码。
+- **私有配置要填的键**（以 Claude 一侧为例；值写在仓库外的私有集成配置里）：
+  - `runtime.provider` 写 `claude`；`runtime.claude.executable` 指向检出目录里的 `fake-claude.mjs`；`runtime.claude.configRoot` 用一个私有目录。
+  - `runtime.grants` 里的模型写夹具报告的 `claude-fake-1`。
+  - `runtime.materialCli` 和 `residentQueue.roleActors`：把 Role 绑到一个业务身份。
+  - `sessionMessages.grants`：发送者到新 Session 的消息授权。
+- **Role。** 用 `tests/integration/role-fixture.test.ts` 里的 `seedFixtureRole` 种入。
+- **建 Session。** 用 `session prepare`：第一次返回 `waiting_for_native_thread`，再读一次为 `ready`，原生线程已绑定、`missing` 为空。
+- **走通一条消息。** 用 `work send` 发一条普通消息，保存后是 `queued`；调度程序处理后读回 `replied`，`processing.state` 为 `completed`，`responseKind` 为 `native`。适配器账本里这一回合的输入以发送者那一行开头，后面是 Role 的固定修订和消息正文。
+- **反例。** 把这条消息授权关掉再发，返回 `MESSAGE_GRANT_MISSING`，消息不保存。
+
+实例用自己的 PostgreSQL 和自己的 coordinator，不连 Hub、不连线上库（见[开发与测试用哪个数据库](database-isolation.md)）；核完后停掉进程并删除数据、私有配置和令牌。这条路径在 PR #463 的合并前验收（Task `354dc1d7`）里实际走通过。
+
 ### 磁盘回收与测试实例约定
 
 常驻主机的磁盘曾只剩 4.4 GB：工作区里 46 个工作树各带一份约 758 MB 的依赖，约 20 个测试用 PostgreSQL 实例（每个约 1.4 GB）没人停。手工清理不会自己重复，所以由脚本回收，并在例行报告里报告剩余空间。
