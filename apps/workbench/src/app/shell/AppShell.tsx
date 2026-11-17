@@ -48,6 +48,17 @@ export function AppShell(props: AppShellProps) {
   React.useEffect(() => { rememberSpace(store, actor, projectId, parseRoute(path), path); }, [store, actor, projectId, path]);
   const title = route.section === "sessions" || space === "agents" ? spaceLabels.agents : sectionLabels[route.section];
   React.useEffect(() => { document.title = `${title} · ${props.projectTitle || "evoLoop"}`; }, [title, props.projectTitle]);
+  // On a phone the top bar already names the page. A page title that says exactly the same (任务 / 过程文档 / 日程 …) is marked, and shown to screen readers only below 760px
+  // (the `max-compact:` class on <main>); a title that says more (a task's name, 项目总览 under 总览) stays. Wide screens have no top bar and keep every title (task 4f6c948f).
+  const mainRef = React.useRef<HTMLElement>(null);
+  React.useEffect(() => {
+    const main = mainRef.current; if (!main) return;
+    const mark = () => { for (const heading of main.querySelectorAll("h1")) { if (heading.textContent?.trim() === title) heading.setAttribute("data-echo", ""); else heading.removeAttribute("data-echo"); } };
+    mark();
+    const observer = new MutationObserver(mark);
+    observer.observe(main, { childList: true, subtree: true, characterData: true });
+    return () => observer.disconnect();
+  }, [title]);
   const [sessionStates, setSessionStates] = React.useState<Record<string, SessionNavigationState>>({});
   const scope = `${actor}:${projectId}`;
   const sessionState = sessionStates[scope] ?? emptySessionNavigationState();
@@ -120,7 +131,7 @@ export function AppShell(props: AppShellProps) {
         </nav>
         {!railHidden && <div className="sticky top-0 hidden h-dvh compact:block"><ContextRail {...railProps} /></div>}
         <div className="flex min-w-0 bg-background compact:m-2 compact:ml-0 compact:min-h-[calc(100dvh-16px)] compact:rounded-xl compact:shadow-lg">
-          <main id="workspace-main" tabIndex={-1} className="min-w-0 flex-1 outline-none max-compact:pb-20">{props.notices?.map(({ key, ...notice }) => <ShellNotice key={key} {...notice} />)}{props.children}</main>
+          <main id="workspace-main" ref={mainRef} tabIndex={-1} className="min-w-0 flex-1 outline-none max-compact:pb-20 max-compact:[&_h1[data-echo]]:sr-only">{props.notices?.map(({ key, ...notice }) => <ShellNotice key={key} {...notice} />)}{props.children}</main>
           <ContextPanelColumn />
         </div>
       </div>

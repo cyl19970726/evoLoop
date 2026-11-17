@@ -70,6 +70,24 @@ test("one 新建任务 action, one name per level, one 文档 / 知识 switch, t
     }
   }
 
+  // On a phone the top bar names the page, so a page title that says the same is not shown a second time (screen readers still get it); on a wide screen every title stays.
+  const visibleH1 = (page: any) => page.evaluate(`[...document.querySelectorAll("main h1")].filter(el => { const r = el.getBoundingClientRect(); return r.width > 2 && r.height > 2; }).map(el => el.textContent.trim())`) as Promise<string[]>;
+  const barTitle = (page: any) => page.evaluate(`(document.querySelector("[data-shell=mobile-header] span")?.textContent ?? "").trim()`) as Promise<string>;
+  for (const name of ["tasks", "documents", "task-new", "journey", "schedules", "repository", "team-runtime"]) {
+    const phone = await open(390, 844, scene(name).path, scene(name).ready);
+    const bar = await barTitle(phone.page);
+    assert.ok(bar.length > 0, `${name}: the phone has a top bar title`);
+    assert.ok(!(await visibleH1(phone.page)).includes(bar), `${name}: the top bar says "${bar}" and the page does not say it again (${JSON.stringify(await visibleH1(phone.page))})`);
+    assert.equal(await phone.page.locator("main h1[data-echo]").count(), 1, `${name}: the repeated title is still in the page for screen readers`);
+    if (shots && (name === "tasks" || name === "documents")) await phone.page.screenshot({ path: `${shots}/echo-${name}-390.png` });
+    await phone.context.close();
+    const wide = await open(1440, 900, scene(name).path, scene(name).ready);
+    assert.ok((await visibleH1(wide.page)).length >= 1, `${name}: a wide screen keeps its page title`);
+    await wide.context.close();
+  }
+  // A page whose title says more than the bar keeps it (a task's name under 任务).
+  { const phone = await open(390, 844, scene("task").path, scene("task").ready); assert.deepEqual((await visibleH1(phone.page)).length > 0, true, "a task's own title stays"); await phone.context.close(); }
+
   // The old deep links still open (no 找不到这个页面), with their parameters.
   const links = [`/p/${projectId}/work?state=all&kind=all&sort=due`, `/p/${projectId}/tasks/${tasks.t1.id}?tab=delivery`, `/p/${projectId}/tasks/new`,
     `/p/${projectId}/documents/${docs.map.id}`, `/p/${projectId}/knowledge`, `/p/${projectId}/repository`];
