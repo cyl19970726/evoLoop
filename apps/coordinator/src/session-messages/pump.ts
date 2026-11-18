@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { RuntimeBinding, RuntimePage, RuntimeTurn } from '@evoloop/contracts/runtime';
 import type { NativeObservationRecord } from '@evoloop/contracts/native-observation';
 import type { SessionMessageRecord, SessionMessageResponseKind } from '@evoloop/contracts/session-messages';
-import { SessionMessageService } from '@evoloop/core/session-messages';
+import { SessionMessageService, neverStartedProof } from '@evoloop/core/session-messages';
 import { DomainError } from '@evoloop/contracts/ports';
 import { RuntimeLocalBusyError, RuntimeProtocolError, RuntimeServerError, RuntimeUnknownError } from '@evoloop/adapter-codex-app-server';
 import { bindingOf, finalMessages } from '../runtime/runner.js';
@@ -260,6 +260,10 @@ export class SessionMessagePump {
     if(!turn&&first.nextCursor)turn=(await runtime.listTurns(binding,first.nextCursor)).data.find(t=>t.id===nativeTurnId);
     if(!turn){
       if(nativeTurnId&&await this.mayDeferMissingBoundTurn(message.projectId,session.id,binding,nativeTurnId))return;
+      // Task a533cb64: the newest native Turn ended before this dispatch began and the grace has passed, so the bound Turn never
+      // started (host down between turn/start and the native record). Fail it instead of holding the Session unknown forever.
+      const proof=record.startedAt?neverStartedProof({...record,nativeTurnId},first.data,this.deps.now?.()??Date.now()):null;
+      if(proof){await this.deps.service.failNeverStarted(message.projectId,message.id,proof);return;}
       await this.deps.service.markUnknown(message.projectId,message.id,'Bound native Turn is not currently readable');return;
     }
     if(!turn.completedAtUtc||!['completed','failed','interrupted'].includes(turn.status)){
