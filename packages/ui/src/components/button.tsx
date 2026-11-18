@@ -19,8 +19,8 @@ export const buttonVariants = cva(
         ghost: "bg-transparent text-text-secondary hover:bg-field hover:text-foreground",
         danger: "bg-danger-soft text-destructive hover:bg-selected",
         link: "rounded-sm bg-transparent font-normal text-primary underline-offset-4 hover:underline disabled:text-muted-foreground disabled:opacity-100",
-        row: "w-full justify-start whitespace-normal rounded-md bg-transparent text-left font-normal text-text-secondary hover:bg-selected hover:text-foreground aria-pressed:bg-accent aria-pressed:hover:bg-accent aria-pressed:font-medium aria-pressed:text-accent-strong aria-[current=true]:bg-accent aria-[current=true]:hover:bg-accent aria-[current=true]:font-medium aria-[current=true]:text-accent-strong",
-        tab: "rounded-md bg-transparent px-2.5 py-1 text-small font-normal text-text-secondary hover:bg-selected aria-selected:bg-accent aria-selected:hover:bg-accent aria-selected:text-accent-strong",
+        row: "selected-edge w-full justify-start whitespace-normal rounded-md bg-transparent text-left font-normal text-text-secondary hover:bg-selected hover:text-foreground aria-pressed:bg-accent aria-pressed:hover:bg-accent aria-pressed:font-medium aria-pressed:text-accent-strong aria-[current=true]:bg-accent aria-[current=true]:hover:bg-accent aria-[current=true]:font-medium aria-[current=true]:text-accent-strong",
+        tab: "rounded-md bg-transparent px-2.5 py-1 text-small font-normal text-text-secondary hover:bg-selected aria-selected:bg-accent aria-selected:hover:bg-accent aria-selected:text-accent-strong aria-selected:shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--accent)_55%,transparent)] aria-selected:focus-visible:shadow-[var(--focus-ring)]",
       },
       size: {
         default: "h-9 px-4 text-small [&_svg]:size-4",

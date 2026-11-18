@@ -40,6 +40,7 @@
   --color-user-bubble: var(--user-bubble);
   --color-on-user-bubble: var(--on-user-bubble);
   --color-field: var(--surface-field);
+  --color-tab-track: var(--tab-track);
   --color-raised: var(--surface-raised);
   --radius-sm: var(--radius-inline);
   --radius-md: var(--radius-control);
@@ -60,4 +61,11 @@
   --breakpoint-compact: 47.5rem;
   --breakpoint-desktop: 68.75rem;
   --breakpoint-wide: 90rem;
+}
+
+/* The place you are, besides its fill: a 3px accent edge on a selected row, card or link (palette B, Task a523f45e). The fill alone (accent-soft) is too close to the panel. */
+@utility selected-edge {
+  &[aria-current="page"], &[aria-current="true"], &[aria-pressed="true"] { box-shadow: inset 3px 0 0 var(--accent); }
+  /* The keyboard focus ring (DEC-049, drawn inside the element) stays on top of the edge: a selected place that has focus shows both. */
+  &[aria-current="page"]:focus-visible, &[aria-current="true"]:focus-visible, &[aria-pressed="true"]:focus-visible { box-shadow: var(--focus-ring), inset 3px 0 0 var(--accent); }
 }

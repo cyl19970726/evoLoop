@@ -60,7 +60,7 @@ export function DiscussionPanel({ context, refresh }: { context: MutationContext
         <div className="flex items-center justify-between gap-2 px-3 pb-1.5 pt-2">
           <span className="text-caption text-muted-foreground">{listed ? `讨论 · ${items.length}${list.more || list.repeatedCursor ? "+" : ""}` : "讨论"}</span>
           {canWrite(context, "task") && <a href={prepareHref(projectId)} aria-current={address.preparing ? "page" : undefined}
-            className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-caption text-text-secondary outline-none hover:bg-selected focus-visible:shadow-[var(--focus-ring)]", address.preparing && "bg-accent text-accent-strong hover:bg-accent")}>
+            className={cn("selected-edge inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-caption text-text-secondary outline-none hover:bg-selected focus-visible:shadow-[var(--focus-ring)]", address.preparing && "bg-accent text-accent-strong hover:bg-accent")}>
             <Plus size={12} aria-hidden="true" />准备讨论</a>}
         </div>
         <label className="px-3 pb-2"><span className="sr-only">讨论范围</span>
@@ -76,7 +76,7 @@ export function DiscussionPanel({ context, refresh }: { context: MutationContext
           const row = listRow(item, taskName(item.task?.id), scope === "all", choices.isPending);
           const selected = !address.preparing && item.id === selectedId;
           return <a key={item.id} href={discussionHref(projectId, item.id)} aria-current={selected ? "page" : undefined}
-            className={cn("flex flex-col rounded-lg px-3 py-1.5 outline-none focus-visible:shadow-[var(--focus-ring)]", selected ? "bg-accent hover:bg-accent" : "hover:bg-selected")}>
+            className={cn("selected-edge flex flex-col rounded-lg px-3 py-1.5 outline-none focus-visible:shadow-[var(--focus-ring)]", selected ? "bg-accent hover:bg-accent" : "hover:bg-selected")}>
             <span className="truncate text-small text-foreground">{row.title}</span>
             {row.meta && <span className="truncate text-caption text-muted-foreground">{row.meta}</span>}
           </a>;

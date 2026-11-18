@@ -5,28 +5,29 @@
   color-scheme: light;
 
   /* Colour: surfaces, from back to front */
-  --surface-sunken: #efebe5;   /* app background behind the rails */
-  --background: #fcfbf8;       /* the raised work panel: content and right panel */
+  --surface-sunken: #e4ded4;   /* app background behind the rails */
+  --background: #faf8f3;       /* the raised work panel: content and right panel */
   --surface-raised: #ffffff;      /* cards that float on the panel, popovers, composer */
-  --surface-muted: #f5f2ed;    /* soft blocks inside the panel: facts, tool steps, todo list */
-  --surface-field: #e7e3dc;    /* inputs and chips (buttons are brand, DEC-051) */
-  --surface-selected: #e3dcd3; /* hovered row in the rails and lists (a selected row is accent-soft, DEC-051) */
+  --surface-muted: #eee9e0;    /* soft blocks inside the panel: facts, tool steps, todo list */
+  --surface-field: #e1dbd0;    /* inputs and chips (buttons are brand, DEC-051) */
+  --surface-selected: #dcd4c8; /* hovered row in the rails and lists (a selected row is accent-soft, DEC-051) */
+  --tab-track: var(--surface-selected); /* the fill behind a tab strip: darker than the selected tab, so the tab reads against it */
 
   /* Colour: text */
   --text: #1c1714;
   --text-secondary: #49423d;
-  --text-muted: #635d57;
+  --text-muted: #5b554f;
   --on-accent: #ffffff;
 
   /* Colour: lines */
-  --border: #e4dfd8;
-  --border-strong: #d0c9c1;
+  --border: #d2cbc0;
+  --border-strong: #bbb1a4;
 
   /* Colour: roles (no green) */
   --accent: #2a52a8;
   --accent-strong: #1b4090;
   --accent-soft: #e5edfc;
-  --warning: #825805;
+  --warning: #775000;
   --warning-soft: #fceed1;
   --danger: #a3203a;
   --danger-soft: #fde9e9;
@@ -109,27 +110,28 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --surface-sunken: #0c0b09;
-  --background: #161412;
-  --surface-raised: #24211f;
-  --surface-muted: #1c1a18;
-  --surface-field: #2a2725;
-  --surface-selected: #322e2a;
+  --surface-sunken: #090807;
+  --background: #171513;
+  --surface-raised: #2f2c28;
+  --surface-muted: #232019;
+  --surface-field: #363330;
+  --surface-selected: #3c3833;
+  --tab-track: var(--surface-sunken);
 
   --text: #eae7e3;
   --text-secondary: #c0bbb6;
-  --text-muted: #9f9a94;
+  --text-muted: #b0aba5;
   --on-accent: #0f1216;
 
-  --border: #2a2826;
-  --border-strong: #3e3b38;
+  --border: #3d3a35;
+  --border-strong: #55514b;
 
   --accent: #90aef3;
   --accent-strong: #b2c9fb;
   --accent-soft: #222d47;
   --warning: #e3b667;
   --warning-soft: #362913;
-  --danger: #ec8287;
+  --danger: #f08e92;
   --danger-soft: #3f1e20;
   --done: #c99dd3;
   --done-soft: #332337;

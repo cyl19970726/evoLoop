@@ -56,7 +56,7 @@ export function CountDot({ count, className }: { count: number | null; className
 export type NoticeTone = "info" | "waiting" | "error";
 
 const noticeTones: Record<NoticeTone, string> = {
-  info: "bg-accent text-foreground",
+  info: "bg-muted text-foreground shadow-[inset_3px_0_0_var(--accent)]",
   waiting: "bg-warning-soft text-foreground",
   error: "bg-danger-soft text-foreground",
 };

@@ -93,7 +93,7 @@ export function ExecutionView({ context, sessionId }: { context: MutationContext
     <ContextRailContent>
       <nav aria-label="受管智能体" className="flex flex-col gap-0.5 pt-1">
         <a href={href(projectId, "runtime")} aria-current={!sessionId ? "page" : undefined}
-          className={cn("rounded-lg px-3 py-1.5 text-small outline-none focus-visible:shadow-[var(--focus-ring)]", !sessionId ? "bg-accent font-medium text-accent-strong hover:bg-accent" : "text-text-secondary hover:bg-selected")}>运行总览与新建</a>
+          className={cn("selected-edge rounded-lg px-3 py-1.5 text-small outline-none focus-visible:shadow-[var(--focus-ring)]", !sessionId ? "bg-accent font-medium text-accent-strong hover:bg-accent" : "text-text-secondary hover:bg-selected")}>运行总览与新建</a>
         {sessionsRead.isPending && <span className="px-3 py-2 text-caption text-muted-foreground">正在读取受管智能体…</span>}
         {sessionsError && <span className="px-3 py-2 text-caption text-destructive">{sessions.length ? "本次核对失败，下列是上次读回" : "受管智能体暂不可读"}；原因见中间页首。</span>}
         {groups.map(group => <div key={group.key} className="flex flex-col gap-0.5">
@@ -101,7 +101,7 @@ export function ExecutionView({ context, sessionId }: { context: MutationContext
           {group.items.map(item => {
             const name = nameOf(item.roleId);
             return <a key={item.id} href={executionHref(projectId, item.id)} aria-current={sessionId === item.id ? "page" : undefined}
-              className={cn("flex flex-col rounded-lg px-3 py-1.5 outline-none focus-visible:shadow-[var(--focus-ring)]", sessionId === item.id ? "bg-accent hover:bg-accent" : "hover:bg-selected")}>
+              className={cn("selected-edge flex flex-col rounded-lg px-3 py-1.5 outline-none focus-visible:shadow-[var(--focus-ring)]", sessionId === item.id ? "bg-accent hover:bg-accent" : "hover:bg-selected")}>
               <span className="truncate text-small text-foreground">{name.title ?? name.fallback}</span>
               <span className="truncate text-caption text-muted-foreground">{sessionStateLine(item)} · <AgentName projectId={projectId} sessionId={item.id} /></span>
             </a>;
