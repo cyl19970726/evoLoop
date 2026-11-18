@@ -1,0 +1,106 @@
+name: 缺陷
+description: 报告 evoLoop 的可复现错误、失败或行为回退
+title: "[缺陷] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前先搜索开放和已关闭的 issue，并删除令牌、私有路径、主机名、原始会话记录和别人的数据。
+
+        **1. 类型**：缺陷
+
+  - type: input
+    id: summary
+    attributes:
+      label: "2. 一句话"
+      description: 谁在做什么时遇到了什么结果。只写现象，不写猜测的原因。
+      placeholder: 例如：登录后打开版本页时，页面持续显示加载中。
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: "3. 环境"
+      description: 写 evoLoop commit、实例、入口、运行时与模型、提交者、来源项目。公开内容不要带私有域名、主机名或路径。
+      placeholder: |
+        evoLoop 版本（/api/version 的 commit）：
+        实例：
+        入口：
+        运行时与模型：
+        提交者：
+        来源项目：
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: "4. 复现步骤、预期与实际"
+      description: 从普通入口开始写最短步骤，并分别写预期与实际。
+      placeholder: |
+        步骤：
+        1.
+
+        预期：
+
+        实际：
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: "5. 证据"
+      description: 写已去敏的错误码、报错原文、操作 ID、截图或可公开链接。Task/Session ID 要注明来自哪个实例。
+      placeholder: |
+        错误码：
+        报错原文（已去敏）：
+        操作 ID：
+        截图或可公开链接：
+        Task/Session ID（注明实例）：
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: "6. 影响"
+      description: 说明是否挡住工作、有无绕开办法、频率和影响范围。
+      placeholder: |
+        是否挡住工作：
+        绕开办法：
+        频率：
+        严重度：
+    validations:
+      required: true
+
+  - type: textarea
+    id: checked
+    attributes:
+      label: "7. 已排查"
+      description: 写搜过的重复关键词与结果、最新版本、能否复现及其他相邻检查。
+      placeholder: |
+        搜过的重复关键词与结果：
+        最新版本：
+        能否复现：
+        其他相邻检查：
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: "8. 隐私自检"
+      description: 仓库公开，以下各项均须确认。
+      options:
+        - label: 已删除令牌、Cookie 和密钥。
+          required: true
+        - label: 已删除私有路径、主机名、内部 URL。
+          required: true
+        - label: 已删除原始会话记录、完整日志和附件中的他人数据。
+          required: true
+        - label: 截图和报错已裁掉或打码敏感内容。
+          required: true
+        - label: 内容可以出现在公开仓库。
+          required: true
