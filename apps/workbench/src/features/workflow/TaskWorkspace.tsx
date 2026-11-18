@@ -52,11 +52,11 @@ export function ViewSwitch({ detailHref, tableHref, current, narrow = false, lay
   detailHref: string | null; tableHref: string; current: "detail" | "table"; narrow?: boolean; layout?: NarrowTaskLayout;
 }) {
   const item = "rounded-full px-3 py-1 text-label text-muted-foreground no-underline outline-none transition-colors hover:text-foreground focus-visible:shadow-[var(--focus-ring)]";
-  const selected = "bg-accent font-medium text-accent-strong";
+  const selected = "bg-accent font-medium text-accent-strong shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--accent)_55%,transparent)]";
   const listLink = (label: string, shows: boolean, choice?: NarrowTaskLayout) =>
     <a key={label} href={tableHref} aria-current={current === "table" && shows ? "page" : undefined} onClick={choice ? () => chooseLayout(choice) : undefined}
       className={cn(item, current === "table" && shows && selected)}>{label}</a>;
-  return <nav aria-label="任务视图" className="inline-flex items-center gap-0.5 rounded-full bg-field p-1">
+  return <nav aria-label="任务视图" className="inline-flex items-center gap-0.5 rounded-full bg-tab-track p-1">
     {detailHref ? <a href={detailHref} aria-current={current === "detail" ? "page" : undefined} className={cn(item, current === "detail" && selected)}>正文</a>
       : <span aria-disabled="true" className={cn(item, "opacity-50")}>正文</span>}
     {narrow ? [listLink("列表", layout === "list", "list"), listLink("表格", layout === "table", "table")] : listLink("表格", true)}

@@ -126,7 +126,7 @@ function EvaluationRail({ list, projectId, selectedId, filtered }: {
       {items.map(item => {
         const selected = item.evaluationId === selectedId;
         return <a key={`${item.evaluationId}:${item.id}`} href={evaluationListHref(projectId, item)} aria-current={selected ? "page" : undefined}
-          className={cn("flex w-full min-w-0 flex-col gap-0.5 rounded-lg px-3 py-2 text-left outline-none focus-visible:shadow-[var(--focus-ring)]", selected ? "bg-accent hover:bg-accent" : "hover:bg-selected")}>
+          className={cn("selected-edge flex w-full min-w-0 flex-col gap-0.5 rounded-lg px-3 py-2 text-left outline-none focus-visible:shadow-[var(--focus-ring)]", selected ? "bg-accent hover:bg-accent" : "hover:bg-selected")}>
           <span className={cn("truncate text-small text-foreground", selected && "font-medium")}>{item.definition.question}</span>
           <span className="truncate text-caption text-muted-foreground">《{frozenTaskTitle(item)}》 · v{item.version}</span>
         </a>;
