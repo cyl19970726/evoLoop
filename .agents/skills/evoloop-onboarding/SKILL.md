@@ -40,6 +40,7 @@ description: 把一个新项目接入 evoLoop：先判断情况，再按步骤�
 | 仓库 | 已有仓库 | 每个 Session 一个独立克隆作工作目录；验收者用自己的克隆 |
 | | 新仓库 | 先建仓库并有第一个提交，再做第 1 步 |
 | | 没有仓库（纯文档/运营项目） | 不配 `repositories`；工作目录仍要有，放 Session 的工作材料 |
+| 向上游报告问题 | 需要给 evoLoop 提 issue | 接入时一并把 [evoloop-issue](../evoloop-issue/SKILL.md) 交给业务 Session；它规定同一套八项字段、先查重、去敏和智能体归属标签，不授予代班回复权限 |
 | 有没有现成 Role | 没有（最常见） | 从 **Leader（system Lead）+ 一个业务 Role** 起步，不一次建全阵容（DEC-001）；验收由业务 Role 下另一个有独立身份的 Session 承担，不新建 QA Role（DEC-038、DEC-046） |
 | | 想沿用 evoLoop 自己的 Role 写法 | 只借鉴职责写法；每个 Role 仍在新项目里重新提议、重新接受试行 |
 | 运行时与模型（决定类） | Codex / Claude | 每个 Role 只绑定一种运行时，绑定后不能换（DEC-035）；选的运行时必须是实例在驱动的（`runtime.providers`，没写时只有 `runtime.provider`，默认 `codex`），沿用已有实例时先核对，不在就交使用者定，见[终态清单·E4](references/end-state.md#e4-读到-not_configured-时)；运行时要先在主机上登录好（[本机运行](../../../docs/development/local-run.md)的 Codex 与 Claude 两段），接入者不替人登录。每个 Session 用哪个模型由使用者定；没定时按使用者已表达的偏好选，并写进接入记录。Codex 会为每个新工作目录往 codexHome 的 `config.toml` 追加一条信任条目；与使用者共用 codexHome 时，这会改动使用者自己的配置，接入前说明，试用结束后由使用者决定是否清理 |

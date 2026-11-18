@@ -1,0 +1,105 @@
+name: 改进
+description: 提出可复现、可判断效果的 evoLoop 使用或能力改进
+title: "[改进] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前先搜索开放和已关闭的 issue，并删除令牌、私有路径、主机名、原始会话记录和别人的数据。
+
+        **1. 类型**：改进
+
+  - type: input
+    id: summary
+    attributes:
+      label: "2. 一句话"
+      description: 谁在完成什么工作时，当前做法遇到什么结果或成本。
+      placeholder: 例如：需求会话整理重复报告时，需要手工比对多份历史版本，容易遗漏。
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: "3. 环境"
+      description: 写 evoLoop commit、实例、入口、运行时与模型、提交者、来源项目。公开内容不要带私有域名、主机名或路径。
+      placeholder: |
+        evoLoop 版本（/api/version 的 commit）：
+        实例：
+        入口：
+        运行时与模型：
+        提交者：
+        来源项目：
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: "4. 复现步骤、预期与实际"
+      description: 按普通入口写当前步骤；把现状放在“实际”，希望改善的可观察结果放在“预期”。
+      placeholder: |
+        当前步骤：
+        1.
+
+        预期改善：
+
+        当前实际：
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: "5. 证据"
+      description: 写已去敏的错误码、操作 ID、截图、耗时或可公开链接。Task/Session ID 要注明来自哪个实例。
+      placeholder: |
+        错误码或操作 ID：
+        截图或可公开链接：
+        耗时或重复次数：
+        Task/Session ID（注明实例）：
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: "6. 影响"
+      description: 说明改进会改善哪项工作、有无绕开办法、发生频率和当前工作成本。
+      placeholder: |
+        影响的工作：
+        绕开办法：
+        频率：
+        工作成本：
+    validations:
+      required: true
+
+  - type: textarea
+    id: checked
+    attributes:
+      label: "7. 已排查"
+      description: 写搜过的重复关键词与结果、最新版本上的现状及其他相邻检查。
+      placeholder: |
+        搜过的重复关键词与结果：
+        最新版本：
+        当前现状：
+        其他相邻检查：
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: "8. 隐私自检"
+      description: 仓库公开，以下各项均须确认。
+      options:
+        - label: 已删除令牌、Cookie 和密钥。
+          required: true
+        - label: 已删除私有路径、主机名、内部 URL。
+          required: true
+        - label: 已删除原始会话记录、完整日志和附件中的他人数据。
+          required: true
+        - label: 截图和报错已裁掉或打码敏感内容。
+          required: true
+        - label: 内容可以出现在公开仓库。
+          required: true
