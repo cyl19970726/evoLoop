@@ -13,6 +13,33 @@ const sameTarget = (a:SessionMessageRecord['target'],b:SessionMessageRecord['tar
   a.kind===b.kind && (a.kind==='owned' && b.kind==='owned'?a.sessionId===b.sessionId:a.kind==='external' && b.kind==='external' && a.linkId===b.linkId);
 const applied = (op:string,id:string,version:number):AppliedResult => ({status:'applied',operationId:op,entityId:id,version});
 
+/** How long a dispatch must have been under way before a missing bound Turn may be judged never started (Task a533cb64). */
+export const NEVER_STARTED_GRACE_MS=10*60_000;
+/** What proves that a bound native Turn never started: the newest native Turn had already ended before this dispatch began. */
+export interface NeverStartedProof { nativeTurnId:string; newestTurnId:string; newestCompletedAtUtc:string; processingStartedAt:string }
+const TERMINAL_TURN=['completed','failed','interrupted'];
+/**
+ * Task a533cb64. A message whose bound native Turn is not in native history stays unknown and keeps its Session busy, so its
+ * recovery gate cannot be resumed (the Leader stalled 11-18 after the host went down between turn/start and the native record).
+ * The Turn provably never started when the first page of native history (newest first, as both adapters list it) is readable,
+ * does not contain the bound Turn, and every Turn on it had already ended before this dispatch began, and the dispatch began
+ * longer ago than the grace. An empty history, a Turn still running, one that ended at or after the dispatch began, or a dispatch
+ * inside the grace proves nothing: the message stays unknown.
+ */
+export function neverStartedProof(processing:Pick<SessionMessageProcessing,'state'|'nativeTurnId'|'startedAt'>,
+  newestFirst:readonly RuntimeTurn[],nowMs:number):NeverStartedProof|null{
+  const nativeTurnId=processing.nativeTurnId;
+  if(!nativeTurnId||!['running','unknown'].includes(processing.state))return null;
+  const started=Date.parse(processing.startedAt);
+  if(!Number.isFinite(started)||nowMs-started<NEVER_STARTED_GRACE_MS)return null;
+  const newest=newestFirst[0];
+  if(!newest||newestFirst.some(turn=>turn.id===nativeTurnId))return null;
+  const ended=(turn:RuntimeTurn)=>Date.parse(turn.completedAtUtc??'');
+  if(!newestFirst.every(turn=>TERMINAL_TURN.includes(turn.status)&&Number.isFinite(ended(turn))&&ended(turn)<started))return null;
+  return {nativeTurnId,newestTurnId:newest.id,newestCompletedAtUtc:new Date(ended(newest)).toISOString(),
+    processingStartedAt:new Date(started).toISOString()};
+}
+
 /** Called inside the shared command journal transaction; the principal supplies sender identity. */
 export async function applySessionMessage(tx:Transaction,principal:Principal,command:SessionMessageCommand,now:string):Promise<{result:AppliedResult;effects:{kind:string;entityId:string;version:number}[]}>{
   const store=tx.sessionMessages;
@@ -374,6 +401,30 @@ export class SessionMessageService {
       const now=this.deps.clock.now();
       await store.updateSessionMessageProcessing({...p,state:'failed',failure:reason.slice(0,4000),version:p.version+1,updatedAt:now},p.version);
       await store.updateSessionMessage({...m,state:'failed',version:m.version+1,updatedAt:now},m.version);
+    });
+  }
+  /**
+   * Task a533cb64: the bound native Turn never started (see neverStartedProof). The message fails with that reason and is not
+   * resent; its Session's recovery gate then decides as for any failed message. The proof is checked again against the stored
+   * processing, so a stale or mismatched proof changes nothing.
+   */
+  async failNeverStarted(projectId:string,messageId:string,proof:NeverStartedProof):Promise<void>{
+    await this.deps.uow.transaction(projectId,async tx=>{
+      const store=tx.sessionMessages!;const p=required(await store.getSessionMessageProcessing(messageId),'processing');
+      if(['completed','failed'].includes(p.state))return;
+      const started=Date.parse(p.startedAt),ended=Date.parse(proof.newestCompletedAtUtc);
+      if(!['running','unknown'].includes(p.state)||!p.nativeTurnId||p.nativeTurnId!==proof.nativeTurnId||proof.newestTurnId===p.nativeTurnId||
+        !Number.isFinite(started)||started!==Date.parse(proof.processingStartedAt)||!Number.isFinite(ended)||ended>=started||
+        Date.parse(this.deps.clock.now())-started<NEVER_STARTED_GRACE_MS)
+        throw new DomainError('PROCESSING_STATE','the never-started proof does not match this processing');
+      const m=required(await store.getSessionMessage(messageId),'message');
+      if(!['processing','unknown'].includes(m.state))throw new DomainError('MESSAGE_STATE','message is not unresolved');
+      const now=this.deps.clock.now();
+      const failure=`Bound native Turn ${p.nativeTurnId} never appeared in native history: the newest native Turn ${proof.newestTurnId} `+
+        `ended at ${proof.newestCompletedAtUtc}, before this dispatch began at ${proof.processingStartedAt}. Treated as never started; not resent.`;
+      await store.updateSessionMessageProcessing({...p,state:'failed',failure:failure.slice(0,4000),version:p.version+1,updatedAt:now},p.version);
+      await store.updateSessionMessage({...m,state:'failed',version:m.version+1,updatedAt:now},m.version);
+      await store.markSessionMessageSettled(p.sessionId,messageId,now);
     });
   }
   async settle(projectId:string,messageId:string,turn:RuntimeTurn,response:string|null,

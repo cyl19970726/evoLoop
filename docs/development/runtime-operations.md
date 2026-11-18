@@ -512,6 +512,15 @@ DeepSeek 额度已用完四次，没有一次事先预警。有一个只读脚�
 
 **关闭的恢复门。** 恢复门处于 `blocked`（等人恢复；`retrying`、`reworking`、`message_pending`、`awaiting_acceptance` 是正常等待，不触发）、更新时间已超过 30 分钟（一轮 Leader 安排和一次正常恢复通常都比这短；再短会把刚停下一轮后的正常恢复也算进来），并且有 owned 消息排在它后面时，`work board` 的 `awaitingLeader` 里出现一项 `kind=recovery_gate`：`id` 是 Session，`title` 写职责、阶段和排队条数，`waitingOn` 是最近一次为这个门做过恢复决定的身份（`{kind:"actor", id}`），没有人决定过时是 `{kind:"reviewer", id:null}`（任一有 Session 类别与决定权的身份可以执行 `runtime.session.recovery.resume`）。这一项每次读取时从门和队列算出：门重新打开（或进入正常等待的阶段）、或后面不再有排队消息，它就没有了。**它总排在列表最前**（完整快照和 `--brief` 都是），`--brief` 在各档截断时先保留所有门项再填其它项，所以其它待办项再多也挤不掉它；`--brief` 输出里带 `waitingOn`。Leader 每轮读 `work board --brief`，定时代班读同一份，所以不需要另外的通知。
 
+**绑定的一轮从未开始（Task a533cb64）。** 消息已记下绑定的原生 Turn，但这一轮没有出现在原生历史里，以前只能一直是 `unknown`（`Bound native Turn is not currently readable`）。这条 processing 占着 Session，所以恢复门 resume 返回 `SESSION_BUSY`；manual stop 也要先读到这一轮，同样走不通。例如 11-18，主机在 `turn/start` 之后、原生记录写入之前停机，Leader 因此停了 12 个多小时。现在泵在读不到绑定 Turn 时多做一次判断，同时满足下面几条就把消息记为 `failed`：
+- 原生轮次列表读得到（两个适配器都按新到旧排）；
+- 第一页里没有这一轮；
+- 第一页每一轮都已结束，且结束时间早于这条 processing 的开始时间；
+- 开始时间已超过 10 分钟。
+失败原因写成 `Bound native Turn … never appeared in native history … Treated as never started; not resent.`，并带上作证据的最新一轮 ID 和时间；服务在事务里按存下的 processing 再核一遍。消息不自动重发；之后照常由有决定权的身份 resume 恢复门，被挡住的通知包由 Leader 用 `leader.notice.recover` 恢复。
+
+以下情况仍记 `unknown`，等人核对：列表为空、最新一轮还在进行、有一轮在开始时间之后才结束、列表读取出错，或还在宽限期内。
+
 ## 调度板与调度事件流（Q2，迁移 105）
 
 **数据从哪来。** 迁移 105 建 `sched_event` 表，并在既有表上挂 AFTER 触发器：事件与引起它的状态变化在同一个事务里写一小行，应用代码的写入路径没有改动，也没有第二次写入。触发器取与 `leader_work_change` 相同的项目锁，所以同一项目里序号不会乱序提交。上线要先看发布顺序：105 不得早于 104（通知分级）等更小的号进入正式库；迁移只加表、函数和触发器，不改既有行为。回退：删除 `sched_event_*` 触发器即停止写入，表和已有事件可留。

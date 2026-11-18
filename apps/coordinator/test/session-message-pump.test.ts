@@ -516,3 +516,46 @@ test('defect d6dd0a1e: an error from polling a running message reaches onError W
   const line=messageErrorLine(errors[0]!.error,errors[0]!.message)!;
   assert.match(line,new RegExp(`code=RuntimeServerError\\(-32600\\) message=${m.id} session=${target} project=${projectId} state=processing error=thread\/turns\/list`));
 });
+
+// ---- Task a533cb64: a bound Turn that never started no longer holds the Session unknown forever ----
+test('a bound Turn absent from history whose newest native Turn ended before the dispatch began fails as never started, not unknown',async()=>{
+  const target=randomUUID(),m=message(randomUUID(),target,'unknown');
+  const startedAt='2026-11-17T21:18:49.000Z',now=Date.parse(startedAt)+11*60_000;
+  const proofs:unknown[]=[];let unknown=0;
+  const service={pending:async()=>[m],session:async()=>session(target),
+    processing:async()=>({operationId:randomUUID(),nativeTurnId:'turn-bound',state:'unknown',startedAt}),
+    markUnknown:async()=>{unknown++;},failNeverStarted:async(_p:string,id:string,proof:unknown)=>{assert.equal(id,m.id);proofs.push(proof);}} as unknown as SessionMessageService;
+  const runtime={isReady:()=>true,registerBinding:async()=>{},inspect:async()=>({thread:{status:{type:'notLoaded'}}}),
+    listTurns:async()=>({data:[{id:'turn-newest',status:'completed',completedAtUtc:'2026-11-17T21:01:55.000Z'}],nextCursor:'older'}),
+    listItems:async()=>({data:[],nextCursor:null})};
+  const pump=new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],canStart:async()=>true,
+    canWrite:()=>true,pollIntervalMs:1000,onError:e=>{throw e;},nativeTurn:()=>null,now:()=>now});
+  await pump.tick();
+  assert.equal(unknown,0);
+  assert.deepEqual(proofs,[{nativeTurnId:'turn-bound',newestTurnId:'turn-newest',newestCompletedAtUtc:'2026-11-17T21:01:55.000Z',processingStartedAt:startedAt}]);
+});
+
+test('a bound Turn absent from history stays unknown while any never-started proof is missing, and a list failure changes nothing',async()=>{
+  const startedAt='2026-11-17T21:18:49.000Z',after=Date.parse(startedAt)+11*60_000;
+  const cases:[string,number,(()=>Promise<{data:{id:string;status:string;completedAtUtc:string|null}[];nextCursor:null}>)][]=[
+    ['inside the grace',Date.parse(startedAt)+60_000,async()=>({data:[{id:'turn-newest',status:'completed',completedAtUtc:'2026-11-17T21:01:55.000Z'}],nextCursor:null})],
+    ['newest Turn running',after,async()=>({data:[{id:'turn-live',status:'inProgress',completedAtUtc:null}],nextCursor:null})],
+    ['newest Turn ended after the start',after,async()=>({data:[{id:'turn-after',status:'completed',completedAtUtc:'2026-11-17T21:19:30.000Z'}],nextCursor:null})],
+    ['empty history',after,async()=>({data:[],nextCursor:null})],
+    ['list failure',after,async()=>{throw new RuntimeProtocolError('invalid turns page');}],
+  ];
+  for(const [name,now,list] of cases){
+    const target=randomUUID(),m=message(randomUUID(),target,'unknown');
+    let unknown=0,failed=0;const errors:unknown[]=[];
+    const service={pending:async()=>[m],session:async()=>session(target),
+      processing:async()=>({operationId:randomUUID(),nativeTurnId:'turn-bound',state:'unknown',startedAt}),
+      markUnknown:async()=>{unknown++;},failNeverStarted:async()=>{failed++;}} as unknown as SessionMessageService;
+    const runtime={isReady:()=>true,registerBinding:async()=>{},inspect:async()=>({thread:{status:{type:'notLoaded'}}}),
+      listTurns:list,listItems:async()=>({data:[],nextCursor:null})};
+    const pump=new SessionMessagePump({service,runtime:()=>runtime,projects:async()=>[projectId],canStart:async()=>true,
+      canWrite:()=>true,pollIntervalMs:1000,onError:e=>{errors.push(e);},nativeTurn:()=>null,now:()=>now});
+    await pump.tick();
+    assert.equal(failed,0,name);
+    assert.equal(name==='list failure'?errors.length:unknown,1,name);
+  }
+});
