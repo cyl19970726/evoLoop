@@ -14,12 +14,15 @@
 
 | 用途 token | 用途 | 浅色 | 深色 |
 | --- | --- | --- | --- |
-| `surface-sunken` | 最底层，两条左栏的底色 | `#efebe5` | `#0c0b09` |
-| `background` | 工作面板：中间内容与右栏 | `#fcfbf8` | `#161412` |
-| `surface-raised` | 浮在面板上的卡片、弹层、输入框、选中的列表项 | `#ffffff` | `#24211f` |
-| `surface-muted` | 面板里的柔底色块：事实卡片、工具步骤、待办 | `#f5f2ed` | `#1c1a18` |
-| `surface-field` | 输入底、筛选标签（按钮不用灰色，DEC-051） | `#e7e3dc` | `#2a2725` |
-| `surface-selected` | 左栏和列表里悬停的行（选中的行用 `accent-soft`，DEC-051） | `#e3dcd3` | `#322e2a` |
+| `surface-sunken` | 最底层，两条左栏的底色 | `#e4ded4` | `#090807` |
+| `background` | 工作面板：中间内容与右栏 | `#faf8f3` | `#171513` |
+| `surface-raised` | 浮在面板上的卡片、弹层、输入框、选中的列表项 | `#ffffff` | `#2f2c28` |
+| `surface-muted` | 面板里的柔底色块：事实卡片、工具步骤、待办 | `#eee9e0` | `#232019` |
+| `surface-field` | 输入底、筛选标签（按钮不用灰色，DEC-051） | `#e1dbd0` | `#363330` |
+| `surface-selected` | 左栏和列表里悬停的行（选中的行用 `accent-soft`，DEC-051） | `#dcd4c8` | `#3c3833` |
+| `tab-track` | 页签条的轨道（选中页签落在它上面）：浅色同悬停灰，深色同最底层 | `=surface-selected` | `=surface-sunken` |
+
+配色方案 B（Task a523f45e，由需求 Session 在 Task 294a4d38 的对照报告上选定）把上面的表面层次和线条拉开：浅色“卡片 / 面板”1.03→1.06、动态图连线 / 画布 1.38→1.58、深色 1.77→2.54，文字对比度最低 4.62:1。选中的位置除了 `accent-soft` 底，再加 3px 的 `accent` 边（`selected-edge` 工具类，选中的行、卡片、导航项）；蓝色提示条是柔底加 3px 蓝边；页签条的轨道比选中页签更深，选中页签有一圈细线。按钮颜色、状态色含义、布局、字体、间距和焦点框不变，没有新增绿色。
 
 ### 文字、线条与角色
 
@@ -27,11 +30,11 @@
 | --- | --- | --- | --- |
 | `text` | 正文、标题 | `#1c1714` | `#eae7e3` |
 | `text-secondary` | 辅助文字 | `#49423d` | `#c0bbb6` |
-| `text-muted` | 说明、时间、占位 | `#635d57` | `#9f9a94` |
-| `border` / `border-strong` | 细线 / 强调分隔 | `#e4dfd8` / `#d0c9c1` | `#2a2826` / `#3e3b38` |
+| `text-muted` | 说明、时间、占位 | `#5b554f` | `#b0aba5` |
+| `border` / `border-strong` | 细线 / 强调分隔（动态图连线用 `border-strong`，1.5px） | `#d2cbc0` / `#bbb1a4` | `#3d3a35` / `#55514b` |
 | `accent` / `accent-soft` / `accent-strong` | 链接、进行中 / 选中的行、标签与菜单项的底色 / 选中项上的字 | `#2a52a8` / `#e5edfc` | `#90aef3` / `#222d47` |
-| `warning` / `warning-soft` | 等你处理、待验收 | `#825805` / `#fceed1` | `#e3b667` / `#362913` |
-| `danger` / `danger-soft` | 受阻、失败、返工、危险操作 | `#a3203a` / `#fde9e9` | `#ec8287` / `#3f1e20` |
+| `warning` / `warning-soft` | 等你处理、待验收 | `#775000` / `#fceed1` | `#e3b667` / `#362913` |
+| `danger` / `danger-soft` | 受阻、失败、返工、危险操作 | `#a3203a` / `#fde9e9` | `#f08e92` / `#3f1e20` |
 | `done` / `done-soft` | 完成、通过（淡紫，不是绿色） | `#72487c` / `#f5eaf7` | `#c99dd3` / `#332337` |
 | `count-bg` / `count-fg` | “待我处理”等计数点（墨色，不像报错） | `#1c1714` / `#fcfbf8` | `#eae7e3` / `#161412` |
 | `brand` / `on-brand` | **主按钮底**、Logo 的对外版本、账号头像（不用于状态、计数和链接）/ 其上的文字 | `#b1582b` / `#ffffff` | `#e18c5f` / `#15110d` |

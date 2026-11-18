@@ -147,7 +147,7 @@ export function AppShell(props: AppShellProps) {
 
 function RailLink({ href: target, label, selected, icon, count = 0 }: { href: string; label: string; selected: boolean; icon: React.ReactNode; count?: number | null }) {
   return <a href={target} aria-current={selected ? "page" : undefined}
-    className={cn("relative flex w-[52px] flex-col items-center gap-1 rounded-lg py-2 text-caption text-muted-foreground hover:bg-selected hover:text-foreground focus-visible:shadow-[var(--focus-ring)] outline-none",
+    className={cn("selected-edge relative flex w-[52px] flex-col items-center gap-1 rounded-lg py-2 text-caption text-muted-foreground hover:bg-selected hover:text-foreground focus-visible:shadow-[var(--focus-ring)] outline-none",
       selected && "bg-accent font-medium text-accent-strong hover:bg-accent")}>
     {icon}{label}
     {count !== 0 && <CountDot count={count} className="absolute right-2 top-1" />}
@@ -156,7 +156,7 @@ function RailLink({ href: target, label, selected, icon, count = 0 }: { href: st
 
 function TabLink({ href: target, label, selected, icon, count = 0 }: { href: string; label: string; selected: boolean; icon: React.ReactNode; count?: number | null }) {
   return <a href={target} aria-current={selected ? "page" : undefined}
-    className={cn("relative flex flex-col items-center gap-0.5 py-2 text-caption text-muted-foreground", selected && "font-medium text-foreground")}>
+    className={cn("selected-edge relative flex flex-col items-center gap-0.5 py-2 text-caption text-muted-foreground", selected && "font-medium text-foreground")}>
     {icon}{label}
     {count !== 0 && <CountDot count={count} className="absolute right-[22%] top-1" />}
   </a>;
@@ -206,12 +206,12 @@ function SectionList({ items, route, projectId, onNavigate }: { items: readonly 
       const current = item.section === owner;
       return <li key={item.section}>
         <a href={href(projectId, item.section)} onClick={onNavigate} aria-current={current && (!item.children || leaf === item.section) ? "page" : undefined}
-          className={cn("flex items-center rounded-md px-3 py-2 text-text-secondary hover:bg-selected hover:text-foreground focus-visible:shadow-[var(--focus-ring)] outline-none",
+          className={cn("selected-edge flex items-center rounded-md px-3 py-2 text-text-secondary hover:bg-selected hover:text-foreground focus-visible:shadow-[var(--focus-ring)] outline-none",
             current && "bg-accent font-medium text-accent-strong hover:bg-accent")}>{item.label}</a>
         {current && item.children && <ul className="mb-1 ml-3 mt-0.5 flex flex-col gap-0.5 border-l border-border pl-2">
           {item.children.map(child => <li key={child.section}>
             <a href={href(projectId, child.section)} onClick={onNavigate} aria-current={leaf === child.section ? "page" : undefined}
-              className={cn("block rounded-md px-2.5 py-1.5 text-small text-muted-foreground hover:bg-selected hover:text-foreground focus-visible:shadow-[var(--focus-ring)] outline-none",
+              className={cn("selected-edge block rounded-md px-2.5 py-1.5 text-small text-muted-foreground hover:bg-selected hover:text-foreground focus-visible:shadow-[var(--focus-ring)] outline-none",
                 leaf === child.section && "bg-accent font-medium text-accent-strong hover:bg-accent")}>{child.label}{child.hint && <span className="block text-caption font-normal text-muted-foreground">{child.hint}</span>}</a>
           </li>)}
         </ul>}

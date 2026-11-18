@@ -278,7 +278,7 @@ export function FlowView({ board, events, context, source, startAt, connection, 
       <div className="relative w-full overflow-hidden rounded-xl bg-sunken" style={{ aspectRatio: `${W} / ${H}` }} data-stage="">
         <svg viewBox={`0 0 ${W} ${H}`} className="pointer-events-none absolute inset-0 size-full" aria-hidden="true" focusable="false">
           {/* paths: drawn faintly; a packet lights its path while it travels */}
-          {[...new Set(shown.slice(-40).map(e => { const r = routeOf(e, context); return `${r.from}>${r.to}`; }))].map(key => { const [from, to] = key.split(">") as [NodeId, NodeId]; return <path key={key} d={pathOf(from, to)} fill="none" stroke="currentColor" strokeWidth={1} className="text-border" />; })}
+          {[...new Set(shown.slice(-40).map(e => { const r = routeOf(e, context); return `${r.from}>${r.to}`; }))].map(key => { const [from, to] = key.split(">") as [NodeId, NodeId]; return <path key={key} d={pathOf(from, to)} fill="none" stroke="var(--border-strong)" strokeWidth={1.5} />; })}
           {packets.map(p => <PacketMark key={p.key} packet={p} d={pathOf(p.from, p.to)} onSelect={() => setSelected({ type: "event", seq: p.event.seq })} />)}
           {/* the object track */}
           <line x1={60} x2={W - 60} y1={582} y2={582} stroke="currentColor" strokeWidth={2} className="text-border" />

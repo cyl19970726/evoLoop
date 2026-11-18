@@ -136,7 +136,7 @@ export function EvaluationDetail({ context, read, selectedRevision, hold }: {
           <p className={cn(muted, "m-0")}>修订追加，不覆盖旧版；每版的尝试与结论各自保留。</p>
           <ul className="m-0 flex list-none flex-col gap-1 p-0">{[...revisions].sort((a, b) => b.version - a.version).map(item => <li key={item.id}>
             <a aria-current={item.id === revision.id ? "page" : undefined} href={evaluationHref(projectId, item.evaluationId, item.id)}
-              className={cn("flex flex-col rounded-md px-2 py-1.5 text-small outline-none hover:bg-selected focus-visible:shadow-[var(--focus-ring)]", item.id === revision.id ? "bg-accent font-medium text-accent-strong hover:bg-accent" : "text-text-secondary")}>
+              className={cn("selected-edge flex flex-col rounded-md px-2 py-1.5 text-small outline-none hover:bg-selected focus-visible:shadow-[var(--focus-ring)]", item.id === revision.id ? "bg-accent font-medium text-accent-strong hover:bg-accent" : "text-text-secondary")}>
               <span>v{item.version}{item.id === latest?.id ? " · 最新" : ""}</span><span className={muted}>{date(item.createdAt)} · {actorText(item.actorId)}</span>
             </a></li>)}</ul>
         </PanelSection>

@@ -77,7 +77,7 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
     const dot = session.busy === true ? "bg-primary" : session.runtimeState === "failed" ? "bg-destructive" : session.busy === false && session.runtimeState === "ready" ? "bg-border" : "bg-warning";
     const selected = selectedId === session.key;
     return <a key={session.key} href={sessionHref(projectId, session.key)} aria-current={selected ? "page" : undefined} onClick={onNavigate}
-      className={cn("session-nav-item flex items-center gap-2.5 rounded-lg py-1.5 pl-2 pr-3 text-text-secondary hover:bg-selected focus-visible:shadow-[var(--focus-ring)] outline-none",
+      className={cn("selected-edge session-nav-item flex items-center gap-2.5 rounded-lg py-1.5 pl-2 pr-3 text-text-secondary hover:bg-selected focus-visible:shadow-[var(--focus-ring)] outline-none",
         selected && "bg-accent font-medium text-accent-strong hover:bg-accent")}>
       <AgentAvatar seed={session.key} roleSeed={session.roles[0]?.id ?? session.title} size={30} />
       <span className="flex min-w-0 flex-1 flex-col">
