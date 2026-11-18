@@ -143,6 +143,10 @@ export function CreateTaskView({ context, active, pathname, back, embedded = fal
         onChange={event => edit({ acceptanceMode: event.target.value as TaskDraft["acceptanceMode"] })}>
         <option value="independent_agent">独立的智能体验收（默认）</option><option value="human_required">必须由本人验收</option>
       </Select>}</Field>}
+      {draft.closeRule === "use" && <Field label="完成边界" hint="“交付并被使用”：交付通过检查、被使用后即可关闭。“还要 PR 合并”：交付里写明的 PR 已合并进主干才可关闭，系统读仓库核对，关闭者说“已合并”不算。">{control => <Select {...control} className="w-full" value={draft.completionBoundary ?? "delivered"}
+        onChange={event => edit({ completionBoundary: event.target.value as TaskDraft["completionBoundary"] })}>
+        <option value="delivered">交付并被使用即可关闭（delivered）</option><option value="merged">交付的 PR 已合并进主干才可关闭（merged）</option>
+      </Select>}</Field>}
       {draft.closeRule === "use" && <Field label={draft.stageId || draft.acceptanceMode === "human_required" ? "实际使用成果的身份" : "实际使用成果的身份（可选）"} {...field("consumer")}
         hint={draft.acceptanceMode === "human_required" ? "选验收的人本人；关闭时要有他对本次交付的使用记录。只列出能写入的人。"
           : "选会实际使用成果的智能体；不选时可以稍后由统筹确定独立验收。只列出能写入的智能体。"}>

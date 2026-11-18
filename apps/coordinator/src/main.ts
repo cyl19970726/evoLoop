@@ -28,6 +28,7 @@ import { buildServer } from "./server.js";
 import { codexWorkInFlight } from "./runtime/codex-work.js";
 import { createChildDetailSink, createRefusalSink } from "./runtime/child-detail-log.js";
 import { HubConnector } from "./hub/connector.js";
+import { gitMergeFacts } from "./completion/merge-facts.js";
 import { MachineCredentialSource, unusedDefaultCredentials } from "./hub/credentials.js";
 import { HubIdentityVerifier } from "./hub/identity.js";
 import { logHubIdentityRejected } from "./hub/log.js";
@@ -219,6 +220,8 @@ const service = new WorkflowService({
   // A Role's first Session binds it to the default runtime; bound Roles keep theirs.
   ...(integrations.runtime?.enabled ? { runtimeProvider: integrations.runtime.provider,
     runtimeProviders: drivenRuntimeProviders(integrations.runtime) } : {}),
+  // Task b5993311: a Task that declares the `merged` boundary closes only on the repository's own merge fact, and a new delivery Task must declare a boundary.
+  mergeFacts: gitMergeFacts(() => integrations.repositories), requireCompletionBoundary: true,
   taskTimingAuthority: async (projectId, actorId, roleId, scopeId) => {
     const current = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).scheduling;
     return hasTaskTimingGrant(current, projectId, actorId, roleId, scopeId) &&

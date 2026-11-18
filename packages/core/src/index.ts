@@ -13,7 +13,7 @@ import type {
 } from "@evoloop/contracts";
 import { parseQueueHandoff, type QueueHandoff } from "@evoloop/contracts/runtime-handoff";
 import { DomainError, PersistenceRejectedError } from "@evoloop/contracts/ports";
-import { applyWorkflow } from "./workflow.js";
+import { applyWorkflow, completionView } from "./workflow.js";
 export * from "./usage.js";
 export * from "./context-budget.js";
 import { reserveRuntime } from "./runtime/reserve.js";
@@ -58,6 +58,10 @@ export interface WorkflowDependencies { uow: UnitOfWork; clock: Clock; ids: IdFa
   /** Runtimes this service drives; absent means only `runtimeProvider`. */
   runtimeProviders?: readonly import("@evoloop/contracts/runtime").RuntimeProvider[];
   taskTimingAuthority?: (projectId: string, actorId: string, roleId: string, scopeId: string) => Promise<boolean>;
+  /** The repository read behind the `merged` completion boundary (Task b5993311). Absent: a Task that declares `merged` cannot close. */
+  mergeFacts?: import("@evoloop/contracts").MergeFactReader;
+  /** True once the release that carries the completion boundary is running: a new delivery-type Task must then declare one. Off (the default) only in tests and old hosts. */
+  requireCompletionBoundary?: boolean;
   recoveryAuthority?: RecoveryAuthority;
   /** The one identity that runs the notice packet's own steps (build, sent, observe) for a project: the configured notice sender. Absent: none may. */
   leaderNoticeServiceActor?: (projectId: string) => Promise<string | null>;
@@ -493,6 +497,9 @@ export class WorkflowService {
           throw new DomainError("ACCEPTANCE_POLICY", "acceptance target and mode disagree");
         if (command.acceptanceTarget === "named_agent" && !command.consumer)
           throw new DomainError("ACCEPTANCE_POLICY", "named_agent acceptance needs the declared consumer: the business identity that accepts directly");
+        // A delivery-type Task (everything but a decision-only cognition Task) says when it may close. Tasks made before this existed declare nothing and close as `delivered`.
+        if (this.deps.requireCompletionBoundary && !decisionOnly && command.completionBoundary === undefined)
+          throw new DomainError("COMPLETION_BOUNDARY_REQUIRED", "a delivery Task must declare completionBoundary: \"delivered\" (closes once the Delivery is used) or \"merged\" (also needs its PR merged into the main line, as the repository shows)");
         if (command.acceptanceTarget === "named_agent" && createdMode !== "independent_agent")
           throw new DomainError("ACCEPTANCE_POLICY", "named_agent acceptance needs the independent_agent mode: the consumer must not be the author");
         await tx.insertTaskProposal({ projectId: command.projectId, taskId: task.id, taskRevisionId: revisionId,
@@ -500,6 +507,7 @@ export class WorkflowService {
           acceptanceMode: decisionOnly ? null : command.acceptanceMode ?? "independent_agent",
           acceptanceTarget: decisionOnly ? null : command.acceptanceTarget ?? null,
           acceptancePrecondition: command.acceptancePrecondition ?? null,
+          completionBoundary: decisionOnly ? null : command.completionBoundary ?? null,
           evidence: command.evidence ?? "", stopCondition: command.stopCondition ?? "", createdAt: now });
         for (const linkedId of documentIds) await tx.insertLink({ projectId: command.projectId, id: this.deps.ids.next(),
           taskId: task.id, documentId: linkedId, actorId, createdAt: now });
@@ -647,7 +655,7 @@ export class WorkflowService {
             stageId, consumer,
             useRequired: acceptanceMode ? true : command.useRequired ?? priorProposal?.useRequired ?? false,
             acceptanceMode,
-            acceptanceTarget, acceptancePrecondition,
+            acceptanceTarget, acceptancePrecondition, completionBoundary: priorProposal?.completionBoundary ?? null,
             evidence, stopCondition, createdAt: now });
         }
         for (const id of documentIds.filter(id => !linked.includes(id))) await tx.insertLink({ projectId: task.projectId,
@@ -975,7 +983,7 @@ export class WorkflowService {
           return reserveRuntime({ tx, command, principal, now, nextId: () => this.deps.ids.next(), hash: value => this.deps.hasher.hash(value),
             ...(this.deps.runtimeProvider ? { runtimeProvider: this.deps.runtimeProvider } : {}), runtimeProviders: this.runtimeProviders() });
         }
-        return applyWorkflow({ tx, command:command as Parameters<typeof applyWorkflow>[0]["command"], principal, now, nextId: () => this.deps.ids.next() }).then(outcome => ({ ...outcome, effects: outcome.effects.map(effect => ({ ...effect, kind: effect.kind === "workflow" ? command.type : effect.kind })) }));
+        return applyWorkflow({ tx, command:command as Parameters<typeof applyWorkflow>[0]["command"], principal, now, nextId: () => this.deps.ids.next(), ...(this.deps.mergeFacts ? { mergeFacts: this.deps.mergeFacts } : {}) }).then(outcome => ({ ...outcome, effects: outcome.effects.map(effect => ({ ...effect, kind: effect.kind === "workflow" ? command.type : effect.kind })) }));
     }
   }
 
@@ -1067,7 +1075,13 @@ export class WorkflowService {
   getDocumentRevision(principal: Principal, projectId: string, documentId: string, revisionId: string): Promise<DocumentRevision> {
     return this.read(principal, projectId, async (reader) => required(await reader.getDocumentRevision(documentId, revisionId), "Document revision"));
   }
-  getTask(principal: Principal, projectId: string, taskId: string): Promise<TaskDetail> {
+  /** The Task with, when it declares a completion boundary, whether that boundary is met now (read from the repository, never from the closer). */
+  async getTask(principal: Principal, projectId: string, taskId: string): Promise<TaskDetail> {
+    const detail = await this.readTask(principal, projectId, taskId);
+    if (!detail.proposal?.completionBoundary) return detail;
+    return { ...detail, completion: await completionView(projectId, detail.proposal.completionBoundary, detail.deliveries?.at(-1) ?? null, this.deps.mergeFacts) };
+  }
+  private readTask(principal: Principal, projectId: string, taskId: string): Promise<TaskDetail> {
     return this.read(principal, projectId, async (reader) => {
       const task = required(await reader.getTask(taskId), "Task");
       const revision = required(await reader.getTaskRevision(taskId, task.currentRevisionId), "Task revision");

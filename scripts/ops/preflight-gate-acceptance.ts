@@ -74,7 +74,7 @@ async function newSession(): Promise<string> {
 }
 const startedTask = async (title: string) => {
   const taskId = randomUUID();
-  await must("task.create", { type: "task.create", taskId, title, content: `# ${title}`, acceptance: "ok", owner: role });
+  await must("task.create", { type: "task.create", taskId, title, content: `# ${title}`, acceptance: "ok", owner: role, completionBoundary: "delivered" });
   await must("task.start", { type: "task.start", taskId, expectedVersion: 1, reason: "start" });
   return taskId;
 };

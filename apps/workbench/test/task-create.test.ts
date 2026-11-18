@@ -22,7 +22,7 @@ test("the create page's fields: content with 期望结果, acceptance mode, use 
   assert.deepEqual(command, {
     type: "task.create", taskId, title: "整理验收清单", kind: "validation",
     content: "上次验收漏了截图。\n\n期望结果\n一份可复用的验收清单", acceptance: "另一位智能体按清单独立核对", owner: roleId,
-    acceptanceMode: "independent_agent", useRequired: true, consumer: "reviewer-actor",
+    acceptanceMode: "independent_agent", completionBoundary: "delivered", useRequired: true, consumer: "reviewer-actor",
     timing: { executeAtUtc: "2026-11-12T01:30:00.000Z", timezone: "Asia/Taipei", repeat: "daily" },
     evidence: "上次验收记录", stopCondition: "清单超过一页",
   });
@@ -34,7 +34,7 @@ test("optional fields are left out when empty, as main's create page did; kind f
   assert.deepEqual(command, {
     type: "task.create", taskId, title: "整理验收清单", kind: null,
     content: "上次验收漏了截图。\n\n期望结果\n一份可复用的验收清单", acceptance: "另一位智能体按清单独立核对", owner: roleId,
-    acceptanceMode: "human_required", useRequired: true, consumer: "owner-actor",
+    acceptanceMode: "human_required", completionBoundary: "delivered", useRequired: true, consumer: "owner-actor",
   });
   const once = taskCreateCommand(draft({ executeAt: "2026-11-12T09:30", repeat: "none" }), taskId);
   assert.deepEqual(once.timing, { executeAtUtc: "2026-11-12T01:30:00.000Z", timezone: "Asia/Taipei", repeat: "none" });
@@ -49,7 +49,7 @@ test("the journey form's fields: stage, linked published documents, consumer, ev
   assert.deepEqual(command, {
     type: "task.create", taskId, title: "整理验收清单", kind: "research",
     content: "上次验收漏了截图。\n\n期望结果\n一份可复用的验收清单", acceptance: "另一位智能体按清单独立核对", owner: roleId,
-    acceptanceMode: "independent_agent", useRequired: true, consumer: "user-actor", stageId, documentIds: [documentId],
+    acceptanceMode: "independent_agent", completionBoundary: "delivered", useRequired: true, consumer: "user-actor", stageId, documentIds: [documentId],
     evidence: "用户反馈", stopCondition: "反馈消失",
   });
   parse(command);
@@ -72,7 +72,7 @@ test("a problem is never reported for a field the form hides", () => {
     { ...emptyTaskDraft("Asia/Taipei"), closeRule: "decision" as const, stageId, repeat: "daily" as const }];
   for (const candidate of drafts) {
     const hidden = hiddenFields(candidate);
-    assert.deepEqual(hidden.sort(), ["acceptanceMode", "consumer"]);
+    assert.deepEqual(hidden.sort(), ["acceptanceMode", "completionBoundary", "consumer"]);
     for (const key of Object.keys(taskDraftProblems(candidate, { canReview: false }))) assert.equal(hidden.includes(key as keyof TaskDraft), false, key);
   }
   assert.deepEqual(hiddenFields(draft({})), []);
@@ -119,4 +119,14 @@ test("a local time in an IANA zone becomes the UTC instant the service stores", 
   assert.throws(() => zonedInstant("2026-03-08T02:30", "America/New_York"), /夏令时/);
   assert.throws(() => zonedInstant("2026-11-07", "Asia/Taipei"));
   assert.throws(() => zonedInstant("2026-11-07T08:00", "Nowhere/Zone"));
+});
+
+test("完成边界 (Task b5993311): the form always sends one for a delivery Task (the service refuses a new one without), merged when chosen, none for a decision-only Task", () => {
+  assert.equal(taskCreateCommand(draft(), taskId).completionBoundary, "delivered");
+  assert.equal(taskCreateCommand(draft({ completionBoundary: "merged" }), taskId).completionBoundary, "merged");
+  assert.equal(parse(taskCreateCommand(draft({ completionBoundary: "merged" }), taskId)).type, "task.create");
+  assert.equal("completionBoundary" in taskCreateCommand(draft({ closeRule: "decision" }), taskId), false);
+  // A draft saved before the field existed still sends the default.
+  const old = { ...draft() } as Record<string, unknown>; delete old.completionBoundary;
+  assert.equal(taskCreateCommand(old as never, taskId).completionBoundary, "delivered");
 });

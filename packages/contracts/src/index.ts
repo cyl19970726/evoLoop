@@ -34,7 +34,7 @@ export type { EvaluationRevision, EvaluationAttempt, EvaluationAssessment, Evalu
 export type { RuntimeSessionRecord, RuntimeRunRecord, RuntimeRecordEvent, RuntimeRunState, RuntimeSessionState } from "./runtime.js";
 export type { UsageTotals, UsageDay, SessionUsage, UsageBudget, UsageOverview, UsageBudgetConfig, UsageBucketRow, UsageContextRow, UsageDelta } from "./usage.js";
 export type { ContextPressureState, ContextBudgetConfig, ContextObservation, ContextPressure, ContextHandoffSummaryInput } from "./context-budget.js";
-export type { Goal, GoalRevision, Stage, StageRevision, StageReview, TaskProposal, TaskJudgement, Delivery, ConsumerObservation, TaskClosure, AcceptanceMode } from "./workflow.js";
+export type { Goal, GoalRevision, Stage, StageRevision, StageReview, TaskProposal, TaskJudgement, Delivery, ConsumerObservation, TaskClosure, AcceptanceMode, CompletionBoundary, MergeFact, MergeFactReader, TaskCompletionView } from "./workflow.js";
 export type { DiscussionRecord, DiscussionEvent, DiscussionTarget, DiscussionStatus } from "./discussions.js";
 export type { ResidentQueue, ResidentQueueEntry, QueueClaim, QueueAttempt } from "./queues.js";
 
@@ -43,6 +43,8 @@ const text = z.string().trim().min(1).max(4000);
 const declaredConsumer = text.optional().describe("Exact-match declared consumer identifier. For an Agent, use the actual principal.actorId that will personally sign the observation; do not use a roleId, display name, or explanation. Put explanation in evidence or reason.");
 const consumerUseRequired = z.boolean().optional().describe("When true, also declare consumer. Task.close requires the latest observation by the declared consumer for the current Delivery to have result=used. Worker completion, a Delivery alone, or use by another actor does not satisfy this.");
 const acceptanceMode = z.enum(["independent_agent", "human_required"]).optional();
+export const completionBoundarySchema = z.enum(["delivered", "merged"]);
+const completionBoundary = completionBoundarySchema.optional();
 const acceptanceTargetValues = ["human", "leader", "business_session", "named_agent"] as const;
 const acceptanceTarget = z.enum(acceptanceTargetValues).optional();
 /** On update, null clears the declared target. */
@@ -69,7 +71,7 @@ export const commandSchema = z.discriminatedUnion("type", [
   z.strictObject({ ...common, type: z.literal("document.publish"), documentId: idSchema, expectedVersion: version, revisionId: idSchema, reason: text }),
   z.strictObject({ ...common, type: z.literal("document.archive"), documentId: idSchema, expectedVersion: version, reason: text }),
   z.strictObject({ ...common, type: z.literal("document.restore"), documentId: idSchema, expectedVersion: version, reason: text }),
-  z.strictObject({ ...common, type: z.literal("task.create"), taskId: idSchema, title, content: z.string().min(1).max(65536), acceptance: text, owner: text, kind: taskKindSchema.nullable().optional(), domainId: idSchema.nullable().optional(), documentIds: z.array(idSchema).max(20).optional(), stageId: idSchema.optional(), consumer: declaredConsumer, useRequired: consumerUseRequired, acceptanceMode, acceptanceTarget, acceptancePrecondition, evidence: text.optional(), stopCondition: text.optional(), timing: taskTimingSchema.optional() }),
+  z.strictObject({ ...common, type: z.literal("task.create"), taskId: idSchema, title, content: z.string().min(1).max(65536), acceptance: text, owner: text, kind: taskKindSchema.nullable().optional(), domainId: idSchema.nullable().optional(), documentIds: z.array(idSchema).max(20).optional(), stageId: idSchema.optional(), consumer: declaredConsumer, useRequired: consumerUseRequired, acceptanceMode, acceptanceTarget, acceptancePrecondition, completionBoundary, evidence: text.optional(), stopCondition: text.optional(), timing: taskTimingSchema.optional() }),
   z.strictObject({ ...common, type: z.literal("task.update"), taskId: idSchema, expectedVersion: version, title, content: z.string().min(1).max(65536), acceptance: text, owner: text, kind: taskKindSchema.nullable().optional(), domainId: idSchema.nullable().optional(), documentIds: z.array(idSchema).max(20).optional(), stageId: idSchema.nullable().optional(), consumer: declaredConsumer.nullable(), useRequired: consumerUseRequired, acceptanceMode, acceptanceTarget: acceptanceTargetUpdate, acceptancePrecondition, evidence: text.optional(), stopCondition: text.optional(), reason: text, repeatScope: z.enum(["this", "this_and_future"]).optional(), expectedTimingVersion: z.number().int().positive().optional(),
     basis: z.array(z.strictObject({ documentId: idSchema, revisionId: idSchema })).max(19).optional(),
     retentions: z.array(z.strictObject({ documentId: idSchema, revisionId: idSchema,
@@ -213,6 +215,6 @@ export interface DocumentTaskReference extends Pick<Task, "projectId" | "id" | "
   /** content/link/basis: the Task's own text, a link, a fixed basis. delivery: a Delivery of the Task names this Document as its artifact. origin: the Document was created by this Task's Run. */
   relations: Array<"content" | "link" | "basis" | "delivery" | "origin">;
 }
-export interface TaskDetail { task: Task; revision: TaskRevision; basis: BasisSet | null; links: TaskDocumentLink[]; impacts: Impact[]; decisions: BasisDecision[]; proposal?: import("./workflow.js").TaskProposal | null; judgements?: import("./workflow.js").TaskJudgement[]; deliveries?: import("./workflow.js").Delivery[]; observations?: import("./workflow.js").ConsumerObservation[]; closures?: import("./workflow.js").TaskClosure[] }
+export interface TaskDetail { task: Task; revision: TaskRevision; basis: BasisSet | null; links: TaskDocumentLink[]; impacts: Impact[]; decisions: BasisDecision[]; proposal?: import("./workflow.js").TaskProposal | null; judgements?: import("./workflow.js").TaskJudgement[]; deliveries?: import("./workflow.js").Delivery[]; observations?: import("./workflow.js").ConsumerObservation[]; closures?: import("./workflow.js").TaskClosure[]; completion?: import("./workflow.js").TaskCompletionView }
 export interface DocumentDetail { document: Document; current: DocumentRevision; adopted: DocumentRevision | null }
 export const capabilities = { processMarkdown: true, basisReview: true, git: false, html: false, feishu: false, wiki: false, runtime: false } as const;

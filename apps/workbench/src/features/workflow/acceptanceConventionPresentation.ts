@@ -42,3 +42,18 @@ export function preconditionStatus(convention: {
     return { waiting: true, text: `前置：未满足（等待${preconditionText[kind as keyof typeof preconditionText] ?? kind}，尚未标记已满足）`, evidence: null };
   return { waiting: false, text: mark ? `前置：已满足（${actorName(mark.actorId)}，${formatDate(mark.markedAt)}）` : "前置：已满足", evidence: mark?.evidence ?? null };
 }
+
+/**
+ * 完成边界 (Task b5993311): when the Task may close, and — for `merged` — whether the repository shows the PR merged now. Null where the Task declared nothing
+ * (it closes as `delivered`, and the page says nothing about it).
+ */
+export function completionBoundaryFact(boundary: "delivered" | "merged" | null | undefined,
+  completion: { met: boolean | null; pullRequest: number | null; reason: string } | null | undefined): { value: string; note: string; tone: "ok" | "wait" | "unknown" | "plain" } | null {
+  if (!boundary) return null;
+  if (boundary === "delivered") return { value: "交付并被使用即可关闭（delivered）", note: "不要求 PR 已合并。", tone: "plain" };
+  const pr = completion?.pullRequest ? `PR #${completion.pullRequest}` : "交付里的 PR";
+  if (!completion) return { value: "PR 合并进主干后才可关闭（merged）", note: "当前是否满足还没读回。", tone: "unknown" };
+  if (completion.met === true) return { value: `已满足：${pr} 已合并进主干`, note: `${completion.reason}。这是仓库读到的事实，不是关闭者的说法。`, tone: "ok" };
+  if (completion.met === false) return { value: `未满足：${pr} 还没有合并进主干`, note: `${completion.reason}。合并后再关闭；关闭者自报“已合并”无效。`, tone: "wait" };
+  return { value: `读不到：${pr} 的合并状态`, note: `${completion.reason}。读不到时不能关闭。`, tone: "unknown" };
+}
