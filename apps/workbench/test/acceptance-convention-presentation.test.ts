@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { acceptanceConventionFacts } from "../src/features/workflow/acceptanceConventionPresentation.ts";
+import { completionBoundaryFact, acceptanceConventionFacts } from "../src/features/workflow/acceptanceConventionPresentation.ts";
 
 test("the declared convention is shown as labelled facts", () => {
   assert.deepEqual(acceptanceConventionFacts({ acceptanceTarget: "named_agent", acceptancePrecondition: "release" }), [
@@ -55,4 +55,16 @@ test("the precondition line reads 未满足 until a mark exists, then 已满足 
   assert.equal(preconditionStatus({ acceptancePrecondition: "none", readiness: "ready" }, fmt), null);
   assert.equal(preconditionStatus({ acceptancePrecondition: null, readiness: "ready" }, fmt), null);
   assert.equal(preconditionStatus(null, fmt), null);
+});
+
+test("完成边界: delivered says nothing is asked of the PR; merged says met, unmet or unreadable from the repository's fact; a Task that declared nothing shows nothing", () => {
+  assert.equal(completionBoundaryFact(null, null), null);
+  assert.equal(completionBoundaryFact(undefined, null), null);
+  assert.match(completionBoundaryFact("delivered", null)!.value, /交付并被使用即可关闭/);
+  const view = (met: boolean | null) => ({ met, pullRequest: 12, reason: "边界是 merged：x" });
+  assert.match(completionBoundaryFact("merged", view(true))!.value, /已满足：PR #12 已合并进主干/);
+  assert.match(completionBoundaryFact("merged", view(false))!.value, /未满足：PR #12 还没有合并进主干/);
+  assert.match(completionBoundaryFact("merged", view(false))!.note, /自报“已合并”无效/);
+  assert.match(completionBoundaryFact("merged", view(null))!.value, /读不到：PR #12 的合并状态/);
+  assert.equal(completionBoundaryFact("merged", null)!.tone, "unknown", "not read back yet is not claimed either way");
 });

@@ -95,7 +95,7 @@ test("a member chosen by name sends the request body the typed identity sent, fi
   const draft = { ...emptyTaskDraft("Asia/Shanghai"), title: "整理验收清单", why: "旧清单过时", outcome: "新清单", acceptance: "本人用过", owner: "role-1",
     acceptanceMode: "human_required" as const, consumer: chosen!.value };
   assert.deepEqual(taskCreateCommand(draft, "task-1"), { type: "task.create", taskId: "task-1", title: "整理验收清单", kind: null,
-    content: "旧清单过时\n\n期望结果\n新清单", acceptance: "本人用过", owner: "role-1", acceptanceMode: "human_required", useRequired: true,
+    content: "旧清单过时\n\n期望结果\n新清单", acceptance: "本人用过", owner: "role-1", acceptanceMode: "human_required", completionBoundary: "delivered", useRequired: true,
     consumer: "zhang-reviewer" });
   // Nothing chosen for an optional identity: the field is left out, as when nothing was typed.
   assert.equal("consumer" in taskCreateCommand({ ...draft, acceptanceMode: "independent_agent", consumer: "" }, "task-1"), false);

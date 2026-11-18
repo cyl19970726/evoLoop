@@ -75,7 +75,7 @@ async function setup(t: import("node:test").TestContext, cliActorId: string | nu
   const runRows = async () => Number((await pool.query("SELECT count(*)::int AS n FROM runtime_run WHERE project_id=$1", [projectId])).rows[0].n);
   const newTask = async (title: string, independent: boolean) => {
     const taskId = randomUUID();
-    await run({ type: "task.create", projectId, operationId: randomUUID(), taskId, title, content: `# ${title}`, acceptance: "Result", owner: roleId,
+    await run({ type: "task.create", projectId, operationId: randomUUID(), taskId, title, content: `# ${title}`, acceptance: "Result", owner: roleId, completionBoundary: "delivered",
       ...(independent ? { acceptanceMode: "independent_agent", consumer: "verifier", useRequired: true } : {}) } as never);
     return taskId;
   };

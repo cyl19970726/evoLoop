@@ -2,6 +2,7 @@
 // the Leader records for it) and 阶段区间、计划与来源 (the current work's next step, stage time, plan, sources,
 // acceptance, execution, delivery, the Leader's decision, the result notices and the prerequisites). Server text
 // written for agents and raw identifiers stay in the full-identifier layer.
+import { completionBoundaryFact } from "./acceptanceConventionPresentation";
 import { currentStageText, usedWaitResponsibility } from "../../shared/leaderWorkLoad";
 import React from "react";
 import { hasPermission, type TaskAttentionFollowUp, type TaskAttentionItem, type TaskDetail } from "@evoloop/contracts";
@@ -264,6 +265,8 @@ export function TaskArrangementFacts({ projectId, detail, leader, responsibleNam
       <Fact label="当前验收与使用者">{detail.proposal?.acceptanceMode === "independent_agent" ? "独立的智能体使用当前交付" : detail.proposal?.acceptanceMode === "human_required" ? "指定的人本人使用当前交付" : "历史约定"}
         {consumer ? ` · ${actorText(consumer)}` : " · 验收身份待签收"}<span className="block text-caption text-muted-foreground">{detail.proposal?.useRequired ? "关闭前要有当前交付的实际使用证据。" : "按既有约定核对使用证据。"}
           {detail.proposal?.stopCondition ? ` 停止条件：${detail.proposal.stopCondition}` : ""}</span></Fact>
+      {(fact => fact && <Fact label="完成边界"><span data-completion-boundary={detail.proposal?.completionBoundary ?? ""} data-completion-met={String(detail.completion?.met ?? "unknown")}>{fact.value}</span>
+        <span className="block text-caption text-muted-foreground">{fact.note}</span></Fact>)(completionBoundaryFact(detail.proposal?.completionBoundary, detail.completion))}
       <Fact label="当前执行">{leader.latestRun ? `最近一次运行：${runStateName[leader.latestRun.state] ?? "状态未识别"}` : "当前修订没有可见的运行"}
         <span className="block text-caption text-muted-foreground">队列：{leader.queueHold ? "暂不派发" : "没有登记暂停"}{leader.pendingImpactCount > 0 ? ` · ${leader.pendingImpactCount} 项依据待复核` : ""}</span></Fact>
       <Fact label="当前交付">{leader.delivery ? `技术检查${leader.delivery.technicalResult === "passed" ? "通过" : "未通过"}` : "当前修订还没有交付。"}

@@ -58,7 +58,7 @@ async function createTask(title, fields = {}) {
     type: "task.create", taskId, title: `${LABEL}${title}`,
     content: fields.content ?? `## 目标\n${title}\n\n## 背景\n这是用于走查工作台场景的合成任务。`,
     acceptance: fields.acceptance ?? "按任务正文完成，并能从工作台读回结果。",
-    owner: fields.owner ?? ids.devRole ?? ownerRole, ...fields.extra,
+    owner: fields.owner ?? ids.devRole ?? ownerRole, completionBoundary: "delivered", ...fields.extra,
   });
   return taskId;
 }

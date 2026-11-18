@@ -6,7 +6,9 @@ import type {
   ConsumerObservation,
   Delivery,
   Goal,
+  MergeFactReader,
   Principal,
+  TaskCompletionView,
   Stage,
   StageReview,
   Task,
@@ -54,6 +56,8 @@ export interface WorkflowContext {
   principal: Principal;
   now: string;
   nextId(): string;
+  /** The repository read behind the `merged` completion boundary; absent: that boundary cannot be verified, so a Task that declares it cannot close. */
+  mergeFacts?: MergeFactReader;
 }
 const found = <T>(value: T | null, kind: string): T => {
   if (value === null) throw new DomainError("NOT_FOUND", `${kind} not found`);
@@ -145,12 +149,49 @@ async function newTaskRevision(
   return revision;
 }
 
+/**
+ * The `merged` boundary (Task b5993311): the Delivery must name a PR number and its head commit, and the repository must show that PR merged into the main
+ * line. What the closer says about it is never read; only `mergeFacts` is.
+ */
+async function requireMerged(projectId: string, delivery: { artifactRef: string; artifactRevision: string }, mergeFacts: MergeFactReader | undefined): Promise<void> {
+  const pullRequest = pullRequestNumber(delivery.artifactRef);
+  const head = delivery.artifactRevision.trim().toLowerCase();
+  if (pullRequest === null || !/^[0-9a-f]{40}$/.test(head))
+    throw new DomainError("MERGE_NOT_VERIFIABLE", "this Task closes only when its PR is merged, but the latest Delivery does not name a PR number and a full head commit; record a Delivery whose artifact is the PR (…/pull/N) and whose revision is its head commit");
+  const fact = mergeFacts ? await mergeFacts({ projectId, pullRequest, head }) : { state: "unreadable" as const, detail: "no repository reader is configured for this service" };
+  if (fact.state === "merged") return;
+  if (fact.state === "unreadable")
+    throw new DomainError("MERGE_FACT_UNREADABLE", `the merge of PR #${pullRequest} (head ${head.slice(0, 8)}) could not be read, so the Task cannot close: ${fact.detail}`);
+  throw new DomainError("MERGE_NOT_VERIFIED", `PR #${pullRequest} (head ${head.slice(0, 8)}) is not merged into the main line as the repository shows, so the Task cannot close yet: ${fact.detail}. Say nothing about it being merged; merge it, let the repository be read again, then close.`);
+}
+
+/** The number of the PR a Delivery's artifact names (`https://github.com/<owner>/<repo>/pull/483`, `…/pull/483/files`, or `#483`), or null. */
+export function pullRequestNumber(artifactRef: string): number | null {
+  const match = /\/pull\/(\d{1,9})(?:[/?#]|$)/.exec(artifactRef) ?? /^#(\d{1,9})$/.exec(artifactRef.trim());
+  return match ? Number(match[1]) : null;
+}
+
+/** The completion boundary of a Task as it reads back: declared, and met or not met now. `merged` asks the repository (`mergeFacts`); nothing is cached or taken on trust. */
+export async function completionView(projectId: string, boundary: "delivered" | "merged", latest: { artifactRef: string; artifactRevision: string; technicalResult?: string } | null,
+  mergeFacts: MergeFactReader | undefined): Promise<TaskCompletionView> {
+  if (boundary === "delivered") return { boundary, met: null, pullRequest: null, head: null, fact: null, reason: "边界是 delivered：交付通过技术检查并被使用后即可关闭，不要求 PR 已合并" };
+  if (!latest) return { boundary, met: false, pullRequest: null, head: null, fact: null, reason: "边界是 merged：还没有交付，没有可核对的 PR" };
+  const pullRequest = pullRequestNumber(latest.artifactRef), head = latest.artifactRevision.trim().toLowerCase();
+  if (pullRequest === null || !/^[0-9a-f]{40}$/.test(head))
+    return { boundary, met: false, pullRequest, head: head || null, fact: null, reason: "边界是 merged：最新交付没有写明 PR 号（…/pull/N）和完整头提交，系统无法核对合并" };
+  const fact = mergeFacts ? await mergeFacts({ projectId, pullRequest, head }) : { state: "unreadable" as const, detail: "服务没有配置仓库读取" };
+  if (fact.state === "merged") return { boundary, met: true, pullRequest, head, fact, reason: `边界是 merged：PR #${pullRequest} 已合并进主干（${fact.detail}）` };
+  if (fact.state === "not_merged") return { boundary, met: false, pullRequest, head, fact, reason: `边界是 merged：PR #${pullRequest} 还没有合并进主干（${fact.detail}）` };
+  return { boundary, met: null, pullRequest, head, fact, reason: `边界是 merged：PR #${pullRequest} 的合并状态读不到，不能判断（${fact.detail}）` };
+}
+
 export async function applyWorkflow({
   tx,
   command: c,
   principal,
   now,
   nextId,
+  mergeFacts,
 }: WorkflowContext): Promise<WorkflowOutcome> {
   const actorId = principal.actorId;
   switch (c.type) {
@@ -482,6 +523,8 @@ export async function applyWorkflow({
             (observed.observerKind !== "human" || observed.actorId !== proposal.consumer || observed.observer !== proposal.consumer))
             throw new DomainError("TRUSTED_HUMAN_REQUIRED", "current Delivery lacks the declared human's use");
         }
+        // The completion boundary comes after the delivery and use checks: `merged` adds one condition, it replaces none.
+        if (proposal?.completionBoundary === "merged") await requireMerged(c.projectId, latest, mergeFacts);
         closureEvidence = {deliveryId:latest.id,decisionId:null,sourceInboxId:null,sourceEventId:null,sourceTaskId:null,waitingInboxId:null,handoffDispatchId:null,handoffTaskId:null};
       } else {
         if (proposal?.useRequired || proposal?.acceptanceMode) throw new DomainError("USE_NOT_OBSERVED", "a cognition decision cannot replace required consumer use");

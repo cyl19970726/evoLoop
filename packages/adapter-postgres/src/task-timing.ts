@@ -27,7 +27,7 @@ interface Template {
   stageId: string | null; consumer: string; useRequired: boolean;
   acceptanceMode: string | null; evidence: string; stopCondition: string;
   /** The Task's declared acceptance convention travels with every copy; the precondition mark belongs to one delivery and does not. */
-  acceptanceTarget: string | null; acceptancePrecondition: string | null;
+  acceptanceTarget: string | null; acceptancePrecondition: string | null; completionBoundary: string | null;
   documentIds: string[]; dependencyIds: string[]; priority: number | null;
 }
 interface SeriesRow {
@@ -123,7 +123,7 @@ async function templateFromTask(client: PoolClient, projectId: string, taskId: s
     kind: t.kind, domainId: t.domain_id, sourceTaskId: taskId, sourceTaskRevisionId: t.current_revision_id,
     stageId: p.stage_id, consumer: p.consumer, useRequired: p.use_required,
     acceptanceMode: p.acceptance_mode, evidence: p.evidence, stopCondition: p.stop_condition,
-    acceptanceTarget: p.acceptance_target ?? null, acceptancePrecondition: p.acceptance_precondition ?? null,
+    acceptanceTarget: p.acceptance_target ?? null, acceptancePrecondition: p.acceptance_precondition ?? null, completionBoundary: p.completion_boundary ?? null,
     documentIds: links.rows.map(r => r.document_id), dependencyIds: deps.rows.map(r => r.depends_on_task_id),
     priority: plan.rows[0]?.priority ?? null };
 }
@@ -250,10 +250,10 @@ async function reviseCurrentTask(client: PoolClient, projectId: string, taskId: 
   const p = proposal.rows[0];
   if (!p) throw new TaskTimingConflict("Task proposal is missing");
   await client.query(`INSERT INTO task_proposal(project_id,task_id,task_revision_id,stage_id,consumer,
-    use_required,acceptance_mode,evidence,stop_condition,acceptance_target,acceptance_precondition,created_at)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,[projectId,taskId,revisionId,p.stage_id,
+    use_required,acceptance_mode,evidence,stop_condition,acceptance_target,acceptance_precondition,created_at,completion_boundary)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,[projectId,taskId,revisionId,p.stage_id,
       p.consumer,p.use_required,p.acceptance_mode,p.evidence,p.stop_condition,
-      p.acceptance_target ?? null,p.acceptance_precondition ?? null,nowUtc]);
+      p.acceptance_target ?? null,p.acceptance_precondition ?? null,nowUtc,p.completion_boundary ?? null]);
   await client.query(`UPDATE task SET version=$3,current_revision_id=$4,title=$5,acceptance=$6,
     content_revision_id=$7 WHERE project_id=$1 AND task_id=$2`,[projectId,taskId,t.version+1,
       revisionId,title,acceptance,contentRevisionId]);
@@ -551,10 +551,10 @@ export class PgTaskTimingStore {
             [projectId,taskId,taskRevisionId,t.title,t.acceptance,t.owner,t.kind,t.domainId,documentId,contentRevisionId,
               actorId,reason,nowUtc]);
           await client.query(`INSERT INTO task_proposal(project_id,task_id,task_revision_id,stage_id,consumer,use_required,
-            acceptance_mode,evidence,stop_condition,acceptance_target,acceptance_precondition,created_at)
-            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+            acceptance_mode,evidence,stop_condition,acceptance_target,acceptance_precondition,created_at,completion_boundary)
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
             [projectId,taskId,taskRevisionId,t.stageId,t.consumer,t.useRequired,t.acceptanceMode,t.evidence,t.stopCondition,
-              t.acceptanceTarget,t.acceptancePrecondition,nowUtc]);
+              t.acceptanceTarget,t.acceptancePrecondition,nowUtc,t.completionBoundary]);
           for (const document of t.documentIds) await client.query(`INSERT INTO task_document_link(project_id,link_id,
             task_id,document_id,actor_id,created_at) VALUES($1,$2,$3,$4,$5,$6)`,
             [projectId,randomUUID(),taskId,document,actorId,nowUtc]);

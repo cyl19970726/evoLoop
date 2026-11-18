@@ -205,10 +205,36 @@ export interface TaskProposal {
   acceptanceTarget?: "human" | "leader" | "business_session" | "named_agent" | null;
   /** What must happen before the delivery can be checked at its real entrance. Null: not declared. */
   acceptancePrecondition?: "none" | "refresh" | "release" | "migration" | "config_restart" | null;
+  /**
+   * When the Task may close (Task b5993311). `delivered`: a passed, used Delivery is enough (the behaviour before this field). `merged`: the PR the Delivery names must also be
+   * merged into the main line, as the repository itself shows (`CompletionFacts`); the closer's own statement counts for nothing. Null: declared nothing (a Task made before
+   * the field existed), which closes as `delivered`.
+   */
+  completionBoundary?: CompletionBoundary | null;
   evidence: string;
   stopCondition: string;
   createdAt: string;
 }
+export type CompletionBoundary = "delivered" | "merged";
+/** What the repository says about the PR a Delivery names, read when a Task closes or is read back. Never taken from the closer. */
+export type MergeFact =
+  | { state: "merged"; mainCommit: string; via: "ancestor" | "merge_commit"; detail: string }
+  | { state: "not_merged"; mainCommit: string | null; detail: string }
+  | { state: "unreadable"; detail: string };
+/**
+ * What a Task reads back about its completion boundary: the declared boundary, and whether it is met now. `met` is true/false for `merged` (from the repository's own
+ * answer, never the closer's), null where there is nothing to judge (`delivered`, or declared nothing). `reason` says why in words.
+ */
+export interface TaskCompletionView {
+  boundary: CompletionBoundary | null;
+  met: boolean | null;
+  pullRequest: number | null;
+  head: string | null;
+  fact: MergeFact | null;
+  reason: string;
+}
+/** The repository read behind the `merged` boundary; supplied by the host (the coordinator reads the project's registered repository). */
+export type MergeFactReader = (input: { projectId: string; pullRequest: number; head: string }) => Promise<MergeFact>;
 export interface TaskJudgement {
   projectId: string;
   id: string;

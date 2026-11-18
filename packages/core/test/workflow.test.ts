@@ -266,7 +266,7 @@ class MemoryUow implements UnitOfWork {
   }
 }
 
-function fixture() {
+function fixture(extra: Partial<ConstructorParameters<typeof WorkflowService>[0]> = {}) {
   let sequence = 10;
   const uow = new MemoryUow();
   uow.state.roles[ownerRoleId] = { projectId, id: ownerRoleId, state: "active" } as RoleRecord;
@@ -275,6 +275,7 @@ function fixture() {
     clock: { now: () => "2026-10-20T00:00:00.000Z" },
     ids: { next: () => `00000000-0000-4000-8000-${String(sequence++).padStart(12, "0")}` },
     hasher: { hash: (value) => createHash("sha256").update(value).digest("hex") },
+    ...extra,
   });
   const operation = () => `10000000-0000-4000-8000-${String(sequence++).padStart(12, "0")}`;
   return { uow, service, operation };
@@ -965,4 +966,107 @@ test("read permission and operation ownership are checked on every query", async
   assert.equal(await f.service.getOperation(principal, projectId, f.operation()), null);
   await assert.rejects(f.service.getProject({ ...principal, projectIds: [] }, projectId),
     (error: unknown) => error instanceof DomainError && error.code === "FORBIDDEN");
+});
+
+// ---- Task b5993311: completion boundary ----
+const head = "a".repeat(40), pr = "https://github.com/owner/repo/pull/12";
+type FactState = { value: import("@evoloop/contracts").MergeFact };
+async function deliveredTask(f: ReturnType<typeof fixture>, boundary: "delivered" | "merged" | undefined, artifactRef = pr, revision = head) {
+  const executor: Principal = { actorId: "executor", projectIds: [projectId], permissions: ["task", "document", "session"] };
+  const reviewer: Principal = { actorId: "reviewer", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true };
+  await f.service.execute(principal, { type: "project.create", projectId, operationId: f.operation(), title: "Project" });
+  const created = await f.service.execute(principal, { type: "task.create", projectId, operationId: f.operation(), taskId: taskA,
+    title: "Boundary", content: "Deliver", acceptance: "Used and merged", owner: ownerRoleId, ...(boundary ? { completionBoundary: boundary } : {}) });
+  assert.equal(created.status, "applied");
+  await f.service.execute(principal, { type: "task.start", projectId, operationId: f.operation(), taskId: taskA, expectedVersion: 1, reason: "Start" });
+  const saved = await f.service.execute(principal, { type: "delivery.record", projectId, operationId: f.operation(), taskId: taskA, expectedVersion: 2,
+    artifactRef, artifactRevision: revision, contentHash: "c".repeat(64), technicalResult: "passed", technicalEvidence: "CI green", reason: "Delivered" });
+  const deliveryId = saved.status === "applied" ? saved.revisionId! : "";
+  f.uow.state.deliveries[0] = { ...f.uow.state.deliveries[0]!, submittedByActorId: executor.actorId };
+  assert.equal((await f.service.execute(reviewer, { type: "observation.record", projectId, operationId: f.operation(), taskId: taskA, deliveryId,
+    observer: reviewer.actorId, observerKind: "agent", result: "used", evidence: "Used it", reason: "Checked" })).status, "applied");
+  const close = (reason = "Close") => f.service.execute(principal, { type: "task.close", projectId, operationId: f.operation(), taskId: taskA, expectedVersion: 3, deliveryId,
+    acceptanceResult: "met", acceptanceEvidence: "Independent review passed", reason });
+  return { close };
+}
+
+test("a `merged` Task closes only on the repository's merge fact: refused while unmerged (readable), a closer's claim counts for nothing, accepted once merged", async () => {
+  const fact: FactState = { value: { state: "not_merged", mainCommit: "b".repeat(40), detail: "头提交不在主干上" } };
+  const f = fixture({ mergeFacts: async () => fact.value });
+  const { close } = await deliveredTask(f, "merged");
+  const refused = await close();
+  assert.equal(refused.status === "rejected" ? refused.code : null, "MERGE_NOT_VERIFIED");
+  const message = refused.status === "rejected" ? refused.message : "";
+  assert.match(message, /PR #12/); assert.match(message, /aaaaaaaa/); assert.match(message, /not merged into the main line/);
+  // The closer says it was merged, in the reason and in the evidence: nothing reads it.
+  const claimed = await f.service.execute(principal, { type: "task.close", projectId, operationId: f.operation(), taskId: taskA, expectedVersion: 3,
+    deliveryId: f.uow.state.deliveries[0]!.id, acceptanceResult: "met", acceptanceEvidence: "已合并，PR 已经合进主干", reason: "PR #12 已合并" });
+  assert.equal(claimed.status === "rejected" ? claimed.code : null, "MERGE_NOT_VERIFIED", "a self-reported merge is refused");
+  // The repository cannot be read: refused too, and it says why.
+  fact.value = { state: "unreadable", detail: "仓库里没有头提交" };
+  const unread = await close();
+  assert.equal(unread.status === "rejected" ? unread.code : null, "MERGE_FACT_UNREADABLE");
+  assert.match(unread.status === "rejected" ? unread.message : "", /仓库里没有头提交/);
+  // Merged: the same Delivery now closes.
+  fact.value = { state: "merged", mainCommit: "b".repeat(40), via: "ancestor", detail: "头提交已在主干上" };
+  assert.equal((await close()).status, "applied");
+  assert.equal(f.uow.state.closures.length, 1);
+});
+
+test("a `merged` Task whose Delivery does not name a PR number and a full head cannot be checked, so it cannot close", async () => {
+  const f = fixture({ mergeFacts: async () => ({ state: "merged", mainCommit: "b".repeat(40), via: "ancestor", detail: "x" }) });
+  const { close } = await deliveredTask(f, "merged", "repo/result", "r1");
+  const refused = await close();
+  assert.equal(refused.status === "rejected" ? refused.code : null, "MERGE_NOT_VERIFIABLE");
+  const none = fixture(); // no repository reader at all
+  const { close: closeNone } = await deliveredTask(none, "merged");
+  const unread = await closeNone();
+  assert.equal(unread.status === "rejected" ? unread.code : null, "MERGE_FACT_UNREADABLE", "without a repository reader a `merged` Task cannot close");
+});
+
+test("`delivered` and a Task made before the field existed close as before, with no repository read", async () => {
+  let reads = 0;
+  for (const boundary of ["delivered", undefined] as const) {
+    const f = fixture({ mergeFacts: async () => { reads++; return { state: "not_merged", mainCommit: null, detail: "x" }; } });
+    const { close } = await deliveredTask(f, boundary, "repo/result", "r1");
+    assert.equal((await close()).status, "applied", String(boundary));
+  }
+  assert.equal(reads, 0);
+});
+
+test("once the release requires it, a delivery Task must declare a completion boundary; either value is accepted and is kept across revisions", async () => {
+  const f = fixture({ requireCompletionBoundary: true });
+  await f.service.execute(principal, { type: "project.create", projectId, operationId: f.operation(), title: "Project" });
+  const base = { type: "task.create" as const, projectId, title: "T", content: "Deliver", acceptance: "Used", owner: ownerRoleId };
+  const refused = await f.service.execute(principal, { ...base, operationId: f.operation(), taskId: taskA });
+  assert.equal(refused.status === "rejected" ? refused.code : null, "COMPLETION_BOUNDARY_REQUIRED");
+  assert.match(refused.status === "rejected" ? refused.message : "", /completionBoundary/);
+  assert.equal((await f.service.execute(principal, { ...base, operationId: f.operation(), taskId: taskA, completionBoundary: "merged" })).status, "applied");
+  assert.equal((await f.service.execute(principal, { ...base, operationId: f.operation(), taskId: taskB, completionBoundary: "delivered" })).status, "applied");
+  assert.equal((await f.service.getTask(principal, projectId, taskA)).proposal?.completionBoundary, "merged");
+  // A later revision keeps the boundary.
+  assert.equal((await f.service.execute(principal, { type: "task.update", projectId, operationId: f.operation(), taskId: taskA, expectedVersion: 1, title: "T2", content: "Deliver", acceptance: "Used", owner: ownerRoleId, reason: "Rename" })).status, "applied");
+  assert.equal((await f.service.getTask(principal, projectId, taskA)).proposal?.completionBoundary, "merged");
+  // Not enforced where the host has not turned it on (tests and older hosts).
+  const off = fixture();
+  await off.service.execute(principal, { type: "project.create", projectId, operationId: off.operation(), title: "Project" });
+  assert.equal((await off.service.execute(principal, { ...base, operationId: off.operation(), taskId: taskA })).status, "applied");
+});
+
+test("a Task reads back its boundary and whether it is met now, from the repository", async () => {
+  const fact: FactState = { value: { state: "not_merged", mainCommit: "b".repeat(40), detail: "不在主干上" } };
+  const f = fixture({ mergeFacts: async () => fact.value });
+  await deliveredTask(f, "merged");
+  let completion = (await f.service.getTask(principal, projectId, taskA)).completion;
+  assert.deepEqual([completion?.boundary, completion?.met, completion?.pullRequest, completion?.head], ["merged", false, 12, head]);
+  assert.match(completion?.reason ?? "", /还没有合并/);
+  fact.value = { state: "merged", mainCommit: "b".repeat(40), via: "merge_commit", detail: "合并提交 bbbbbbbb" };
+  completion = (await f.service.getTask(principal, projectId, taskA)).completion;
+  assert.equal(completion?.met, true);
+  fact.value = { state: "unreadable", detail: "读不到" };
+  assert.equal((await f.service.getTask(principal, projectId, taskA)).completion?.met, null, "unreadable is neither met nor unmet");
+  const delivered = fixture(); await deliveredTask(delivered, "delivered", "repo/result", "r1");
+  assert.equal((await delivered.service.getTask(principal, projectId, taskA)).completion?.boundary, "delivered");
+  const legacy = fixture(); await deliveredTask(legacy, undefined, "repo/result", "r1");
+  assert.equal((await legacy.service.getTask(principal, projectId, taskA)).completion, undefined, "a Task that declared nothing shows nothing");
 });

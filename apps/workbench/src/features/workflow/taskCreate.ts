@@ -21,6 +21,8 @@ export interface TaskDraft {
   stageId: string;
   kind: TaskKind | "";
   acceptanceMode: "independent_agent" | "human_required";
+  /** When the Task may close (Task b5993311): on the used Delivery alone, or only once its PR is merged. The service requires one for every new delivery Task. */
+  completionBoundary: "delivered" | "merged";
   consumer: string;
   /** `use`: closing needs the current delivery's actual use. `decision`: a cognition role's research judgement only. */
   closeRule: "use" | "decision";
@@ -38,7 +40,7 @@ export function browserTimezone(): string {
 }
 
 export function emptyTaskDraft(timezone = browserTimezone(), stageId = ""): TaskDraft {
-  return { title: "", why: "", outcome: "", acceptance: "", owner: "", stageId, kind: "", acceptanceMode: "independent_agent", consumer: "",
+  return { title: "", why: "", outcome: "", acceptance: "", owner: "", stageId, kind: "", acceptanceMode: "independent_agent", completionBoundary: "delivered", consumer: "",
     closeRule: "use", executeAt: "", timezone, repeat: "none", evidence: "", stopCondition: "", documentIds: [] };
 }
 
@@ -61,7 +63,7 @@ export type DraftProblems = Partial<Record<keyof TaskDraft, string>>;
 /** The form's label for each field, so a summary can say where the problems are. */
 export const draftFieldLabels: Record<keyof TaskDraft, string> = {
   title: "任务名称", why: "为什么要做", outcome: "期望结果", acceptance: "怎样独立验收", owner: "负责职责", stageId: "所属阶段",
-  kind: "任务类型", acceptanceMode: "验收方式", consumer: "实际使用成果的身份", closeRule: "关闭条件", executeAt: "执行时间",
+  kind: "任务类型", acceptanceMode: "验收方式", completionBoundary: "完成边界", consumer: "实际使用成果的身份", closeRule: "关闭条件", executeAt: "执行时间",
   timezone: "时区", repeat: "是否重复", evidence: "来源或反馈证据", stopCondition: "停止条件", documentIds: "关联已发布的文档",
 };
 
@@ -70,7 +72,7 @@ export const draftFieldLabels: Record<keyof TaskDraft, string> = {
  * its owner (the service accepts `useRequired: false` only then), so neither is asked for.
  */
 export function hiddenFields(draft: Pick<TaskDraft, "closeRule">): (keyof TaskDraft)[] {
-  return draft.closeRule === "decision" ? ["acceptanceMode", "consumer"] : [];
+  return draft.closeRule === "decision" ? ["acceptanceMode", "completionBoundary", "consumer"] : [];
 }
 
 /** What must be fixed before the draft can be sent, field by field, in words the form shows under each field. */
@@ -146,7 +148,7 @@ export function taskCreateCommand(draft: TaskDraft, taskId: string): Record<stri
     type: "task.create", taskId, title: draft.title, kind: draft.kind || null,
     content: taskContent(draft), acceptance: draft.acceptance, owner: draft.owner,
     // A decision-only task names no acceptance mode: the service accepts `useRequired: false` only then.
-    ...(decision ? {} : { acceptanceMode: draft.acceptanceMode }), useRequired: !decision,
+    ...(decision ? {} : { acceptanceMode: draft.acceptanceMode, completionBoundary: draft.completionBoundary ?? "delivered" }), useRequired: !decision,
     ...(consumer ? { consumer } : {}),
     ...(draft.stageId ? { stageId: draft.stageId } : {}),
     ...(draft.documentIds.length ? { documentIds: [...draft.documentIds] } : {}),
