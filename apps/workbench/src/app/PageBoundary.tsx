@@ -46,9 +46,9 @@ export class PageBoundary extends Component<{ children: ReactNode; active?: bool
     const report: PageErrorReport = { message: error instanceof Error ? `${error.name}: ${error.message}` : String(error), componentStack, route, commit: null, occurredAt: new Date().toISOString() };
     this.setState({ report, saved: { state: "saving" } });
     try {
-      report.commit = (await api().version().catch(() => null))?.commit ?? null;
-      this.setState({ report: { ...report } });
       const project = projectOfRoute(route);
+      report.commit = (await api().version(undefined, project ? decodeURIComponent(project) : undefined).catch(() => null))?.commit ?? null;
+      this.setState({ report: { ...report } });
       if (!project) { this.setState({ saved: { state: "failed", reason: "这一页不属于某个项目" } }); return; }
       const result = await api().reportClientError(decodeURIComponent(project), report);
       this.setState({ saved: { state: "saved", id: result.id } });

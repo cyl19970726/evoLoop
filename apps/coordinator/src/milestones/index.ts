@@ -56,6 +56,13 @@ export function registerMilestoneRoutes(app: FastifyInstance, options: Milestone
   const startedAt = options.startedAt ?? new Date().toISOString();
   // Public like /health (see the onRequest hook): only the commit, the build time and the process start time; no path, environment or configuration.
   app.get("/api/version", async (): Promise<VersionInfo> => ({ ...(await readBuildInfo(options.repoRoot)), startedAt }));
+  // The same facts for a page that reaches this machine through the Hub: the Hub forwards only a project's own API, so `/api/version` is a 404 there (Task 5a47dcb8).
+  app.get("/api/projects/:projectId/version", async (request): Promise<VersionInfo> => {
+    const { projectId } = z.strictObject({ projectId: z.uuid() }).parse(request.params);
+    if (!request.principal) throw new DomainError("FORBIDDEN", "Authentication required");
+    await options.service.getProject(request.principal, projectId);
+    return { ...(await readBuildInfo(options.repoRoot)), startedAt };
+  });
   app.get("/api/projects/:projectId/milestones", async request => {
     const { projectId } = z.strictObject({ projectId: z.uuid() }).parse(request.params);
     if (!request.principal) throw new DomainError("FORBIDDEN", "Authentication required");

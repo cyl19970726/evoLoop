@@ -4,11 +4,11 @@ import { chmodSync, mkdirSync, mkdtempSync, symlinkSync, utimesSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { cyclesAt, formatReading, listRollouts, loadConfig, readDeltas, reading, sumWindow, tokenDeltas } from "./quota-reading.mjs";
+import { balanceForecast, cyclesAt, formatReading, listRollouts, loadConfig, parseBalances, readDeltas, reading, sumWindow, tokenDeltas } from "./quota-reading.mjs";
 
 const T = text => Date.parse(text);
 const HOUR = 3_600_000;
-const CONFIG = { provider: "codex", utcOffsetMinutes: 300, windowHours: 2, warnAt: [0.6, 0.8], weights: { input: 1, uncachedInput: 0, output: 0 }, holds: [] };
+const CONFIG = { provider: "codex", utcOffsetMinutes: 300, balanceUnit: "元", rateWindowHours: 3, lowHours: 4, staleHours: 3, holds: [] };
 const countLine = (at, input, cached, output) => JSON.stringify({ timestamp: at, type: "event_msg", payload: { type: "token_count", info: { total_token_usage: { input_tokens: input, cached_input_tokens: cached, output_tokens: output } } } });
 // An even pace: `perHour` input tokens every hour (cached share 90%, output 1%), between two instants, in 15-minute events.
 const steady = (session, fromMs, toMs, perHour) => {
@@ -42,50 +42,75 @@ test("Q2. cycles from the pause history: none, paused, the first pause (no previ
   assert.equal(unreleased.state, "paused", "at that time the release of the second pause had not happened");
 });
 
-test("Q3. the reading: used, the share of the previous cycle by kind, weights, the 60% and 80% lines, and the time the quota runs out at the recent pace", () => {
-  // previous cycle: 100/h for 24 h = 2400 input; current: 10 h at 100/h (3 h after release then recent pace 100/h)
-  const deltas = [...previous(100), ...steady("B", T("2026-11-14T12:00:00Z"), NOW, 100)];
-  const r = reading({ deltas, holds: HOLDS, nowMs: NOW, config: CONFIG });
+// Balance readings: `n` hourly readings ending at `endMs`, starting at `start` and dropping `perHour` each hour.
+const hourly = (endMs, n, start, perHour) => Array.from({ length: n }, (_, index) => ({ at: endMs - (n - 1 - index) * HOUR, balance: start - index * perHour }));
+
+test("Q3. the balance, the pace and how long it lasts agree with a hand calculation on an even decline", () => {
+  // 100, 98, 96, 94, 92, 90 yuan, one reading an hour, the last one at NOW: pace of the last 3 hours = (96 - 90) / 3... the window holds 4 readings (3 h)
+  const readings = hourly(NOW, 6, 100, 2);
+  const f = balanceForecast({ readings, nowMs: NOW, config: CONFIG });
+  assert.equal(f.balance, 90); assert.equal(f.ageHours, 0);
+  assert.equal(f.perHour, 2); assert.equal(f.paceWindowHours, 3);
+  assert.equal(f.hoursLeft, 45); assert.equal(f.runsOutAt, new Date(NOW + 45 * HOUR).toISOString());
+  assert.deepEqual(f.flags, []);
+  const r = reading({ deltas: [], holds: HOLDS, balances: readings, nowMs: NOW, config: CONFIG });
   assert.equal(r.state, "ok");
-  assert.equal(Math.round(r.current.totals.input), 1000);
-  assert.ok(Math.abs(r.percent.input - 1000 / 2400) < 1e-9); assert.ok(Math.abs(r.percent.weighted - 1000 / 2400) < 1e-9);
-  assert.ok(Math.abs(r.percent.output - r.percent.input) < 1e-9, "the three kinds are given separately");
-  assert.deepEqual(r.flags, []);
-  // remaining 1400 at 100/h = 14 h after 22:00 -> 12:00 the next day
-  assert.equal(r.eta, "2026-11-15T12:00:00.000Z");
-  assert.match(r.line, /^放行 10\.0 小时，已用上个周期的 42%，照现在的速度约 11-15 17:00 用完$/);
-  const doubled = reading({ deltas: [...previous(100), ...steady("B", T("2026-11-14T12:00:00Z"), NOW, 200)], holds: HOLDS, nowMs: NOW, config: CONFIG });
-  assert.deepEqual(doubled.flags, [0.6, 0.8]); assert.match(doubled.line, /已用上个周期的 83%（已过 60%、80% 线）/);
-  const mid = reading({ deltas: [...previous(100), ...steady("B", T("2026-11-14T12:00:00Z"), NOW, 150)], holds: HOLDS, nowMs: NOW, config: CONFIG });
-  assert.deepEqual(mid.flags, [0.6]); assert.match(mid.line, /（已过 60% 线）/);
-  const byCost = reading({ deltas: [...previous(100), ...steady("B", T("2026-11-14T12:00:00Z"), NOW, 100)], holds: HOLDS, nowMs: NOW, config: { ...CONFIG, weights: { input: 0, uncachedInput: 1, output: 0 } } });
-  assert.ok(Math.abs(byCost.percent.weighted - 1000 / 2400) < 1e-9, "uncached input is its own share and can be the weighted one");
+  assert.match(r.line, /^余额 90 元（11-15 03:00 读数，刚刚），最近 3 小时每小时掉 2 元，照这个速度还能撑约 45 小时（约 11-17 00:00）$/);
 });
 
-test("Q4. it says so instead of giving a number: no history, a pause that is open, no previous cycle, no recent use, over the quota", () => {
-  const deltas = [...previous(100), ...steady("B", T("2026-11-14T12:00:00Z"), NOW, 100)];
-  assert.match(reading({ deltas, holds: [], nowMs: NOW, config: CONFIG }).line, /^无法估计：没有任何提供方暂停\/放行记录/);
-  const paused = reading({ deltas, holds: [...HOLDS, { openedAt: "2026-11-14T21:00:00Z", releasedAt: null }], nowMs: NOW, config: CONFIG });
-  assert.equal(paused.state, "paused"); assert.match(paused.line, /^暂停中：/); assert.equal(paused.eta, undefined);
-  const first = reading({ deltas, holds: [HOLDS[0]], nowMs: NOW, config: CONFIG });
-  assert.equal(first.state, "no-estimate"); assert.match(first.line, /^无法估计：放行 .* 小时，已用输入 .* 亿，但没有上一个完整周期可比/); assert.equal(first.eta, undefined); assert.equal(first.percent, undefined);
-  const quiet = reading({ deltas: [...previous(100), ...steady("B", T("2026-11-14T12:00:00Z"), T("2026-11-14T18:00:00Z"), 100)], holds: HOLDS, nowMs: NOW, config: CONFIG });
-  assert.match(quiet.line, /最近 2\.0 小时几乎没有用量，无法估计用完时间/); assert.equal(quiet.eta, undefined);
-  const over = reading({ deltas: [...previous(100), ...steady("B", T("2026-11-14T12:00:00Z"), NOW, 300)], holds: HOLDS, nowMs: NOW, config: CONFIG });
-  assert.match(over.line, /已超过额度/); assert.equal(over.eta, undefined);
-  const emptyPrevious = reading({ deltas: steady("B", T("2026-11-14T12:00:00Z"), NOW, 100), holds: HOLDS, nowMs: NOW, config: CONFIG });
-  assert.match(emptyPrevious.line, /^无法估计：.*上一个完整周期按当前权重的用量是 0/);
+test("Q4. a top-up (a reading that is higher than the one before) restarts the pace: only the readings after it count", () => {
+  // 100 -> 90 over 5 h (2/h), a top-up to 200, then 3 h at 4/h: 200, 196, 192, 188 -> the pace is 4, not the mix with the old 2
+  const old = hourly(NOW - 4 * HOUR, 6, 100, 2), fresh = hourly(NOW, 4, 200, 4);
+  const f = balanceForecast({ readings: [...old, ...fresh], nowMs: NOW, config: { ...CONFIG, rateWindowHours: 10 } });
+  assert.equal(f.perHour, 4); assert.equal(f.balance, 188); assert.equal(f.hoursLeft, 47);
+  assert.equal(f.toppedUpAt, new Date(NOW - 3 * HOUR).toISOString());
+  assert.equal(f.paceWindowHours, 3, "the window starts at the top-up reading, not before");
+  // two top-ups: the last one counts
+  const twice = balanceForecast({ readings: [...old, ...fresh, ...hourly(NOW + 3 * HOUR, 3, 300, 1)], nowMs: NOW + 3 * HOUR, config: CONFIG });
+  assert.equal(twice.perHour, 1); assert.equal(twice.hoursLeft, 298);
+  const justToppedUp = reading({ deltas: [], holds: HOLDS, balances: [...old, { at: NOW, balance: 500 }], nowMs: NOW, config: CONFIG });
+  assert.match(justToppedUp.line, /^余额 500 元（.*刚刚）；只有一条读数，算不出每小时掉多少.*（刚充值，按充值后的读数算）$/);
 });
 
-test("Q5. with a recharge amount and unit prices the quota is that amount: no previous cycle is needed", () => {
-  const config = { ...CONFIG, recharge: { amount: 10, unitPrice: { uncachedInput: 1, cachedInput: 0.1, output: 2 } } }; // per million tokens
-  const deltas = steady("B", T("2026-11-14T12:00:00Z"), NOW, 1_000_000);
-  const r = reading({ deltas, holds: [HOLDS[0], HOLDS[1]].slice(0, 2), nowMs: NOW, config });
-  // 10 h: 10M input (9M cached, 1M uncached) + 0.1M output = 1*1 + 9*0.1 + 0.1*2 = 2.1 ... per 1M/h: 0.1 + 0.9*0.1 + 0.02 = 0.21 per hour -> 2.1 in 10 h
-  assert.ok(Math.abs(r.percent.amount - 0.21) < 1e-9);
-  assert.match(r.line, /已用充值金额的 21%/); assert.equal(r.basis, "充值金额");
-  const noPrevious = reading({ deltas, holds: [HOLDS[1]], nowMs: NOW, config });
-  assert.match(noPrevious.line, /已用充值金额的 21%/, "no previous cycle is needed when the amount is given");
+test("Q5. counter-examples: no reading, one reading, an old reading, a pause, no drop, readings from the future, unreadable lines", () => {
+  // no balance reading: usage since the release only, no percentage and no time, and the reason said
+  const deltas = steady("B", T("2026-11-14T12:00:00Z"), NOW, 5_000_000_000); // far more than the old script's "previous cycle" ever allowed
+  const none = reading({ deltas, holds: HOLDS, balances: [], nowMs: NOW, config: CONFIG });
+  assert.equal(none.state, "no-balance");
+  assert.match(none.line, /^没有余额读数，无法估计还能撑多久。放行 10\.0 小时，已用输入 .* 亿$/);
+  assert.doesNotMatch(formatReading(none, CONFIG), /%|已超过额度|上个周期|用完|还能撑约/);
+  // one reading: the balance only
+  const one = reading({ deltas: [], holds: HOLDS, balances: [{ at: NOW - HOUR / 2, balance: 38 }], nowMs: NOW, config: CONFIG });
+  assert.equal(one.state, "balance-only"); assert.match(one.line, /^余额 38 元（.* 读数，30 分钟前）；只有一条读数，算不出每小时掉多少，也就无法估计还能撑多久$/);
+  assert.equal(one.balance.rate, null);
+  // the last reading is 3 hours old: the age is written, the staleness marked
+  const old = reading({ deltas: [], holds: HOLDS, balances: hourly(NOW - 3 * HOUR, 4, 40, 1), nowMs: NOW, config: CONFIG });
+  assert.match(old.line, /（11-15 00:00 读数，3 小时前）/); assert.deepEqual(old.flags, ["stale"]); assert.match(old.line, /读数已有 3 小时没更新，数字可能过时/);
+  // a pause that is open
+  const paused = reading({ deltas: [], holds: [...HOLDS, { openedAt: "2026-11-14T21:00:00Z", releasedAt: null }], balances: hourly(NOW, 4, 40, 1), nowMs: NOW, config: CONFIG });
+  assert.equal(paused.state, "paused"); assert.match(paused.line, /^暂停中：提供方自 .* 起处于暂停，没有放行，不做估计；最后一次余额读数：余额 37 元/);
+  // not dropping: said, no time
+  const flat = reading({ deltas: [], holds: HOLDS, balances: hourly(NOW, 4, 40, 0), nowMs: NOW, config: CONFIG });
+  assert.match(flat.line, /最近读数没有下降，无法估计还能撑多久/); assert.equal(flat.balance.hoursLeft, undefined);
+  // readings after `now` are not used
+  const future = balanceForecast({ readings: [...hourly(NOW, 4, 40, 1), { at: NOW + HOUR, balance: 1 }], nowMs: NOW, config: CONFIG });
+  assert.equal(future.balance, 37);
+  assert.equal(balanceForecast({ readings: [{ at: NOW + HOUR, balance: 1 }], nowMs: NOW, config: CONFIG }).state, "none");
+  // unreadable lines are named with their line number and never guessed
+  const parsed = parseBalances("# header\n2026-11-14T10:00:00Z, 40\n\nnot a reading\n2026-11-14T11:00:00Z\t38.5\n{\"at\":\"2026-11-14T12:00:00Z\",\"balance\":37}\n{\"at\":\"x\",\"balance\":1}\n2026-11-14T13:00:00Z, -5\n");
+  assert.deepEqual(parsed.readings.map(item => item.balance), [40, 38.5, 37]);
+  assert.equal(parsed.problems.length, 3); assert.match(parsed.problems[0], /第 4 行读不出/); assert.match(parsed.problems[1], /第 7 行/); assert.match(parsed.problems[2], /第 8 行/);
+});
+
+test("Q6a. fewer than four hours left is marked and the threshold is configurable; a longer reserve is not", () => {
+  const readings = hourly(NOW, 4, 20, 4); // 20, 16, 12, 8 yuan at 4/h -> 2 h left
+  const low = reading({ deltas: [], holds: HOLDS, balances: readings, nowMs: NOW, config: CONFIG });
+  assert.deepEqual(low.flags, ["low"]); assert.match(low.line, /还能撑约 2 小时（约 11-15 .*）；不足 4 小时，请提醒$/);
+  assert.match(formatReading(low, CONFIG), /提醒：余额照现在的速度撑不到 4 小时/);
+  assert.deepEqual(reading({ deltas: [], holds: HOLDS, balances: readings, nowMs: NOW, config: { ...CONFIG, lowHours: 1 } }).flags, []);
+  const ample = reading({ deltas: [], holds: HOLDS, balances: hourly(NOW, 4, 100, 1), nowMs: NOW, config: CONFIG });
+  assert.deepEqual(ample.flags, []); assert.doesNotMatch(ample.line, /不足/);
+  assert.match(reading({ deltas: [], holds: HOLDS, balances: readings, nowMs: NOW, config: { ...CONFIG, lowHours: 10, balanceUnit: "美元" } }).line, /余额 8 美元.*不足 10 小时/);
 });
 
 test("Q6. by Session, and the edges of a window: an event exactly at the start counts, one exactly at the end does not", () => {
@@ -95,16 +120,20 @@ test("Q6. by Session, and the edges of a window: an event exactly at the start c
   assert.deepEqual([...bySession.keys()].sort(), ["x", "y"]); assert.equal(bySession.get("x").input, 5);
 });
 
-test("Q7. the config: an absolute path outside the repository, an absolute sessions root, pause history, sensible weights", () => {
+test("Q7. the config: an absolute path outside the repository, an absolute sessions root, pause history, the balance file path, the old keys still load", () => {
   const ok = { codexSessionsRoot: "/srv/codex", utcOffsetMinutes: 300, holds: [] };
-  assert.equal(loadConfig(JSON.stringify(ok), "/etc/quota.json").windowHours, 2);
+  const loaded = loadConfig(JSON.stringify(ok), "/etc/quota.json");
+  assert.deepEqual([loaded.rateWindowHours, loaded.lowHours, loaded.staleHours, loaded.balanceUnit], [3, 4, 3, "元"]);
   assert.throws(() => loadConfig(JSON.stringify(ok), "relative.json"), /absolute path outside the repository/);
   assert.throws(() => loadConfig(JSON.stringify(ok), new URL("../../x.json", import.meta.url).pathname), /outside the repository/);
   assert.throws(() => loadConfig(JSON.stringify({ ...ok, codexSessionsRoot: "rel" }), "/etc/q.json"), /codexSessionsRoot/);
   assert.throws(() => loadConfig(JSON.stringify({ codexSessionsRoot: "/srv/codex" }), "/etc/q.json"), /databaseUrl \+ projectId .* or holds/);
-  assert.throws(() => loadConfig(JSON.stringify({ ...ok, weights: { input: 0, uncachedInput: 0, output: 0 } }), "/etc/q.json"), /at least one kind/);
-  assert.throws(() => loadConfig(JSON.stringify({ ...ok, weights: { input: -1 } }), "/etc/q.json"), /weights\.input/);
-  assert.throws(() => loadConfig(JSON.stringify({ ...ok, recharge: { amount: 5 } }), "/etc/q.json"), /recharge needs/);
+  assert.throws(() => loadConfig(JSON.stringify({ ...ok, balanceReadings: "balances.txt" }), "/etc/q.json"), /balanceReadings must be an absolute path outside the repository/);
+  assert.throws(() => loadConfig(JSON.stringify({ ...ok, balanceReadings: new URL("../../b.txt", import.meta.url).pathname }), "/etc/q.json"), /balanceReadings must be an absolute path outside the repository/);
+  assert.equal(loadConfig(JSON.stringify({ ...ok, balanceReadings: "/srv/balances.txt" }), "/etc/q.json").balanceReadings, "/srv/balances.txt");
+  assert.throws(() => loadConfig(JSON.stringify({ ...ok, lowHours: 0 }), "/etc/q.json"), /lowHours must be a positive number/);
+  assert.throws(() => loadConfig(JSON.stringify({ ...ok, rateWindowHours: "x" }), "/etc/q.json"), /rateWindowHours/);
+  assert.doesNotThrow(() => loadConfig(JSON.stringify({ ...ok, weights: { input: 1 }, warnAt: [0.6], windowHours: 2, recharge: { amount: 5 } }), "/etc/q.json"), "an old config still loads; its old keys are ignored");
 });
 
 test("Q8. native records: only recent ones are listed, the thread comes from the file name, one unreadable file is named and the rest still count", async () => {
@@ -124,30 +153,43 @@ test("Q8. native records: only recent ones are listed, the thread comes from the
   assert.match(problems.join("\n"), /记录读不了（missing\.jsonl：ENOENT）/);
 });
 
-test("Q9. the printout: one line first, the three kinds and the weighted total, Sessions, the reminder lines; an incomplete read says so on the first line", () => {
-  const deltas = [...previous(100), ...steady("B", T("2026-11-14T12:00:00Z"), NOW, 200), ...steady("C", T("2026-11-14T12:00:00Z"), NOW, 50)];
-  const r = reading({ deltas, holds: HOLDS, nowMs: NOW, config: CONFIG });
+test("Q9. the printout: the one-line conclusion first, the usage since the release and the Sessions, the reminder line; an incomplete read says so on the first line", () => {
+  const deltas = [...steady("B", T("2026-11-14T12:00:00Z"), NOW, 200), ...steady("C", T("2026-11-14T12:00:00Z"), NOW, 50)];
+  const r = reading({ deltas, holds: HOLDS, balances: hourly(NOW, 4, 20, 4), nowMs: NOW, config: CONFIG });
   const text = formatReading(r, CONFIG);
   const lines = text.split("\n");
-  assert.match(lines[0], /^放行 10\.0 小时，已用上个周期的 1\d\d%/);
-  assert.match(text, /相当于上个周期的：输入 \d+%，未命中缓存 \d+%，输出 \d+%；按权重（输入 1、未命中缓存 0、输出 0）合计/);
+  assert.match(lines[0], /^余额 8 元（.* 读数，刚刚），最近 3 小时每小时掉 4 元，照这个速度还能撑约 2 小时/);
+  assert.match(text, /放行以来的用量（自 .*，10 小时）：输入 .* 亿，其中未命中缓存 .* 亿，输出 .* 亿/);
   assert.match(text, /分 Session（输入 \/ 未命中缓存 \/ 输出）：[\s\S]*B：[\s\S]*C：/);
-  const incomplete = formatReading(r, CONFIG, { problems: ["记录读不了（x.jsonl：ENOENT）"] });
+  assert.doesNotMatch(text, /相当于上个周期|已超过额度|%/);
+  const incomplete = formatReading(r, CONFIG, { problems: ["余额读数第 4 行读不出"] });
   assert.match(incomplete.split("\n")[0], /^⚠ 读数不完整：/);
 });
 
-test("Q10. the command: from a config with a pause list it prints the one-line conclusion, exits 2 when a record could not be read, 1 for a bad config, and writes nothing", () => {
+test("Q10. the command: no balance file, an unreadable file, one reading and a full series; the exit code, the old way of calling, nothing written", () => {
   const dir = mkdtempSync(join(tmpdir(), "quota-cli-")), sessions = join(dir, "codex"), day = join(sessions, "2026", "11", "14"); mkdirSync(day, { recursive: true });
-  writeFileSync(join(day, "rollout-2026-11-14T10-00-00-01a1c691-e8b4-7c11-9d2e-5f0a1b2c3d4e.jsonl"), `${countLine("2026-11-11T10:00:00Z", 5_000_000, 4_500_000, 5000)}\n${countLine("2026-11-14T13:00:00Z", 6_000_000, 5_400_000, 6000)}\n`);
-  const config = join(dir, "quota.json");
-  writeFileSync(config, JSON.stringify({ codexSessionsRoot: sessions, utcOffsetMinutes: 300, holds: [{ openedAt: "2026-11-10T00:00:00Z", releasedAt: "2026-11-10T01:00:00Z" }, { openedAt: "2026-11-13T00:00:00Z", releasedAt: "2026-11-14T12:00:00Z" }] }));
-  const run = (...args) => spawnSync(process.execPath, ["scripts/ops/quota-reading.mjs", ...args], { encoding: "utf8", env: { ...process.env, EVOLOOP_QUOTA_CONFIG: config } });
-  const ok = run("--now", "2026-11-14T15:00:00Z");
-  assert.equal(ok.status, 0); assert.match(ok.stdout.split("\n")[0], /^放行 3\.0 小时，已用上个周期的/);
-  const asJson = JSON.parse(run("--now", "2026-11-14T15:00:00Z", "--json").stdout);
-  assert.equal(asJson.state, "ok"); assert.deepEqual(asJson.problems, []);
+  writeFileSync(join(day, "rollout-2026-11-14T10-00-00-01a1c691-e8b4-7c11-9d2e-5f0a1b2c3d4e.jsonl"), `${countLine("2026-11-14T13:00:00Z", 5_000_000, 4_500_000, 5000)}\n${countLine("2026-11-14T14:00:00Z", 6_000_000, 5_400_000, 6000)}\n`);
+  const config = join(dir, "quota.json"), balances = join(dir, "balances.txt");
+  // the old-style config: its old keys are ignored, and no balance file is named anywhere
+  writeFileSync(config, JSON.stringify({ codexSessionsRoot: sessions, utcOffsetMinutes: 300, weights: { input: 1 }, warnAt: [0.6, 0.8], windowHours: 2,
+    holds: [{ openedAt: "2026-11-10T00:00:00Z", releasedAt: "2026-11-10T01:00:00Z" }, { openedAt: "2026-11-13T00:00:00Z", releasedAt: "2026-11-14T12:00:00Z" }] }));
+  const run = (args = [], env = {}) => spawnSync(process.execPath, ["scripts/ops/quota-reading.mjs", ...args], { encoding: "utf8", env: { ...process.env, EVOLOOP_QUOTA_BALANCES: "", EVOLOOP_QUOTA_CONFIG: config, ...env } });
+  const NOWISO = "2026-11-14T15:00:00Z";
+  const none = run(["--now", NOWISO]);
+  assert.equal(none.status, 0); assert.match(none.stdout.split("\n")[0], /^没有余额读数，无法估计还能撑多久。放行 3\.0 小时，已用输入 /); assert.doesNotMatch(none.stdout, /%|已超过额度/);
+  const missing = run(["--now", NOWISO, "--balances", join(dir, "nowhere.txt")]);
+  assert.equal(missing.status, 0); assert.match(missing.stdout.split("\n")[0], /^没有余额读数/, "a missing file is no reading, not an error");
+  writeFileSync(balances, `${["2026-11-14T12:00:00Z, 50", "2026-11-14T13:00:00Z, 48", "2026-11-14T14:00:00Z, 46", "2026-11-14T15:00:00Z, 44"].join("\n")}\n`);
+  const full = run(["--now", NOWISO], { EVOLOOP_QUOTA_BALANCES: balances });
+  assert.equal(full.status, 0); assert.match(full.stdout.split("\n")[0], /^余额 44 元（.* 读数，刚刚），最近 3 小时每小时掉 2 元，照这个速度还能撑约 22 小时/);
+  const asJson = JSON.parse(run(["--now", NOWISO, "--json", "--balances", balances]).stdout);
+  assert.equal(asJson.state, "ok"); assert.equal(asJson.balance.hoursLeft, 22); assert.deepEqual(asJson.problems, []);
+  writeFileSync(balances, "2026-11-14T14:00:00Z, 46\nbroken line\n");
+  const bad = run(["--now", NOWISO, "--balances", balances]);
+  assert.equal(bad.status, 2); assert.match(bad.stdout.split("\n")[0], /^⚠ 读数不完整：余额读数第 2 行读不出/); assert.match(bad.stdout, /只有一条读数/);
+  assert.equal(run(["--now", NOWISO, "--balances", "relative.txt"]).status, 1);
   symlinkSync(join(day, "nowhere.jsonl"), join(day, "rollout-2026-11-14T10-00-00-01a1c692-e8b4-7c11-9d2e-5f0a1b2c3d4e.jsonl"));
-  const broken = run("--now", "2026-11-14T15:00:00Z");
+  const broken = run(["--now", NOWISO]);
   assert.equal(broken.status, 2); assert.match(broken.stdout.split("\n")[0], /^⚠ 读数不完整：/);
   writeFileSync(config, "{}");
   assert.equal(run().status, 1);
