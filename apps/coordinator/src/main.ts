@@ -643,9 +643,10 @@ const scheduling = new SchedulingPump({ store: new PgSchedulingStore(pool), task
     return activeTaskTimingGrants(current, await currentIdentity());
   },
   enabled: () => integrations.scheduling?.enabled ?? false,
-  onError: () => console.error("Scheduling tick failed; inspect the saved schedule status before retrying."),
+  // Ticks every 30 s; a lasting failure is written once per ten minutes, with its reason, instead of one bare line per tick.
+  onError: (() => { const log = throttledLog(line => console.error(line), 600_000);
+    return (error: unknown) => log(`Scheduling tick failed: ${error instanceof Error ? error.message.slice(0, 200) : "unknown"}; inspect the saved schedule status before retrying.`); })(),
 });
-try { await scheduling.start(); } catch { console.error("Scheduling startup check failed; schedules were not assumed successful."); }
 const connectorLinks = new PgConnectorMessageLinks(pool);
 const connectorRoutes = new PgConnectorRoutes(pool);
 const connectorDecisions = new PgConnectorDeliveryDecisions(pool);
@@ -1207,3 +1208,7 @@ process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
 try { await app.listen({ host: "127.0.0.1", port }); managed?.start(); hubConnector.start(); ordinarySealPump.start(); residentQueue.start(); sessionLinePump.start(); sessionAttentionPump.start(); messagePump?.start(); connectorIngress?.start(); leaderResultNoticePump.start(); taskAttentionPump.start(); opsAlertPump.start(); console.log(`evoLoop local workbench: http://127.0.0.1:${port}`); }
 catch (error) { await shutdown(); throw error; }
+// Started with the other pumps, once everything above is declared. Its first tick used to run in the middle of this file and threw
+// "Cannot access 'lineRecipient' before initialization" whenever a direct dispatch was pending; with no timer set after that failure,
+// no schedule ran from 11-18 14:51 until the next restart (Task f508a86e). A failed first tick is reported and retried on the next one.
+try { await scheduling.start(); } catch (error) { console.error(`Scheduling startup check failed: ${error instanceof Error ? error.message.slice(0, 200) : "unknown"}; schedules were not assumed successful and are retried on the next tick.`); }

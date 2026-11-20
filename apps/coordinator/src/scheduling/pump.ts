@@ -72,13 +72,18 @@ export class SchedulingPump {
     return { ...this.current };
   }
 
+  /**
+   * Ticks once, then keeps ticking. A failed first tick is still thrown, so the caller can report it, but the timer is set
+   * anyway: one failure must not leave every schedule idle until the next restart (Task f508a86e, 11-18 to 11-20).
+   */
   async start(): Promise<PumpTickResult> {
     if (this.stopped) throw new Error("stopped scheduling pump cannot restart");
     if (this.started) throw new Error("scheduling pump already started");
     this.started = true;
-    let result: PumpTickResult;
+    let result: PumpTickResult | undefined;
+    let failure: { error: unknown } | null = null;
     try { result = await this.tickOnce(); }
-    catch (error) { this.started = false; throw error; }
+    catch (error) { failure = { error }; }
     if (this.stopped) return { state: "stopped", occurrences: [] };
     this.timer = setInterval(() => {
       void this.tickOnce().catch(error => {
@@ -87,7 +92,8 @@ export class SchedulingPump {
       });
     }, this.options.intervalMs ?? 30_000);
     this.timer.unref();
-    return result;
+    if (failure) throw failure.error;
+    return result!;
   }
 
   async stop(): Promise<void> {

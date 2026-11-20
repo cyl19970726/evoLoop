@@ -95,6 +95,50 @@ test("start ticks immediately and stop prevents later work", async () => {
   assert.equal(f.created, 1);
 });
 
+test("a failed first tick is reported but the timer still runs, so the next tick recovers without a restart", async t => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const f = fixture();
+  let failing = true;
+  f.setOnList(async () => { if (failing) throw new Error("Cannot access 'lineRecipient' before initialization"); });
+  await assert.rejects(f.pump.start(), /before initialization/);
+  assert.equal(f.pump.status().state, "error");
+  assert.equal(f.created, 0);
+  await assert.rejects(f.pump.start(), /already started/);
+  failing = false;
+  t.mock.timers.tick(60_000);
+  for (let i = 0; i < 50 && f.pump.status().state !== "idle"; i++) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.pump.status().state, "idle");
+  assert.equal(f.pump.status().lastError, null);
+  assert.equal(f.created, 1);
+  await f.pump.stop();
+  t.mock.timers.tick(60_000);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.created, 1);
+});
+
+test("a failed first tick keeps retrying on the timer while the cause lasts", async t => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const errors: unknown[] = [];
+  let ticks = 0;
+  const pump = new SchedulingPump({ store: {
+      create: async value => value, get: async () => definition,
+      listActive: async () => { ticks++; throw new Error("still unavailable"); },
+      revise: async value => value,
+      materialize: async () => { throw new Error("must not materialize"); },
+      getOccurrence: async () => null, hasOpenOccurrence: async () => false, listQueued: async () => [], advanceWatermark: async () => undefined },
+    canWrite: () => true, credentials: () => credentials, grants: () => [grant], enabled: () => true, now: () => at, intervalMs: 60_000,
+    onError: error => errors.push(error) });
+  await assert.rejects(pump.start(), /still unavailable/);
+  for (let round = 0; round < 3; round++) {
+    t.mock.timers.tick(60_000);
+    for (let i = 0; i < 20 && errors.length < round + 1; i++) await new Promise(resolve => setImmediate(resolve));
+  }
+  assert.equal(ticks, 4);
+  assert.equal(errors.length, 3);
+  assert.equal(pump.status().state, "error");
+  await pump.stop();
+});
+
 test("Task copies receive the exact current scheduling grant scope", async () => {
   const received: string[] = [];
   const f = fixture({ tick: async (project, now, actor, role, scope) => {
