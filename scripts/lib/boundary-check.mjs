@@ -297,22 +297,23 @@ export function mentionsAnywhere(transcripts, needles, atMs) {
 // own closure count as candidate-only in the next report (11-21, b3ab7bfc), and every later routine close would have done the same.
 // Removed as this check's own words (11-21 afb49a9e: the acceptor named the counter it was checking and the verdict it saw):
 // - the label in quotation marks, “候选观察下关闭” (also ‘’ 「」 『』 and Markdown backticks);
-// - the label followed by its count, bold or not, with or without “（共 M）” or a joining “为/是/：” (“候选观察下关闭 **1**（共 3）”,
-//   “候选观察下关闭 1；退出码 0”, “候选观察下关闭为 1”), but not when a measure word follows the number (“候选观察下关闭 3 个任务” is prose);
+// - the label followed by its count, bold or not, with “（共 M）” (“候选观察下关闭 **1**（共 3）”), or without it when only punctuation or
+//   the end of a line follows the number (“候选观察下关闭 1；退出码 0”, “候选观察下关闭为 1，”); a number followed by anything else is prose
+//   (“候选观察下关闭 3 个任务”, “… 3 轮”, “… 3 小时后”), so no list of measure words is needed;
 // - the verdicts this check prints on a closure row: quoted, with or without “依据” (“依据只写候选”, “误当成“只写候选””); unquoted
-//   “依据没有候选字样” and “依据同时提到候选与正式读回”; unquoted “依据只写候选” only where a printed row has it, at the end of a clause
-//   or before “，任务声明的阶段就是候选（不列）” (“我的依据只写候选，正式环境未读回” is prose).
+//   “依据没有候选字样” and “依据同时提到候选与正式读回”; unquoted “依据只写候选” only where a printed row has it: after the start of a line,
+//   “；” or “⚠”, at the end of a clause or before “，任务声明的阶段就是候选（不列）” (“我的依据只写候选；正式环境未读回” is prose).
 // Still candidate wording: the same words in a sentence without quotation marks or a count (“本次只在候选观察下关闭”, “证据只写候选实例”).
 // Known trade-off (acceptance-2, 11-21): a quoted label or verdict inside a real candidate-only sentence (“本次属于“候选观察下关闭”，
-// 正式未读回”) and an unquoted verdict ending a clause (“我的依据只写候选。”) are also removed; the words alone cannot tell them apart.
+// 正式未读回”) is also removed; the words alone cannot tell it apart from naming the check.
 const Q_OPEN = "[“\"「『‘`]", Q_CLOSE = "[”\"」』’`]";
 const VERDICTS = "只写候选|没有候选字样|同时提到候选与正式读回";
 const OWN_LABEL = new RegExp([
   `${Q_OPEN}候选观察下关闭${Q_CLOSE}`,
-  /候选观察下关闭\s*(?:为|是|[:：=])?\s*(?:\*\*)?\s*\d+\s*(?:\*\*)?(?:\s*[（(]\s*共\s*\d+\s*[）)])?(?![\s\d*]*[个次项条份件处例回笔起])/.source,
+  /候选观察下关闭\s*(?:为|是|[:：=|])?\s*(?:\*\*)?\s*\d+\s*(?:\*\*)?(?:\s*[（(]\s*共\s*\d+\s*[）)]|(?=\s*(?:[；;。，,·|）)」”"’』`\n]|$)))/.source,
   `${Q_OPEN}(?:依据)?(?:${VERDICTS})${Q_CLOSE}`,
   /依据(?:没有候选字样|同时提到候选与正式读回)/.source,
-  /依据只写候选(?:，任务声明的阶段就是候选（不列）|(?=[；;。）)\n]|$))/.source,
+  /(?<=(?:^|[；;\n⚠])\s*)依据只写候选(?:，任务声明的阶段就是候选（不列）|(?=[；;。）)\n]|$))/.source,
 ].join("|"), "g");
 export const mentionsCandidate = text => /候选/.test((text ?? "").replace(OWN_LABEL, ""));
 // It did not happen, is not done yet, or is only planned/conditional in this clause:

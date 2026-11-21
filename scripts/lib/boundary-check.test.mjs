@@ -127,13 +127,18 @@ test("observation wording: candidate, a formal read-back, and the stage a Task d
   assert.equal(mentionsCandidate("证据只写候选实例通过"), true);
   // acceptance-2's counterexamples (11-21, #504 first head): a count followed by a measure word, and the verdict words in the acceptor's own prose.
   for (const prose of ["只在候选观察下关闭 3 个任务，正式未读回", "本次候选观察下关闭 2 次，正式未读回", "我的依据只写候选，正式环境未读回",
-    "候选观察下关闭 **3** 个任务，正式未读回", "候选观察下关闭12项，正式未读回"]) {
+    "候选观察下关闭 **3** 个任务，正式未读回", "候选观察下关闭12项，正式未读回",
+    // Round two (#504 head 9ceb4f7e): measure words no list would hold, and the verdict words in the acceptor's own sentence before ；/。.
+    "候选观察下关闭 3 轮，正式未读回", "候选观察下关闭 2 天了，正式未读回", "候选观察下关闭 2 张单，正式未读回", "候选观察下关闭 3 task，正式未读回",
+    "候选观察下关闭 3 小时后正式仍未读回", "我的依据只写候选；正式环境未读回", "验收依据只写候选。正式环境未读回"]) {
     assert.equal(mentionsCandidate(prose), true, prose);
     assert.equal(judgeClosure({ evidence: prose, hasDelivery: true, stage: null }).flagged, true, prose);
   }
   // Other quotation marks and Markdown backticks, and a quoted verdict with “依据”.
   for (const quoted of ["‘候选观察下关闭’为 1", "『候选观察下关闭』为 1", "`候选观察下关闭` 为 1", "那一行是“依据只写候选”", "`依据只写候选`",
-    "⚠ b3ab7bfc 由 requirements-claude-agent 关闭；依据 acceptance-claude-agent:used；依据只写候选\n下一行", "依据只写候选；任务声明阶段：正式"]) {
+    "⚠ b3ab7bfc 由 requirements-claude-agent 关闭；依据 acceptance-claude-agent:used；依据只写候选\n下一行", "依据只写候选；任务声明阶段：正式",
+    "关闭；依据 x:used；依据只写候选，任务声明的阶段就是候选（不列）", "候选观察下关闭 1（共 3）与报告一致", "| 候选观察下关闭 | 1 |",
+    "候选观察下关闭 **1**。"]) {
     assert.equal(mentionsCandidate(quoted), false, quoted);
   }
   assert.equal(mentionsFormalReadback("正式环境已验证（2026-11-13 09:12Z，5ae8f8fc）"), true);
