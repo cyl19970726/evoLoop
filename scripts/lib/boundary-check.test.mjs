@@ -110,6 +110,41 @@ test("observation wording: candidate, a formal read-back, and the stage a Task d
   assert.equal(mentionsCandidate("本次只在候选观察下关闭，正式未读回"), true);
   assert.equal(mentionsCandidate("这次是按候选观察下关闭的"), true);
   assert.equal(judgeClosure({ evidence: "本次只在候选观察下关闭，正式未读回", hasDelivery: true, stage: null }).flagged, true);
+  // The label in quotation marks, the label with a count but no total, and this check's printed verdict are its own words (11-21, afb49a9e).
+  const afb = "因“候选观察下关闭”为 1，报告开头第二行写了“需要需求 Session 看：边界核对”。被标红的那一行是 b3ab7bfc、“依据只写候选”；"
+    + "我那条观察的证据里原文引用了计数字样“候选观察下关闭0（共3）”，可能被判定脚本按关键词误当成“只写候选”。";
+  assert.equal(mentionsCandidate(afb), false);
+  assert.equal(judgeClosure({ evidence: afb, hasDelivery: true, stage: null }).flagged, false);
+  assert.equal(mentionsCandidate("需要看的：合并 1 · 私有文件 1 · 以使用者身份写入 0 · 候选观察下关闭 1；退出码 0"), false);
+  assert.equal(mentionsCandidate("「候选观察下关闭」是 0"), false);
+  assert.equal(mentionsCandidate("候选观察下关闭：**2**"), false);
+  assert.equal(mentionsCandidate("那一行写着依据没有候选字样"), false);
+  assert.equal(mentionsCandidate("依据只写候选，任务声明的阶段就是候选（不列）"), false);
+  // Candidate wording next to those words still counts.
+  assert.equal(mentionsCandidate("因“候选观察下关闭”为 1；本次在候选实例 4400 上通过"), true);
+  assert.equal(mentionsCandidate("“依据只写候选”那行之外，正式未读回，只看了候选环境"), true);
+  assert.equal(mentionsCandidate("按候选观察下关闭，正式未读回"), true);
+  assert.equal(mentionsCandidate("证据只写候选实例通过"), true);
+  // acceptance-2's counterexamples (11-21, #504 first head): a count followed by a measure word, and the verdict words in the acceptor's own prose.
+  for (const prose of ["只在候选观察下关闭 3 个任务，正式未读回", "本次候选观察下关闭 2 次，正式未读回", "我的依据只写候选，正式环境未读回",
+    "候选观察下关闭 **3** 个任务，正式未读回", "候选观察下关闭12项，正式未读回",
+    // Round two (#504 head 9ceb4f7e): measure words no list would hold, and the verdict words in the acceptor's own sentence before ；/。.
+    "候选观察下关闭 3 轮，正式未读回", "候选观察下关闭 2 天了，正式未读回", "候选观察下关闭 2 张单，正式未读回", "候选观察下关闭 3 task，正式未读回",
+    "候选观察下关闭 3 小时后正式仍未读回", "我的依据只写候选；正式环境未读回", "验收依据只写候选。正式环境未读回",
+    // Round three (#504 head 87703c65): the verdict words at the start of the text or of a line are the acceptor's own sentence.
+    "依据只写候选；正式环境未读回，不通过", "结论：未通过\n依据只写候选。正式环境未读回",
+    // Round four (#504 head 19be653a): after “；” but followed by “；” and other words, as no printed row is.
+    "验收结论：未通过；依据只写候选；正式环境未读回"]) {
+    assert.equal(mentionsCandidate(prose), true, prose);
+    assert.equal(judgeClosure({ evidence: prose, hasDelivery: true, stage: null }).flagged, true, prose);
+  }
+  // Other quotation marks and Markdown backticks, and a quoted verdict with “依据”.
+  for (const quoted of ["‘候选观察下关闭’为 1", "『候选观察下关闭』为 1", "`候选观察下关闭` 为 1", "那一行是“依据只写候选”", "`依据只写候选`",
+    "⚠ b3ab7bfc 由 requirements-claude-agent 关闭；依据 acceptance-claude-agent:used；依据只写候选\n下一行", "依据只写候选；任务声明阶段：正式",
+    "关闭；依据 x:used；依据只写候选，任务声明的阶段就是候选（不列）", "候选观察下关闭 1（共 3）与报告一致", "| 候选观察下关闭 | 1 |",
+    "候选观察下关闭 **1**。"]) {
+    assert.equal(mentionsCandidate(quoted), false, quoted);
+  }
   assert.equal(mentionsFormalReadback("正式环境已验证（2026-11-13 09:12Z，5ae8f8fc）"), true);
   assert.equal(mentionsFormalReadback("候选环境通过；正式未验证"), false);
   assert.equal(declaredStage("**阶段**：正式（读正式数据）"), "正式");
