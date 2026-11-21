@@ -100,6 +100,10 @@ test("mentions near a time: only commands inside the window that name the file, 
 test("observation wording: candidate, a formal read-back, and the stage a Task declares", () => {
   assert.equal(mentionsCandidate("在候选阶段通过"), true);
   assert.equal(mentionsCandidate("在正式实例通过"), false);
+  // Quoting this check's own count label is not candidate wording; other candidate wording next to it still is.
+  assert.equal(mentionsCandidate("前三行与计数“合并0（共0）·私有文件0（共0）·以使用者身份写入0（共0）·候选观察下关闭0（共3）”与报告一致"), false);
+  assert.equal(mentionsCandidate("需要看的：候选观察下关闭 1（共 3）；候选环境通过"), true);
+  assert.equal(judgeClosure({ evidence: "边界核对计数“候选观察下关闭0（共3）”与报告一致", hasDelivery: true, stage: null }).flagged, false);
   assert.equal(mentionsFormalReadback("正式环境已验证（2026-11-13 09:12Z，5ae8f8fc）"), true);
   assert.equal(mentionsFormalReadback("候选环境通过；正式未验证"), false);
   assert.equal(declaredStage("**阶段**：正式（读正式数据）"), "正式");
