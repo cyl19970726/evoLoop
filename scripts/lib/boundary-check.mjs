@@ -295,7 +295,8 @@ export function mentionsAnywhere(transcripts, needles, atMs) {
 /** The words an observation is judged by: it speaks of a candidate, and it says the formal environment was read back and it worked. */
 // This check's own count label (“候选观察下关闭 0（共 3）”) is not candidate wording: a CI/CD routine acceptor that quotes the label made its
 // own closure count as candidate-only in the next report (11-21, b3ab7bfc), and every later routine close would have done the same.
-const OWN_LABEL = /候选观察下关闭/g;
+// Only the label with its count is removed; the same words in a sentence (“本次只在候选观察下关闭”) are still candidate wording.
+const OWN_LABEL = /候选观察下关闭\s*\d+\s*[（(]\s*共\s*\d+\s*[）)]/g;
 export const mentionsCandidate = text => /候选/.test((text ?? "").replace(OWN_LABEL, ""));
 // It did not happen, is not done yet, or is only planned/conditional in this clause:
 // negation/failure (未 不 没 尚 暂 缺 失败 失效 拒绝), to-do/waiting (待 TODO 等待 等…读回/正式 安排), release/review wording (评审 发布前 发布成功 上线),
