@@ -303,8 +303,9 @@ export function mentionsAnywhere(transcripts, needles, atMs) {
 // - the verdicts this check prints on a closure row: quoted, with or without “依据” (“依据只写候选”, “误当成“只写候选””); unquoted
 //   “依据没有候选字样” and “依据同时提到候选与正式读回”; unquoted “依据只写候选” only in the shape a printed row has (scripts/ops/boundary-check.mjs
 //   closure rows: “；依据 x:used；依据只写候选” then nothing, “，任务声明的阶段就是候选（不列）” or “；任务声明阶段：X”): followed by one of those
-//   two suffixes, or after “；” or “⚠” at the end of a clause. At the start of a line or after other words it is the acceptor's own sentence
-//   (“依据只写候选；正式环境未读回，不通过”, “我的依据只写候选；正式环境未读回”).
+//   two suffixes, or after “；” or “⚠” at the end of the row (“。”, a closing bracket, a line break or the end). At the start of a line,
+//   after other words, or followed by “；” and other words it is the acceptor's own sentence (“依据只写候选；正式环境未读回，不通过”,
+//   “我的依据只写候选；正式环境未读回”, “验收结论：未通过；依据只写候选；正式环境未读回”).
 // Still candidate wording: the same words in a sentence without quotation marks or a count (“本次只在候选观察下关闭”, “证据只写候选实例”).
 // Known trade-off (acceptance-2, 11-21): a quoted label or verdict inside a real candidate-only sentence (“本次属于“候选观察下关闭”，
 // 正式未读回”) is also removed; the words alone cannot tell it apart from naming the check.
@@ -316,7 +317,7 @@ const OWN_LABEL = new RegExp([
   `${Q_OPEN}(?:依据)?(?:${VERDICTS})${Q_CLOSE}`,
   /依据(?:没有候选字样|同时提到候选与正式读回)/.source,
   /依据只写候选(?:，任务声明的阶段就是候选（不列）|(?=[；;]任务声明阶段))/.source,
-  /(?<=[；;⚠]\s*)依据只写候选(?=[；;。）)\n]|$)/.source,
+  /(?<=[；;⚠]\s*)依据只写候选(?=[。）)\n]|$)/.source,
 ].join("|"), "g");
 export const mentionsCandidate = text => /候选/.test((text ?? "").replace(OWN_LABEL, ""));
 // It did not happen, is not done yet, or is only planned/conditional in this clause:

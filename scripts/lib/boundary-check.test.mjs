@@ -132,7 +132,9 @@ test("observation wording: candidate, a formal read-back, and the stage a Task d
     "候选观察下关闭 3 轮，正式未读回", "候选观察下关闭 2 天了，正式未读回", "候选观察下关闭 2 张单，正式未读回", "候选观察下关闭 3 task，正式未读回",
     "候选观察下关闭 3 小时后正式仍未读回", "我的依据只写候选；正式环境未读回", "验收依据只写候选。正式环境未读回",
     // Round three (#504 head 87703c65): the verdict words at the start of the text or of a line are the acceptor's own sentence.
-    "依据只写候选；正式环境未读回，不通过", "结论：未通过\n依据只写候选。正式环境未读回"]) {
+    "依据只写候选；正式环境未读回，不通过", "结论：未通过\n依据只写候选。正式环境未读回",
+    // Round four (#504 head 19be653a): after “；” but followed by “；” and other words, as no printed row is.
+    "验收结论：未通过；依据只写候选；正式环境未读回"]) {
     assert.equal(mentionsCandidate(prose), true, prose);
     assert.equal(judgeClosure({ evidence: prose, hasDelivery: true, stage: null }).flagged, true, prose);
   }
