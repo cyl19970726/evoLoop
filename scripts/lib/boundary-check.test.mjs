@@ -105,6 +105,7 @@ test("observation wording: candidate, a formal read-back, and the stage a Task d
   assert.equal(mentionsCandidate("需要看的：候选观察下关闭 1（共 3）；候选环境通过"), true);
   assert.equal(judgeClosure({ evidence: "边界核对计数“候选观察下关闭0（共3）”与报告一致", hasDelivery: true, stage: null }).flagged, false);
   assert.equal(mentionsCandidate("需要看的：候选观察下关闭 0（共 3）"), false);
+  assert.equal(mentionsCandidate("以使用者身份写入 0（共 0）· 候选观察下关闭 **1**（共 3）。"), false);
   // The same words in a sentence, without the count, are still candidate wording (acceptance-2, 11-21).
   assert.equal(mentionsCandidate("本次只在候选观察下关闭，正式未读回"), true);
   assert.equal(mentionsCandidate("这次是按候选观察下关闭的"), true);
