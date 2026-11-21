@@ -258,7 +258,7 @@ export class WorkflowService {
     if(command.type==='runtime.session.executionProfile.revise'||command.type==='runtime.session.recovery.resume')
       return applySessionRecovery(tx,principal,command,now,()=>this.deps.ids.next(),this.deps.recoveryAuthority);
     if (command.type.startsWith("leader.notice")) {
-      if (command.type === "leader.noticePacket.build" || command.type === "leader.noticePacket.sent" || command.type === "leader.noticePacket.observe") {
+      if (command.type === "leader.noticePacket.build" || command.type === "leader.noticePacket.sent" || command.type === "leader.noticePacket.steered" || command.type === "leader.noticePacket.observe") {
         const service = await this.deps.leaderNoticeServiceActor?.(command.projectId);
         if (!service || service !== principal.actorId) throw new DomainError("FORBIDDEN", "Only the Leader notice service identity may run notice packet steps");
       }

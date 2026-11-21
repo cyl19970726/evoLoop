@@ -14,6 +14,8 @@ export const leaderNoticePacketCommands = [
     noticeIds: z.array(id).max(20), debounceSeconds: z.number().int().min(0).max(3600).default(60),
     withdraw: z.array(z.strictObject({ noticeId: id, reason: note })).max(100).default([]) }).refine(value => value.noticeIds.length + value.withdraw.length > 0, "Nothing to build or withdraw"),
   z.strictObject({ ...base, type: z.literal("leader.noticePacket.sent"), packetId: id }),
+  // W2: the packet went into the Leader's running Turn as a direct input instead of a new message. The input ID is the packet's message ID.
+  z.strictObject({ ...base, type: z.literal("leader.noticePacket.steered"), packetId: id, directInputId: id, inputOperationId: id }),
   z.strictObject({ ...base, type: z.literal("leader.noticePacket.observe"), packetId: id,
     outcome: z.enum(["delivered", "seen", "failed", "unknown", "withdrawn"]), turnId: z.string().trim().min(1).max(256).optional(),
     turnStarted: z.boolean().optional(), gateBlocked: z.boolean().optional(), evidence: note.optional() }),
@@ -64,6 +66,8 @@ export interface LeaderNoticePacketTransaction extends LeaderNoticePacketReader 
   buildLeaderNoticePacket(input: { packetId: string; sessionId: string; messageId: string; operationId: string; content: string; noticeIds: string[];
     withdraw: Array<{ noticeId: string; reason: string }>; debounceSeconds: number; recipient: { receiverRoleId: string; receiverActorId: string; senderActorId: string }; at: string }): Promise<LeaderNoticePacket>;
   markLeaderNoticePacketSent(packetId: string, at: string): Promise<LeaderNoticePacket>;
+  /** The packet went into a running Turn as direct input `directInputId` (attempt method steer); the packet is then sent. */
+  markLeaderNoticePacketSteered(input: { packetId: string; directInputId: string; inputOperationId: string; at: string }): Promise<LeaderNoticePacket>;
   observeLeaderNoticePacket(input: { packetId: string; outcome: "delivered" | "seen" | "failed" | "unknown" | "withdrawn"; turnId: string | null;
     turnStarted: boolean; gateBlocked: boolean; evidence: string | null; at: string }): Promise<LeaderNoticePacket>;
   handleLeaderNoticeItem(input: { noticeId: string; expectedVersion: number; disposition: "handled" | "deferred"; reason: string; notBefore: string | null;
