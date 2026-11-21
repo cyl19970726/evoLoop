@@ -295,9 +295,18 @@ export function mentionsAnywhere(transcripts, needles, atMs) {
 /** The words an observation is judged by: it speaks of a candidate, and it says the formal environment was read back and it worked. */
 // This check's own count label (“候选观察下关闭 0（共 3）”) is not candidate wording: a CI/CD routine acceptor that quotes the label made its
 // own closure count as candidate-only in the next report (11-21, b3ab7bfc), and every later routine close would have done the same.
-// Only the label with its count is removed (reports may bold the count: “候选观察下关闭 **1**（共 3）”); the same words in a sentence
-// (“本次只在候选观察下关闭”) are still candidate wording.
-const OWN_LABEL = /候选观察下关闭\s*(?:\*\*)?\s*\d+\s*(?:\*\*)?\s*[（(]\s*共\s*\d+\s*[）)]/g;
+// Removed as this check's own words: the label followed by its count, bold or not, with or without “（共 M）” or a joining “为/是/：”
+// (“候选观察下关闭 **1**（共 3）”, “候选观察下关闭 1；退出码 0”, “候选观察下关闭为 1”); the label in quotation marks (“因“候选观察下关闭”为 1”,
+// 11-21 afb49a9e: the acceptor named the counter it was checking); and the verdict this check prints on a closure row (“依据只写候选”),
+// also when only its quoted tail is named (“误当成“只写候选””).
+// The same words in a sentence without quotation marks or a count (“本次只在候选观察下关闭”, “证据只写候选实例”) are still candidate wording.
+const VERDICTS = "只写候选|没有候选字样|同时提到候选与正式读回";
+const OWN_LABEL = new RegExp([
+  /[“"「]候选观察下关闭[”"」]/.source,
+  /候选观察下关闭\s*(?:为|是|[:：=])?\s*(?:\*\*)?\s*\d+\s*(?:\*\*)?(?:\s*[（(]\s*共\s*\d+\s*[）)])?/.source,
+  `依据(?:只写候选(?:，任务声明的阶段就是候选（不列）)?|没有候选字样|同时提到候选与正式读回)`,
+  `[“"「](?:${VERDICTS})[”"」]`,
+].join("|"), "g");
 export const mentionsCandidate = text => /候选/.test((text ?? "").replace(OWN_LABEL, ""));
 // It did not happen, is not done yet, or is only planned/conditional in this clause:
 // negation/failure (未 不 没 尚 暂 缺 失败 失效 拒绝), to-do/waiting (待 TODO 等待 等…读回/正式 安排), release/review wording (评审 发布前 发布成功 上线),

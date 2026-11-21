@@ -110,6 +110,21 @@ test("observation wording: candidate, a formal read-back, and the stage a Task d
   assert.equal(mentionsCandidate("本次只在候选观察下关闭，正式未读回"), true);
   assert.equal(mentionsCandidate("这次是按候选观察下关闭的"), true);
   assert.equal(judgeClosure({ evidence: "本次只在候选观察下关闭，正式未读回", hasDelivery: true, stage: null }).flagged, true);
+  // The label in quotation marks, the label with a count but no total, and this check's printed verdict are its own words (11-21, afb49a9e).
+  const afb = "因“候选观察下关闭”为 1，报告开头第二行写了“需要需求 Session 看：边界核对”。被标红的那一行是 b3ab7bfc、“依据只写候选”；"
+    + "我那条观察的证据里原文引用了计数字样“候选观察下关闭0（共3）”，可能被判定脚本按关键词误当成“只写候选”。";
+  assert.equal(mentionsCandidate(afb), false);
+  assert.equal(judgeClosure({ evidence: afb, hasDelivery: true, stage: null }).flagged, false);
+  assert.equal(mentionsCandidate("需要看的：合并 1 · 私有文件 1 · 以使用者身份写入 0 · 候选观察下关闭 1；退出码 0"), false);
+  assert.equal(mentionsCandidate("「候选观察下关闭」是 0"), false);
+  assert.equal(mentionsCandidate("候选观察下关闭：**2**"), false);
+  assert.equal(mentionsCandidate("那一行写着依据没有候选字样"), false);
+  assert.equal(mentionsCandidate("依据只写候选，任务声明的阶段就是候选（不列）"), false);
+  // Candidate wording next to those words still counts.
+  assert.equal(mentionsCandidate("因“候选观察下关闭”为 1；本次在候选实例 4400 上通过"), true);
+  assert.equal(mentionsCandidate("“依据只写候选”那行之外，正式未读回，只看了候选环境"), true);
+  assert.equal(mentionsCandidate("按候选观察下关闭，正式未读回"), true);
+  assert.equal(mentionsCandidate("证据只写候选实例通过"), true);
   assert.equal(mentionsFormalReadback("正式环境已验证（2026-11-13 09:12Z，5ae8f8fc）"), true);
   assert.equal(mentionsFormalReadback("候选环境通过；正式未验证"), false);
   assert.equal(declaredStage("**阶段**：正式（读正式数据）"), "正式");
