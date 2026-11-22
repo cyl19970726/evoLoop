@@ -187,6 +187,14 @@ export class PgSchedulingStore implements ScheduleStore {
           target ? template.owner : template.consumer ?? "", !target,
           target ? null : template.acceptanceMode ?? "independent_agent",
           `schedule ${definition.id} revision ${definition.currentRevisionId}`, observedAtUtc]);
+        // Ownership side table (design: milestones-design.md §6): a schedule-made Task is "not part of any stage (schedule routine)" unless its target names a stage.
+        {
+          const stageId = target?.stageId ?? null, reasonText = stageId ? `schedule ${definition.id} target stage` : "不属于阶段（日程例行）";
+          await client.query(`INSERT INTO task_stage(project_id,task_id,version,stage_id,no_stage_reason,actor_id,reason,updated_at) VALUES($1,$2,1,$3,$4,$5,$6,$7)`,
+            [definition.projectId, taskId, stageId, stageId ? null : reasonText, actorId, reasonText, observedAtUtc]);
+          await client.query(`INSERT INTO task_stage_history(project_id,task_id,version,stage_id,no_stage_reason,actor_id,reason,created_at) VALUES($1,$2,1,$3,$4,$5,$6,$7)`,
+            [definition.projectId, taskId, stageId, stageId ? null : reasonText, actorId, reasonText, observedAtUtc]);
+        }
         if (direct) await client.query("SELECT set_config('evoloop.direct_dispatch','off',true)");
         const receipt = { status: "applied", operationId, entityId: taskId, version: 1 };
         const hash = createHash("sha256").update(key).digest("hex");

@@ -112,7 +112,7 @@ export const tasks = {
   t5: task(5, "页面截图由脚本生成", "todo", "docs", { phase: "unassigned", priority: 3, kind: "validation" }),
   t6: task(6, "验收新版外壳", "in_progress", "verify", { phase: "awaiting_delivery", agent: "verify", ack: "assigned", stage: "s1" }),
   t7: task(7, "汇总试用反馈", "done", "design", { phase: "closed", agent: "design", ack: "accepted", kind: "research", stage: "s2" }),
-  t8: task(8, "整理旧文档", "todo", "docs", { phase: "ready", agent: "docs", ack: "accepted", priority: 3 }),
+  t8: task(8, "整理旧文档", "todo", "docs", { phase: "ready", agent: "docs", ack: "accepted", priority: 3, noStage: true }),
 };
 const taskList = Object.values(tasks);
 export const findTask = taskId => taskList.find(t => t.id === taskId) ?? null;
@@ -155,7 +155,8 @@ export function projection(t) {
       useRequired: true, observationResult: null, observationActorId: null, observationKind: null } : null,
     pendingImpactCount: t.impact ? 1 : 0, queueHold: null,
     goal: stage ? { goalId: goals[stage.goal].id, outcome: goals[stage.goal].outcome } : null,
-    stage: stage ? { stageId: stage.id, deliverable: stage.deliverable } : null,
+    stage: stage ? { stageId: stage.id, deliverable: stage.deliverable, shortName: stage.deliverable.split("\n")[0].slice(0, 12), dueOn: null } : null,
+    stageOwnership: stage ? { state: "stage", reason: null } : t.noStage ? { state: "none", reason: "不属于阶段（日程例行）" } : { state: "unassigned", reason: null },
     plan: t.priority || t.due !== undefined ? { plannedStartAt: null, dueAt: t.due !== undefined ? later(t.due) : null, priority: t.priority ?? null } : null,
     dependencies: t.dependsOn ? [{ taskId: tasks[`t${t.dependsOn}`].id, title: tasks[`t${t.dependsOn}`].title, state: "in_progress",
       currentRevisionId: revisionId(tasks[`t${t.dependsOn}`]), acceptanceSatisfied: false }] : [],

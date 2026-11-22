@@ -176,7 +176,10 @@ export interface LeaderWorkTask {
   pendingImpactCount: number;
   queueHold: string | null;
   goal: { goalId: string; outcome: string } | null;
-  stage: { stageId: string; deliverable: string } | null;
+  /** The Task's stage, read from its `task_stage` ownership row (never from the Task proposal). `shortName` is the stage's short name, or the first line of its deliverable when none was written. */
+  stage: { stageId: string; deliverable: string; shortName: string; dueOn: string | null } | null;
+  /** Ownership: a stage, explicitly none (with the reason), or no record at all. Absent only from a service older than this field: the page then shows nothing about it. */
+  stageOwnership?: { state: "stage" | "none" | "unassigned"; reason: string | null };
   plan: {
     plannedStartAt: string | null; dueAt: string | null; priority: number | null;
     version?: number; actorId?: string | null; updatedAt?: string | null;

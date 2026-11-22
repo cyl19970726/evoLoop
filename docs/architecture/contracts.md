@@ -53,6 +53,7 @@
 | `task.create` | `task` | 否 |
 | `task.timing.set` | `task` | 否 |
 | `task.update` | `task` | 否 |
+| `task.stage.set` | `task` | 否 |
 | `decision.request.answer` | `task` | 是 |
 | `decision.request.withdraw` | `task` | 是 |
 | `discussion.action.decide` | `task` | 是 |

@@ -181,6 +181,7 @@ export function api(token = "", timeoutMs = 15000) {
     /** The deployed version (public: no login): commit, build time and process start time. */
     version: (signal?: AbortSignal, projectId?: string) => call<import("@evoloop/contracts/milestones").VersionInfo>(isBehindHub() && projectId ? `${projectPath(projectId)}/version` : "/api/version", { signal }),
     /** The roadmap phases with the status and date of the stage linked to each. */
+    stageProjection: (p: string, signal?: AbortSignal) => call<import("@evoloop/contracts/stage-projection").StageProjection>(`${projectPath(p)}/stages/milestones`, { signal }),
     milestones: (p: string, signal?: AbortSignal) => call<import("@evoloop/contracts/milestones").MilestonesView>(`${projectPath(p)}/milestones`, { signal }),
     stageReviews: (p: string, id: string) => call<StageReview[]>(`${projectPath(p)}/stages/${key(id)}/reviews`),
     discussions: (p: string, cursor?: string, kind?: DiscussionRecord["kind"]) => call<Page<DiscussionRecord>>(`${projectPath(p)}/discussions?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}${kind ? `&kind=${key(kind)}` : ""}`),
