@@ -95,7 +95,7 @@ test("Session results → fixed Document → return restores the exact Session r
   await page.getByRole("heading", { name: session.title }).waitFor({ timeout: 5000 }).catch(async cause => {
     assert.fail(`${String(cause)}; pageErrors=${JSON.stringify(errors)}; apiReads=${JSON.stringify(apiReads)}; body=${(await page.locator("body").innerText()).slice(0, 1800)}`);
   });
-  { const details = page.getByRole("button", { name: "会话详情" }); if (await details.getAttribute("aria-expanded") !== "true") await details.click(); }
+  { const details = page.getByRole("button", { name: "会话详情" }); if (await details.getAttribute("aria-expanded") !== "true") await details.click(); const info = page.locator(".session-information").first(); if (await info.getAttribute("open") === null) await info.locator(":scope > summary").click(); }
   await page.getByRole("tab", { name: "资料库", exact: true }).click();
   await page.getByRole("heading", { name: "成果与使用" }).waitFor();
   const returnHash = await page.evaluate(() => (location.pathname + location.search));

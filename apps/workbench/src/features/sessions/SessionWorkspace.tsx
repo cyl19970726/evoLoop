@@ -560,7 +560,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
       </div>
       <div className="session-workspace-actions flex shrink-0 items-center gap-0.5">
         {headerButton("重新读取", <RefreshCw aria-hidden="true" className={snapshotRead.isFetching ? "animate-spin motion-reduce:animate-none" : undefined} />, reread, { disabled: snapshotRead.isFetching && !snapshotRead.isRefetching })}
-        {headerButton("会话详情", <Info aria-hidden="true" />, () => { if (panel?.open && informationOpen) { panel.setOpen(false); showInformation(false); } else showInformation(true); }, { "aria-expanded": !!panel?.open && informationOpen, "aria-controls": "session-information-panel" })}
+        {headerButton("会话详情", <Info aria-hidden="true" />, () => { if (panel?.open) panel.setOpen(false); else showInformation(true); }, { "aria-expanded": !!panel?.open, "aria-controls": "session-information-panel" })}
         {headerButton(session.kind === "owned" ? "关闭受管智能体" : "归档与归类", session.kind === "owned" ? <X aria-hidden="true" /> : <FileText aria-hidden="true" />,
           () => { panel?.setOpen(true); setCloseOpen(value => !value); }, { "aria-expanded": closeOpen, "aria-controls": "session-close-panel" })}
       </div>

@@ -209,7 +209,16 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   await sidebar.getByRole("link").filter({ hasText: "测试 Session" }).first().click();
   await page.getByRole("heading", { name: /测试 Session/ }).waitFor();
   // The saved colour mark sits beside the name in the right column; the header shows the role avatar.
-  { const details = page.getByRole("button", { name: "会话详情" }); if (await details.getAttribute("aria-expanded") !== "true") await details.click(); }
+  // The switch reads what is on screen, and one press changes it (the 1440 default-open case is asserted in session-rail-browser).
+  {
+    const sw = page.getByRole("button", { name: "会话详情" }), column = page.locator(".session-panel").first();
+    const shown = await column.isVisible();
+    assert.equal(await sw.getAttribute("aria-expanded"), String(shown), "the switch reads the column's real state");
+    await sw.click();
+    await column.waitFor({ state: shown ? "hidden" : "visible" });
+    assert.equal(await sw.getAttribute("aria-expanded"), String(!shown), "one press flips both the screen and the reading");
+  }
+  { const details = page.getByRole("button", { name: "会话详情" }); if (await details.getAttribute("aria-expanded") !== "true") await details.click(); const info = page.locator(".session-information").first(); if (await info.getAttribute("open") === null) await info.locator(":scope > summary").click(); }
   await page.locator(".session-panel section[aria-label=智能体] .session-identity-violet").waitFor();
   // 标识设置 is a rarely used setting: it lives in 详情与来源, out of the right column's first screen.
   const information = page.locator(".session-information");
@@ -234,7 +243,7 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   await page.reload();
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
-  { const details = page.getByRole("button", { name: "会话详情" }); if (await details.getAttribute("aria-expanded") !== "true") await details.click(); }
+  { const details = page.getByRole("button", { name: "会话详情" }); if (await details.getAttribute("aria-expanded") !== "true") await details.click(); const info = page.locator(".session-information").first(); if (await info.getAttribute("open") === null) await info.locator(":scope > summary").click(); }
   await page.locator(".session-panel section[aria-label=智能体] .session-identity-teal").waitFor();
   assert.match(await page.locator(".session-panel section[aria-label=智能体] .session-identity-teal").getAttribute("aria-label") ?? "",
     /测试 Session.*青蓝色.*方格/, "the mark gives screen readers both stable identity properties");
@@ -277,7 +286,7 @@ test("Sessions is the sole directory and renders conversation, source, reply and
       value: async value => { window.fixtureClipboardWrites.push(value); return writeText(value); } });
     document.addEventListener("copy", () => { window.fixtureCopyEvents += 1; });
   })()`);
-  { const details = page.getByRole("button", { name: "会话详情" }); if (await details.getAttribute("aria-expanded") !== "true") await details.click(); }   // one switch for the right column: press it only when closed
+  { const details = page.getByRole("button", { name: "会话详情" }); if (await details.getAttribute("aria-expanded") !== "true") await details.click(); const info = page.locator(".session-information").first(); if (await info.getAttribute("open") === null) await info.locator(":scope > summary").click(); }   // one switch for the right column: press it only when closed
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), clipboardSentinel,
     "opening Session details leaves the system clipboard unchanged");
   assert.deepEqual(await page.evaluate(() => (window as Window & { fixtureClipboardWrites: string[] }).fixtureClipboardWrites), [],
@@ -306,7 +315,7 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   assert.equal(await deepLinkPage.locator(".session-information").evaluate(element => (element as HTMLDetailsElement).open), true,
     "an audit deep link restores the Session details panel");
   await deepLinkPage.close();
-  { const details = page.getByRole("button", { name: "会话详情" }); if (await details.getAttribute("aria-expanded") !== "true") await details.click(); }   // one switch for the right column: press it only when closed
+  { const details = page.getByRole("button", { name: "会话详情" }); if (await details.getAttribute("aria-expanded") !== "true") await details.click(); const info = page.locator(".session-information").first(); if (await info.getAttribute("open") === null) await info.locator(":scope > summary").click(); }   // one switch for the right column: press it only when closed
   await page.getByRole("combobox", { name: "消息" }).fill("键盘发送");
   await page.getByRole("combobox", { name: "消息" }).press("Control+Enter");
   await page.locator("[data-receipt-phase]").waitFor();   // the one receipt line; the applied outcome is no longer a second line
@@ -327,7 +336,7 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   assert.equal(await page.locator("body").evaluate(element => element.scrollWidth <= innerWidth), true);
   // Below 1100px the right column is a drawer; its contents (and this half-filled editor) keep their state.
   await page.waitForFunction(() => document.querySelector("button[aria-controls=session-information-panel]")?.getAttribute("aria-expanded") === "false");   // the switch follows the screen: the drawer starts closed
-  { const details = page.getByRole("button", { name: "会话详情" }); if (await details.getAttribute("aria-expanded") !== "true") await details.click(); }
+  { const details = page.getByRole("button", { name: "会话详情" }); if (await details.getAttribute("aria-expanded") !== "true") await details.click(); const info = page.locator(".session-information").first(); if (await info.getAttribute("open") === null) await info.locator(":scope > summary").click(); }
   if (process.env.EVOLOOP_CAPTURE_MODEL_CONTROL) await page.screenshot({
     path: `${process.env.EVOLOOP_CAPTURE_MODEL_CONTROL}-narrow.png`, fullPage: true });
   assert.equal(await editor.getByLabel("思考强度").inputValue(), "max", "the editor keeps its choice when the column becomes a drawer");

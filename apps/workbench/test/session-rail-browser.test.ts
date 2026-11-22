@@ -33,6 +33,13 @@ test("the agent's right column shows what it does now and next on its first scre
     // Below 1100px the column is a drawer (a sheet from the bottom on a phone) and opens only when asked.
     if (width < 1100) { { const details = page.getByRole("button", { name: "会话详情" }).filter({ visible: true }).first(); if (await details.getAttribute("aria-expanded") !== "true") await details.click(); } await page.getByRole("dialog").first().waitFor(); }
     const panel = page.locator(".session-panel").filter({ visible: true }).first();
+    if (width >= 1100) {   // open by itself: it must read expanded, and one press must close it
+      const sw = page.getByRole("button", { name: "会话详情" });
+      assert.equal(await sw.getAttribute("aria-expanded"), "true", "a column that is open reads as expanded before anything is pressed");
+      await sw.click(); await panel.waitFor({ state: "hidden" });
+      assert.equal(await sw.getAttribute("aria-expanded"), "false", "one press closes it");
+      await sw.click(); await panel.waitFor({ state: "visible" });
+    }
     await panel.locator("section[aria-label=正在做]").waitFor();
     // The sheet slides in: measure once it has stopped moving.
     let last = -1;
