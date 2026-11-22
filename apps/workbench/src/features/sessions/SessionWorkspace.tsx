@@ -32,7 +32,8 @@ import { nextWork, nowWork, type LineRead, type NextItem, type NowTiming } from 
 import { ActivityFeed, clearActivityDetails, type ActivityFilter } from "./ActivityFeed";
 import { SessionRecoveryOverview, SessionRecoveryResources } from "./SessionRecoveryObservation";
 import { checkedRecoveryView, type RecoveryRead } from "./recoveryPresentation";
-import { currentNativeRunId, currentWorkRelationLabel, idleSessionResult, latestSessionResult, agentHeaderStatus, sessionResultUseLabel } from "./sessionStatusPresentation";
+import { currentNativeRunId, currentWorkRelationLabel, idleSessionResult, idleDuration, latestSessionResult, agentHeaderStatus, replyingPhrase, sessionResultUseLabel, type HeaderFacts } from "./sessionStatusPresentation";
+import { shortClassLabel } from "./timelineRounds";
 import { NativeSessionPanel } from "./NativeSessionPanel";
 import { SessionClosePanel } from "./SessionClosePanel";
 import { SessionExecutionFacts } from "./SessionExecutionFacts";
@@ -284,6 +285,14 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
   }, { enabled: active && factIds.length > 0, retry: false, keepPrevious: true });
   const titleOf = (taskId: string) => knownTitles.get(taskId) ?? taskFacts.data?.[taskId]?.title ?? null;
   const phaseOf = (taskId: string) => taskFacts.data?.[taskId]?.phase ?? null;
+  // For whom the agent works now (Task f2d82dfe): the sender of the message being answered, and whether its provider is paused.
+  // Read before the early return below, from the same native observation the header uses.
+  const liveSource = snapshot && snapshot.session.kind === "owned" && snapshot.session.target.kind === "owned"
+    ? nativeObservationPresentation(snapshot.nativeObservation, projectId, snapshot.session.target.sessionId).progress?.turn : null;
+  const answeringId = liveSource?.status === "inProgress" && liveSource.source?.kind === "message" ? liveSource.source.id : null;
+  const answering = useProjectQuery(projectId, ["session-message-sender", answeringId ?? ""], signal => sessionClient("", projectId).message(answeringId!, signal),
+    { enabled: active && answeringId !== null, retry: false, keepPrevious: true });
+  const holds = useProjectQuery(projectId, ["provider-holds"], () => api().providerHolds(projectId), { enabled: active && owned, retry: false });
 
   // Every hook runs before the early return below (a hook after it changes the hook count once the snapshot arrives).
   // The catalog's display names (Codex) in front of the exact IDs; a catalog that cannot be read leaves the IDs as they are.
@@ -349,7 +358,14 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
   }
   const limitation = [...new Set([...session.metadata.limitations, ...current.metadata.limitations, ...historyPages.flatMap(page => page.metadata.limitations)])];
   const messageRunning = runtimeAvailable === true && nativeReadCurrent && observation.progress?.freshness === "live" && observation.progress.status === "active" && observation.progress.turn?.status === "inProgress" && observation.progress.turn.source?.kind === "message";
-  const statusLabel = agentHeaderStatus(session, observation.progress, nativeReadCurrent && !observation.error, runtimeAvailable);
+  const answeringMessage = answering.data?.message.id === answeringId ? answering.data.message : null;
+  const replyingTo: "me" | string | null = !answeringMessage ? null : answeringMessage.senderActorId === context.principal.actorId ? "me" : shortClassLabel(answeringMessage.senderClass);
+  const held = session.runtime ? (holds.data?.items ?? []).find(hold => hold.state === "held" && hold.provider === session.runtime!.provider) : undefined;
+  const workedRunTaskId = session.latestBusinessRun?.taskId ?? null;
+  const headerFacts: HeaderFacts = { replyingTo, holdReason: held ? (held.category === "authentication_failed" ? "模型服务鉴权失败" : "模型服务额度不足或欠费") : null,
+    taskTitle: workedRunTaskId ? titleOf(workedRunTaskId) : null,
+    idleFor: session.lastProgressAt && Number.isFinite(Date.parse(session.lastProgressAt)) ? idleDuration(Date.now() - Date.parse(session.lastProgressAt)) : null };
+  const statusLabel = agentHeaderStatus(session, observation.progress, nativeReadCurrent && !observation.error, runtimeAvailable, headerFacts);
   const relationLabel = work ? currentWorkRelationLabel(work, session, recoveryRead.status === "ready" ? recoveryRead.view.gate?.phase : undefined) : null;
   const currentRunId = currentNativeRunId(session, observation.progress, nativeReadCurrent && !observation.error, runtimeAvailable);
   const recentResult = latestSessionResult(current.results);
@@ -366,7 +382,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
   // The queue is arrangement (统筹安排); recovery facts are 运行与接入.
   const queueHref = href(projectId, "arrangement"), recoveryHref = href(projectId, "runtime");
 
-  const now = nowWork({ session, work, assignments: current.assignments, relationLabel, messageRunning, idleResult, titleOf,
+  const now = nowWork({ session, work, assignments: current.assignments, relationLabel, messageRunning, replyingPhrase: replyingPhrase(replyingTo), idleResult, titleOf,
     questionCount: discussionQuestionCount + nativeQuestionCount,
     timing: !work ? null : timing.isError
       ? { status: "failed", line: `阶段时间暂不可读：${errorText(timing.error)}${timing.data ? "；上次读回，当前待核对" : ""}` }
@@ -553,7 +569,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
       {(session.runtimeState === "unknown" || session.runtimeState === "closed" || recoveryRead.status === "failed") && session.kind === "owned" &&
         <Notice tone="waiting" action={<Button size="compact" variant="ghost" onClick={() => showInformation(true)}>查看恢复与接入详情</Button>}>{session.runtimeState === "closed" ? "这个受管智能体已关闭。" : "当前执行状态尚待核对。"}</Notice>}
     </div>
-    {active && <SessionTimeline key={`${context.principal.actorId}:${projectId}:${session.key}`} context={context} snapshot={current} taskHref={taskHref}
+    {active && <SessionTimeline key={`${context.principal.actorId}:${projectId}:${session.key}`} context={context} snapshot={current} taskHref={taskHref} titleOf={titleOf}
       refresh={refresh + readAgain} reauthorizeVersion={accessReadAgain} onApplied={() => void snapshotRead.refetch()} progress={observation.progress}
       waitingTurnIds={waitingTurnIds} composerFacts={configuredModel ? [`模型 ${String(configuredModel)}`] : []}>
       {session.kind === "owned" && session.target.kind === "owned" && (native.questions.some(request => request.state === "pending" || request.state === "response_saved") || native.error) &&
