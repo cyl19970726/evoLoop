@@ -69,7 +69,7 @@ export function useDirectInput({ projectId, sessionId, actorId, active, onAccept
   const operationStorageKey = `${storageKey}:operation`;
   const auditStorageKey = `${storageKey}:explicit-audit`;
   const capability = useProjectQuery(projectId, ["session-direct-input", sessionId, "capability"],
-    signal => client.capability(signal), { enabled: active, refetchInterval: 5000 });
+    signal => client.capability(signal), { enabled: active, refetchInterval: 3000 });
   const [pendingId, setPendingId] = useState(() => active ? storage.get(storageKey) : null);
   const [receipt, setReceipt] = useState<DirectInputReceipt | null>(null);
   const [audit, setAudit] = useState<ExplicitAudit | null>(() => active ? readAudit(storage.get(auditStorageKey)) : null);
@@ -156,7 +156,8 @@ export function useDirectInput({ projectId, sessionId, actorId, active, onAccept
   }
   const unknown = !!pendingId;
   const view = <>
-    {(pendingId || receipt) && <div className="session-direct-receipt" role={pendingId && error ? "alert" : "status"}>
+    {/* Only what needs the person is shown here: an unchecked result, or a refusal. An accepted input (or one turned into a queued message) is told by the composer's single receipt. */}
+    {(pendingId || receipt && receipt.state !== "accepted" && !receipt.queuedMessageId) && <div className="session-direct-receipt" role={pendingId && error ? "alert" : "status"}>
       <Notice tone={pendingId ? "waiting" : receipt?.state === "rejected" && !receipt.queuedMessageId ? "error" : "info"}
         title={receipt ? receiptLabel(receipt) : error || "正在读取原输入回执"}
         action={pendingId ? <Button size="compact" disabled={busy} onClick={() => void reconcile()}>核对结果（不会重发）</Button> : undefined}>

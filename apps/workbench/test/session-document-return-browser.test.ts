@@ -95,7 +95,7 @@ test("Session results → fixed Document → return restores the exact Session r
   await page.getByRole("heading", { name: session.title }).waitFor({ timeout: 5000 }).catch(async cause => {
     assert.fail(`${String(cause)}; pageErrors=${JSON.stringify(errors)}; apiReads=${JSON.stringify(apiReads)}; body=${(await page.locator("body").innerText()).slice(0, 1800)}`);
   });
-  if (await page.getByRole("button", { name: "展开右栏" }).count()) await page.getByRole("button", { name: "展开右栏" }).click();
+  { const details = page.getByRole("button", { name: "会话详情" }); if (await details.getAttribute("aria-expanded") !== "true") await details.click(); const info = page.locator(".session-information").first(); if (await info.getAttribute("open") === null) await info.locator(":scope > summary").click(); }
   await page.getByRole("tab", { name: "资料库", exact: true }).click();
   await page.getByRole("heading", { name: "成果与使用" }).waitFor();
   const returnHash = await page.evaluate(() => (location.pathname + location.search));
@@ -134,7 +134,7 @@ test("Session results → fixed Document → return restores the exact Session r
   await directBack.click();
   // At 390px the right column is a drawer that opens only when asked; it opens on the results the link named.
   assert.equal(await direct.getByRole("heading", { name: "成果与使用" }).isVisible(), false, "the drawer does not open by itself");
-  await direct.getByRole("button", { name: "展开右栏" }).click();
+  { const details = direct.getByRole("button", { name: "会话详情" }); if (await details.getAttribute("aria-expanded") !== "true") await details.click(); }
   await direct.getByRole("heading", { name: "成果与使用" }).waitFor();
   assert.equal(await direct.getByRole("tab", { name: "资料库", exact: true }).getAttribute("aria-selected"), "true");
   assert.equal(await direct.evaluate(() => (location.pathname + location.search)), returnHash);

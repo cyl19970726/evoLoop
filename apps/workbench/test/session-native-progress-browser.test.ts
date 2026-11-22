@@ -100,7 +100,7 @@ test("native progress keeps source, freshness and cumulative usage separate from
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "进度测试会话" }).waitFor();
-  await page.getByRole("button", { name: "会话详情" }).click();
+  { const details = page.getByRole("button", { name: "会话详情" }); if (await details.getAttribute("aria-expanded") !== "true") await details.click(); const info = page.locator(".session-information").first(); if (await info.getAttribute("open") === null) await info.locator(":scope > summary").click(); }   // one switch for the right column: press it only when closed
   const card = page.locator(".native-progress-card:visible");
   await card.getByText("运行中", { exact: true }).waitFor();
   await card.getByText("Tool call · 进行中").first().waitFor();

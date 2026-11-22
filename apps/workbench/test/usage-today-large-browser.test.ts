@@ -31,7 +31,7 @@ test("the 今日 figures stay readable with their unit at billion-scale token co
     await page.getByLabel("访问令牌").fill(token);
     await page.getByRole("button", { name: "进入", exact: true }).click();
     await page.getByRole("heading", { level: 1 }).filter({ visible: true }).first().waitFor();
-    if (width < 1100) { await page.getByRole("button", { name: "展开右栏" }).filter({ visible: true }).first().click(); await page.getByRole("dialog").first().waitFor(); }
+    if (width < 1100) { await page.getByRole("button", { name: "会话详情" }).filter({ visible: true }).first().click(); await page.getByRole("dialog").first().waitFor(); }
     const panel = page.locator(".session-panel").filter({ visible: true }).first();
     await panel.locator("section[aria-label=上下文与用量]").waitFor();
     let last = -1;

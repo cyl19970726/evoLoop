@@ -54,11 +54,13 @@ interface PanelApi {
   setOpen(open: boolean): void;
   openInPanel(object: PanelObject): void;
   hasContent: boolean;
+  /** A page that carries its own open/close switch in its header claims it: the shell then hides its own 收起右栏 / 展开右栏 so there is one switch, not two. Returns the release. */
+  claimSwitch(): () => void;
 }
 interface PanelInternals extends PanelApi {
   state: PanelState; update(next: PanelState): void; inline: boolean;
   target: HTMLElement | null; host(node: HTMLElement | null): void; register(): () => void;
-  providers: number; tabs: PanelObject[]; active: string; setActive(id: string): void; close(id: string): void;
+  providers: number; ownSwitches: number; tabs: PanelObject[]; active: string; setActive(id: string): void; close(id: string): void;
 }
 const PanelContext = React.createContext<PanelInternals | null>(null);
 
@@ -128,6 +130,8 @@ export function ContextPanelProvider({ space, children }: { space: Space; childr
   const host = React.useCallback((node: HTMLElement | null) => { if (node && target && target.parentNode !== node) node.appendChild(target); }, [target]);
   const [providers, setProviders] = React.useState(0);
   const register = React.useCallback(() => { setProviders(count => count + 1); return () => setProviders(count => count - 1); }, []);
+  const [ownSwitches, setOwnSwitches] = React.useState(0);
+  const claimSwitch = React.useCallback(() => { setOwnSwitches(count => count + 1); return () => setOwnSwitches(count => count - 1); }, []);
   const [tabs, setTabs] = React.useState<PanelObject[]>([]);
   const [active, setActive] = React.useState<string>("facts");
   const latest = React.useRef({ tabs, active });
@@ -156,7 +160,7 @@ export function ContextPanelProvider({ space, children }: { space: Space; childr
   const setShown = (open: boolean) => inline ? update({ ...state, open }) : setDrawerOpen(open);
   const value: PanelInternals = {
     open: shown && hasContent, hasContent, state: { ...state, open: shown }, update: next => { if (next.open !== shown) setShown(next.open); if (next.width !== state.width) update({ ...state, width: next.width }); },
-    inline, target, host, register, providers, tabs, active, setActive,
+    inline, target, host, register, claimSwitch, ownSwitches, providers, tabs, active, setActive,
     setOpen: setShown,
     openInPanel: object => { setTabs(current => addObjectTab(current, object)); setActive(object.id); setShown(true); },
     close: id => { setTabs(current => current.filter(tab => tab.id !== id)); if (active === id) setActive("facts"); },
@@ -172,7 +176,7 @@ export function ContextPanelColumn({ embedded = false }: { embedded?: boolean } 
   // Radix would leave focus on <body> when it closes. Hand focus back to what opened it, as the navigation drawer does.
   const opener = React.useRef<HTMLElement | null>(null);
   if (!panel) return null;
-  const { state, update, inline, host, providers, tabs, active, setActive, close, hasContent } = panel;
+  const { state, update, inline, host, providers, ownSwitches, tabs, active, setActive, close, hasContent } = panel;
   const rememberOpener = () => {
     const focused = document.activeElement;
     opener.current = focused instanceof HTMLElement && focused !== document.body ? focused : null;
@@ -200,7 +204,7 @@ export function ContextPanelColumn({ embedded = false }: { embedded?: boolean } 
         </span>)}
       </div>
       {activeTab?.href && <a href={activeTab.href} aria-label="在中间打开" title="在中间打开" className="flex size-8 shrink-0 items-center justify-center rounded-full text-primary hover:bg-accent focus-visible:shadow-[var(--focus-ring)] outline-none"><ArrowUpRight size={16} aria-hidden="true" /></a>}
-      {inline && <IconButton label="收起右栏" icon={<PanelRightClose size={17} />} compact onClick={() => update({ ...state, open: false })} />}
+      {inline && ownSwitches === 0 && <IconButton label="收起右栏" icon={<PanelRightClose size={17} />} compact onClick={() => update({ ...state, open: false })} />}
       {!inline && <IconButton label="关闭右栏" icon={<X size={17} />} compact onClick={() => update({ ...state, open: false })} />}
     </div>
     <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
@@ -218,7 +222,7 @@ export function ContextPanelColumn({ embedded = false }: { embedded?: boolean } 
   // narrow strip in the work panel for 展开右栏, so the button never covers a page's header; on phones the button sits
   // in the top bar, which keeps room for it. The strip stays while the drawer is open, so the page under the drawer
   // keeps its width (the same element, so focus can come back to it).
-  const strip = hasContent && <div data-ui="" data-panel-strip="" className={embedded ? "absolute right-2 top-2"
+  const strip = hasContent && ownSwitches === 0 && <div data-ui="" data-panel-strip="" className={embedded ? "absolute right-2 top-2"
     : "fixed right-2 top-1.5 z-40 compact:sticky compact:right-auto compact:top-2 compact:z-auto compact:flex compact:h-[calc(100dvh-16px)] compact:w-12 compact:shrink-0 compact:justify-center compact:border-l compact:border-border compact:pt-3"}>
     <IconButton data-panel-expand="" label="展开右栏" icon={<PanelRightOpen size={17} />} variant="secondary" onClick={() => update({ ...state, open: true })} />
   </div>;
