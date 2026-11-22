@@ -187,7 +187,7 @@ export async function buildServer(options: {
   sessionUsability?: (projectId: string, sessionIds: string[]) => Promise<Map<string, { usable: boolean; reasons: Array<{ code: string; reason: string }> }>>;
   acceptanceRelay?: AcceptanceRelayService;
   /** The deployed checkout: serves GET /api/version (public) and GET /api/projects/:id/milestones from its build-info.json and docs/roadmap.md. */
-  milestones?: { repoRoot: string; startedAt?: string };
+  milestones?: { repoRoot: string; startedAt?: string; repositories?: () => ReadonlyArray<{ projectId: string; root: string }> };
   /** Drain mode (docs/architecture/deployment.md §2): the control and who counts as an instance maintainer. */
   drain?: { control: DrainControl; isMaintainer(principal: Principal): Promise<boolean> };
   leaderNotices?: LeaderNoticeReader;

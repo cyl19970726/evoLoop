@@ -75,3 +75,16 @@ test("GET /api/version is public and gives only commit, builtAt and startedAt; a
   assert.deepEqual(await readBuildInfo(root), { commit: null, builtAt: null }, "a commit that is not a hash is refused");
   assert.equal((await app.inject({ url: "/api/projects/00000000-0000-4000-8000-000000000001/milestones" })).statusCode, 401, "the milestones need a login");
 });
+
+test("the ladder reads each level's status as the first sentence of the roadmap's own status table, and a roadmap without the phase table is nothing", async () => {
+  const { buildLadder, firstSentence, parseStatuses } = await import("../src/milestones/ladder.ts");
+  const statuses = parseStatuses(roadmap);
+  assert.deepEqual([...statuses.keys()], ["M0", "M1", "M2", "M3", "M4"]);
+  for (const text of statuses.values()) assert.ok(text.length > 5 && text.indexOf("。") === text.length - 1 || !text.includes("。"));
+  assert.equal(firstSentence("[链接](x.md#a)写了一句。第二句"), "链接写了一句。");
+  const view = buildLadder(roadmap, "abc1234", [{ id: "s1", shortName: "短名", ladderKeys: ["M1"] }]);
+  assert.equal(view?.available, true);
+  assert.deepEqual(view?.levels.find(level => level.key === "M1")?.evidenceStages, [{ id: "s1", shortName: "短名" }]);
+  assert.deepEqual(view?.levels.find(level => level.key === "M2")?.evidenceStages, []);
+  assert.equal(buildLadder("# 没有表头", "abc1234", []), null);
+});

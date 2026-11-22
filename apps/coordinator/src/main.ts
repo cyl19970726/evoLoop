@@ -1033,7 +1033,7 @@ const hubConnector = new HubConnector({ credentials: machineCredentials, coordin
 // left credentials at the default location: a second coordinator (a test, an isolated instance) reading them would fight the real one for the machine's connection.
 if (unusedDefaultCredentials()) console.warn("Hub: machine credentials exist at the default location (~/.evoloop/machine) but EVOLOOP_MACHINE_DIR is not set, so this coordinator is NOT using them and does not connect to the Hub. The machine's own coordinator must be started with EVOLOOP_MACHINE_DIR naming that directory.");
 const app = await buildServer({ service, credentials, canWrite: lease.canWrite, ordinarySubmissions, hubIdentity,
-  acceptanceRelay, milestones: { repoRoot: resolve(fileURLToPath(new URL("../../..", import.meta.url))), startedAt: new Date().toISOString() },
+  acceptanceRelay, milestones: { repoRoot: resolve(fileURLToPath(new URL("../../..", import.meta.url))), startedAt: new Date().toISOString(), repositories: () => integrations.repositories },
   drain: { control: drain, isMaintainer: principal => isInstanceMaintainer(pool, principal) },
   ...(runner ? {compaction:new CompactionMaintenance(pool,runner,{owned:()=>runtimeConfig?.compaction.owned!==false})} : {}),
   connectorRoutes, connectorDeliveries: connectorDecisions, connectorSources: connectorLinks,
