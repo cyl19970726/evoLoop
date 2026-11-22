@@ -18,7 +18,10 @@ export const RETRY_BACKOFF_CEILING_MS = 60 * 1000;
 const startReason = (entryId: string) => `Session line: started after the Session's execution confirmation (entry ${entryId})`;
 const reassignReason = (entryId: string) => `Session line: assigned on the started revision (entry ${entryId})`;
 const failedMessage = new Set(["failed", "cancelled", "unknown", "manual_pending"]);
+/** How long the Session may take to answer once the confirmation request has reached it (counted from delivery). */
 export const DEFAULT_CONFIRMATION_TIMEOUT_MS = 60 * 60 * 1000;
+/** How long the request may wait undelivered behind the Session's other input (counted from entering the confirm step) before the entry is suspended. */
+export const DEFAULT_CONFIRMATION_DELIVERY_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 
 /** A stable UUID for one purpose, so a replayed step carries the same operation id. */
 export function lineIntentId(...parts: string[]): string {
@@ -47,6 +50,8 @@ export interface SessionLinePumpDeps {
   messageBusy?(projectId: string, sessionId: string): Promise<boolean>;
   /** How long the Session may take to answer the execution confirmation before the entry is suspended. */
   confirmationTimeoutMs?: number;
+  /** Longest the request may stay undelivered (queued behind the Session's other input) before the entry is suspended (default 6 hours). */
+  confirmationDeliveryTimeoutMs?: number;
   now?(): number;
   /** Most retries of one step before the entry is suspended (default {@link DEFAULT_MAX_STEP_RETRIES}). */
   maxStepRetries?: number;
@@ -230,9 +235,18 @@ export class SessionLinePump {
       const assignment = await wf.getTaskAssignment(lead, projectId, entry.taskId);
       const confirmation = assignment ? await wf.getAssignmentConfirmation(lead, projectId, entry.taskId, assignment.version) : null;
       if (!assignment || !confirmation) {
-        const waited = (this.deps.now?.() ?? Date.now()) - Date.parse(entry.updatedAt);
-        if (waited > (this.deps.confirmationTimeoutMs ?? DEFAULT_CONFIRMATION_TIMEOUT_MS))
-          await this.suspend(projectId, entry, lead, "CONFIRMATION_TIMEOUT", "the Session did not answer the execution confirmation in time");
+        const now = this.deps.now?.() ?? Date.now();
+        const sinceEntry = now - Date.parse(entry.updatedAt);
+        if (message.state === "queued") {
+          // Not delivered yet: the Session cannot answer a request it has not been given, so the answer period is not running.
+          if (sinceEntry > (this.deps.confirmationDeliveryTimeoutMs ?? DEFAULT_CONFIRMATION_DELIVERY_TIMEOUT_MS))
+            await this.suspend(projectId, entry, lead, "CONFIRMATION_NOT_DELIVERED", "the confirmation request stayed undelivered behind the Session's other input");
+        } else {
+          // Delivered: the answer period starts when the request left the queue (the message's last update), never before the confirm step began.
+          const waited = now - Math.max(Date.parse(entry.updatedAt), Date.parse(message.updatedAt));
+          if (waited > (this.deps.confirmationTimeoutMs ?? DEFAULT_CONFIRMATION_TIMEOUT_MS))
+            await this.suspend(projectId, entry, lead, "CONFIRMATION_TIMEOUT", "the Session did not answer the execution confirmation in time");
+        }
         return; // still waiting for the Session
       }
       if (confirmation.verdict === "return")
