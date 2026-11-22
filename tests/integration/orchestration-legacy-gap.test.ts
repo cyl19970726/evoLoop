@@ -54,7 +54,7 @@ test("old dispatch.gap event without run or task version recovers from immutable
   for (const roleId of [role]) await seedFixtureRole(pool,projectId,roleId);
   for(const id of [goalId,otherGoalId]) await official({type:"goal.create",goalId:id,outcome:"One bounded result",constraints:"Preserve historical scope",consumer:"owner",authority:"reviewer",scope:"local",owner:actor});
   for(const [id,goal] of [[stageId,goalId],[otherStageId,otherGoalId]]){
-    await official({type:"stage.propose",stageId:id,goalId:goal,deliverable:"One checked result",learningQuestion:"What happened?",reason:"Bounded stage"});
+    await official({type:"stage.propose", shortName: "S", checkMethod: "Check",stageId:id,goalId:goal,deliverable:"One checked result",learningQuestion:"What happened?",reason:"Bounded stage"});
     await official({type:"stage.accept",stageId:id,expectedVersion:1,reason:"Activate stage"});
   }
   await official({type:"task.create",taskId,stageId,title:"Original Task",content:"# Fixed original work",acceptance:"One result",owner:role,

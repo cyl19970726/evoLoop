@@ -51,7 +51,7 @@ before(async () => {
   for (const id of [goalId, otherGoalId]) await execute({type: "goal.create", goalId: id,
     outcome: "Check handoff", constraints: "Use fixed sources", consumer: "Reviewer", authority: "Owner", scope: "Local", owner: "owner"});
   for (const [id, goal] of [[stageId, goalId], [otherStageId, otherGoalId]]) {
-    await execute({type: "stage.propose", stageId: id, goalId: goal, deliverable: "Planning", learningQuestion: "What next?", reason: "Test"});
+    await execute({type: "stage.propose", shortName: "S", checkMethod: "Check", stageId: id, goalId: goal, deliverable: "Planning", learningQuestion: "What next?", reason: "Test"});
     await execute({type: "stage.accept", stageId: id, expectedVersion: 1, reason: "Test"});
   }
   await execute({type: "document.create", documentId, title: "Published source", body: "Exact source", kind: "spec"});

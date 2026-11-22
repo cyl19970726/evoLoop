@@ -65,6 +65,15 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
   /** Stages linked to a roadmap phase with their latest review. */
   listStagePhaseLinks?(): Promise<import("./milestones.js").StagePhaseLink[]>;
   listStageRevisions(stageId: string): Promise<StageRevision[]>;
+  /** Milestone fields of a stage (migration 118); null when the stage has no row. */
+  getStageMilestone?(stageId: string): Promise<import("./workflow.js").StageMilestone | null>;
+  listStageMilestoneHistory?(stageId: string): Promise<import("./workflow.js").StageMilestone[]>;
+  /** A Task's stage ownership (migration 118); null when it has no row (unassigned). */
+  getTaskStage?(taskId: string): Promise<import("./workflow.js").TaskStageLink | null>;
+  /** Every stage's milestone row in this project (migration 118); stages without one are absent. */
+  listStageMilestones?(): Promise<import("./workflow.js").StageMilestone[]>;
+  /** Every Task of the project with its work-index phase and its `task_stage` row (null: none), for the stage projection. */
+  listTaskStageFacts?(): Promise<import("./stage-projection.js").StageProjectionTask[]>;
   listStageReviews(stageId: string): Promise<StageReview[]>;
   /** Latest policy at or before the selected revision; omit revision for the current Task. */
   getTaskProposal(taskId: string, taskRevisionId?: string): Promise<TaskProposal | null>;
@@ -166,6 +175,12 @@ export interface Transaction extends Reader, Omit<RoleTransaction, "getTask" | "
   updateDiscussion(value: DiscussionRecord, expectedVersion: number, event: DiscussionEvent): Promise<void>;
   insertRuntimeSession(session: RuntimeSessionRecord): Promise<void>;
   updateRuntimeSession(session: RuntimeSessionRecord, expectedVersion: number): Promise<void>;
+  /** Write the milestone row (insert at version 1 when expectedVersion is 0, otherwise replace at expectedVersion + 1) and append the same state to its history. */
+  putStageMilestone?(value: import("./workflow.js").StageMilestone, expectedVersion: number): Promise<void>;
+  /** Same for a Task's stage ownership. */
+  putTaskStage?(value: import("./workflow.js").TaskStageLink, expectedVersion: number): Promise<void>;
+  /** Remove the ownership row (back to unassigned) at expectedVersion and append that event to the history. */
+  clearTaskStage?(taskId: string, expectedVersion: number, actorId: string, reason: string, at: string): Promise<void>;
   /** Link a stage to a roadmap phase (or clear the link with null). One link per stage; no version bump of the stage. */
   setStagePhaseKey?(link: { stageId: string; phaseKey: string | null; actorId: string; reason: string; at: string }): Promise<void>;
   /** Telemetry: the exact model a Turn of this Session reported. Updates in place without a version bump; never configuration. */

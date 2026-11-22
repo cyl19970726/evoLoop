@@ -57,7 +57,7 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   t.after(async()=>{await pool.end();const c=new pg.Client({connectionString:url});await c.connect();try{await c.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await c.end();}});
   const goalId=randomUUID(),stageId=randomUUID(),taskId=randomUUID(),cognitiveTaskId=randomUUID(),loopId=randomUUID();
   for(const command of [{type:"project.create",title:"Orchestration"},{type:"goal.create",goalId,outcome:"A verified task",constraints:"Local",consumer:"owner",authority:"reviewer",scope:"pilot",owner:actor},
-    {type:"stage.propose",stageId,goalId,deliverable:"One delivery",learningQuestion:"What changed?",reason:"Bounded trial"},
+    {type:"stage.propose", shortName: "S", checkMethod: "Check",stageId,goalId,deliverable:"One delivery",learningQuestion:"What changed?",reason:"Bounded trial"},
     {type:"stage.accept",stageId,expectedVersion:1,reason:"Start bounded trial"},
     {type:"task.create",taskId,stageId,title:"Worker task",content:"# Do one bounded task",acceptance:"Deliver",owner:businessRole,
       consumer:"consumer-observer",evidence:"Pending",stopCondition:"One result"},
@@ -248,7 +248,7 @@ test("PG orchestration enrolls only new sources, deduplicates inbox and preserve
   const foreignGoalId=randomUUID(),foreignStageId=randomUUID(),foreignTaskId=randomUUID(),foreignDeliveryOp=randomUUID(),foreignObservationOp=randomUUID();
   for(const command of [
     {type:"goal.create",goalId:foreignGoalId,outcome:"Other goal",constraints:"Separate",consumer:"owner",authority:"reviewer",scope:"foreign",owner:actor},
-    {type:"stage.propose",stageId:foreignStageId,goalId:foreignGoalId,deliverable:"Other delivery",learningQuestion:"Separate?",reason:"Other scope"},
+    {type:"stage.propose", shortName: "S", checkMethod: "Check",stageId:foreignStageId,goalId:foreignGoalId,deliverable:"Other delivery",learningQuestion:"Separate?",reason:"Other scope"},
     {type:"stage.accept",stageId:foreignStageId,expectedVersion:1,reason:"Activate other stage"},
     {type:"task.create",taskId:foreignTaskId,stageId:foreignStageId,title:"Foreign work",content:"# Other work",acceptance:"One artifact",owner:businessRole,consumer:"consumer-observer",evidence:"Pending",stopCondition:"One result"},
     {type:"task.start",taskId:foreignTaskId,expectedVersion:1,reason:"Freeze other task"},

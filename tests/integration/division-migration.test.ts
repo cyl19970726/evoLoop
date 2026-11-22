@@ -38,7 +38,7 @@ test("021 pins nonempty static Loop and Dispatch to legacy policy without invent
   await issue({type:"project.create",title:"Legacy Loop"});
   for (const roleId of [role]) await seedFixtureRole(pool,projectId,roleId);
   await issue({type:"goal.create",goalId,outcome:"One result",constraints:"Bounded",consumer:"owner",authority:"reviewer",scope:"pilot",owner:"reviewer"});
-  await issue({type:"stage.propose",stageId,goalId,deliverable:"Result",learningQuestion:"What changed?",reason:"Pilot"});
+  await issue({type:"stage.propose", shortName: "S", checkMethod: "Check",stageId,goalId,deliverable:"Result",learningQuestion:"What changed?",reason:"Pilot"});
   await issue({type:"stage.accept",stageId,expectedVersion:1,reason:"Start"});
   await issue({type:"task.create",taskId,stageId,title:"Legacy Task",content:"# Task",acceptance:"Result",owner:role,
     consumer:"owner",evidence:"Pilot",stopCondition:"One result"});

@@ -49,7 +49,7 @@ test("paged work status uses exact project facts and separates formal cognition 
   for (const roleId of [plannerRole,researcherRole,builderRole]) await seedFixtureRole(pool,projectId,roleId);
   await issue({type:"goal.create",goalId,outcome:"交付可核对报告",constraints:"隔离 fixture",consumer:"声明消费者",
     authority:"owner",scope:"fixture",owner:ownerId});
-  await issue({type:"stage.propose",stageId,goalId,deliverable:"固定报告",learningQuestion:"是否有实际使用",reason:"Fixture"});
+  await issue({type:"stage.propose", shortName: "S", checkMethod: "Check",stageId,goalId,deliverable:"固定报告",learningQuestion:"是否有实际使用",reason:"Fixture"});
   await issue({type:"stage.accept",stageId,expectedVersion:1,reason:"Activate"});
   await issue({type:"task.create",taskId:cognitionId,stageId,title:"System source record",kind:"research",
     content:"# Formal cognition",acceptance:"One decision",owner:plannerRole,consumer:"声明消费者",

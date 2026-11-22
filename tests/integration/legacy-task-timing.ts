@@ -6,7 +6,8 @@ export function withoutTaskTimingBeforeMigration(uow: PostgresUnitOfWork, isLega
   const transaction = uow.transaction.bind(uow);
   uow.transaction = <T>(projectId: string, action: (tx: Transaction) => Promise<T>) =>
     transaction(projectId, tx => {
-      if (isLegacy()) Object.defineProperty(tx, "taskTiming", { value: undefined });
+      // The stage milestone and ownership side tables (118) do not exist in these historical schemas either.
+      if (isLegacy()) Object.defineProperties(tx, { taskTiming: { value: undefined }, putStageMilestone: { value: undefined }, putTaskStage: { value: undefined }, clearTaskStage: { value: undefined }, getTaskStage: { value: undefined } });
       return action(tx);
     });
 }

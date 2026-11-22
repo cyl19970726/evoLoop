@@ -87,7 +87,7 @@ async function studyScenario(t:TestContext,ending:"child"|"child-retry"|"child-m
   for (const roleId of [business,fixtureRoleId("prior-role")]) await seedFixtureRole(pool,projectId,roleId);
   await wf({type:"goal.create",goalId,outcome:"Decide from fixed Runs",constraints:"Bounded",consumer:controllerId,
     authority:reviewerId,scope:"fixture",owner:controllerId});
-  await wf({type:"stage.propose",stageId,goalId,deliverable:"Study",learningQuestion:"What changed?",reason:"Fixture"});
+  await wf({type:"stage.propose", shortName: "S", checkMethod: "Check",stageId,goalId,deliverable:"Study",learningQuestion:"What changed?",reason:"Fixture"});
   await wf({type:"stage.accept",stageId,expectedVersion:1,reason:"Study"});
   let divisionTaskId="",divisionRoleId="",divisionDocumentId="",divisionRevisionId="";
   if(ending==="division"){

@@ -46,6 +46,10 @@ issue/report 可带不可变 `origin`：Task ID、可空的 Run ID，以及服�
 
 任务决定历史读取每个真实 TaskRevision 的状态、理由、操作者、时间与当时封存依据，不从当前状态或操作摘要倒推。已回看阶段的纠正须指定最新同阶段 Review 和当前版本，追加 `supersedesReviewId`、StageRevision 与 Review；旧判断保持不变，也不会顺带改变 Task。
 
+阶段的里程碑字段与任务归属另存旁表（迁移 118，只增不改）：`stage_milestone` 一阶段一行（`short_name`、`due_on`、`check_method`、`ladder_keys`，行版本自己递增），`stage_milestone_history` 每次改动追加完整状态、操作者和理由；`task_stage` 一任务一行（`stage_id` 为空时必须写 `no_stage_reason`，表示明确不属于阶段；没有行即未归属），`task_stage_history` 追加每次归属变化，包括行被删除。它们不改 `project_stage`、`stage_revision`、`stage_review`、`stage_phase_key` 和任务修订链。迁移里一次性回填：`stage_phase_key.phase_key` 复制成 `ladder_keys`（短名、到期日、检查办法留空，不猜内容），最新提议带阶段的全部任务（含已关闭）各得一行归属，历史注明来源。归属旁表由 `task.create`、`task.update` 与提议同事务写，所以两处不会各记各的。
+
+阶段的里程碑投影是只读读回，不新增存储：`GET /api/projects/PROJECT/stages/milestones[?timeZone=IANA名]` 在服务端把阶段、旁表、回看记录和每个任务的工作索引阶段合成一张表。任务个数按 `task_stage` 的 `stage_id` 数，分进行中、受阻、未开始、已关闭（取消算已关闭）；未关闭且没有归属行的任务计入 `unowned`，明确“不属于任何阶段”的计入 `declared`，已关闭任务两者都不计。状态词七个加一个：已接受还没有任务、进行中、已到期待回看（到期日早于今天，今天按 `timeZone` 取日历日，缺省 UTC，不认识的名字回 400）、达成、部分达成、未达成（回看的“采纳”为无）、未接受，另有“已回看，记录缺失”，回看记录读不到时不猜结论。“当前阶段”由服务端给出：已接受、未回看、有到期日的阶段里到期日最早者（同日取先建的），不看今天；没有时 `currentNote` 说明原因。`inMainTable` 为真表示登记了短名，且阶段未回看或最近一次回看在 14 天内；其余归“已回看的阶段”折叠区。需要项目成员读权限，只返回本项目；旧的 `/milestones` 不变。
+
 阶段归属随任务修订保存。`task.update.stageId` 省略时沿用原关联，显式 `null` 解除关联，指定 ID 则关联本项目的 active 阶段。显式提供该字段同时要求 `task` 类别与 Task 决定权；实际变更只允许 todo 且无在途或结果未知的 Run。非空关联仍须有 consumer、evidence 和 stopCondition。操作核对 expectedVersion，原子追加 TaskRevision/TaskProposal 及 journal/outbox；旧关联、已回看阶段和已拒绝的启动操作保持原样。`task.start` 继续拒绝当前仍关联非 active 阶段的任务。
 
 待处理 Task 在上游改版时不会生成进行中任务的 Impact。`task.start.retentions` 为这条路径逐项提交旧文档修订、当前观察的已采纳修订和保留理由；核心核对同项目、已关联且已发布的所选来源，以服务端身份和时间写入新封存 BasisSet。检查和 TaskRevision、journal/outbox 同事务完成，既有拒绝操作不改写。省略 basis 时可继承仍有效的保留记录；显式重选 basis 时必须同时明确所需保留项。派发只接受与当前已采纳修订相符的记录，上游再次改版会使旧观察失效；进行中的 Impact/BasisDecision 路径继续独立工作。PostgreSQL 的封存约束保护保留记录，不能事后补写理由或改变观察版本。

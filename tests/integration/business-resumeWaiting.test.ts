@@ -68,7 +68,7 @@ test("PG business waiting resumes from a signed outcome and fixed repaired basis
   await wf({type:"goal.create",goalId,outcome:"One corrected report",constraints:"Fixed source",consumer:owner,authority:owner,scope:"test",owner});
   await wf({type:"goal.create",goalId:otherGoalId,outcome:"Other work",constraints:"Separate scope",consumer:owner,authority:owner,scope:"test",owner});
   for(const [id,goal] of [[stageId,goalId],[otherStageId,goalId],[foreignStageId,otherGoalId]]){
-    await wf({type:"stage.propose",stageId:id,goalId:goal,deliverable:"Correct report",learningQuestion:"What changed?",reason:"Test"});
+    await wf({type:"stage.propose", shortName: "S", checkMethod: "Check",stageId:id,goalId:goal,deliverable:"Correct report",learningQuestion:"What changed?",reason:"Test"});
     await wf({type:"stage.accept",stageId:id,expectedVersion:1,reason:"Active test Stage"});
   }
   for(const [taskId,role] of [[firstTask,cognition],[businessTask,business],[waitingTask,cognition],[newTask,cognition]] as const)
