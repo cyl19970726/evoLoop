@@ -40,7 +40,7 @@ interface ScheduleSnapshot { scope: string; readKey: string; schedules: Schedule
 const coordinatorLabel: Record<SchedulingStatus["state"], string> = {
   idle: "待检查", running: "检查中", disabled: "未启用", unavailable: "不可用", "no-authority": "没有可运行授权", error: "检查失败", stopped: "已停止",
 };
-const stateTone: Record<ScheduleDefinition["state"], string> = { active: "bg-accent text-foreground", paused: "bg-warning-soft text-foreground", stopped: "bg-field text-muted-foreground" };
+const stateTone: Record<ScheduleDefinition["state"], string> = { active: "font-medium text-foreground", paused: "font-medium text-warning", stopped: "text-muted-foreground" };
 const muted = "text-caption text-muted-foreground";
 // Each form has its own boundary: one that fails to render leaves the rest of the schedule readable.
 const bounded = (label: string, children: ReactNode) => <SectionBoundary label={label}>{children}</SectionBoundary>;
@@ -172,7 +172,7 @@ export function SchedulingPanel({ context, refresh }: { context: MutationContext
         {schedules.map(schedule => <option key={schedule.id} value={schedule.id}>{schedule.revision.template.title} · {stateLabel[schedule.state]}</option>)}
       </Select></label>}
     {showCreate
-      ? <section aria-label="创建日程" className="flex flex-col gap-3 rounded-xl bg-raised p-4 shadow-sm compact:p-5">
+      ? <section aria-label="创建日程" className="flex flex-col gap-3 rounded-xl bg-raised p-4 border border-border compact:p-5">
         {schedules.length === 0 && !loading && !error ? <EmptyState title="还没有日程" reason="这里不会自行启动定时任务。建立日程后，协调器按规则和授权创建待办任务。" /> : <h2 className="text-heading font-semibold text-foreground">创建日程</h2>}
         <p className={muted}>支持一次、固定分钟间隔和每天固定时刻，暂不支持更复杂的重复规则。时间按所选时区的当地时间填写；授权和到期时间需与协调器实际许可一致。</p>
         {createForm}
@@ -239,13 +239,13 @@ function ScheduleCard({ definition, context, grants, names, status, fresh, loadi
   const created = history?.occurrences.filter(item => item.taskId) ?? [];
   // An occurrence is said in the zone of the revision that planned it.
   const zoneOf = (revisionId: string | null) => !revisionId ? revision.timezone : history?.revisions.find(item => item.id === revisionId)?.timezone ?? revision.timezone;
-  const card = "flex flex-col gap-3 rounded-xl bg-raised p-4 shadow-sm compact:p-5";
+  const card = "flex flex-col gap-3 rounded-xl bg-raised p-4 border border-border compact:p-5";
   return <article className="schedule-definition flex flex-col gap-4" aria-label={revision.template.title}>
     <header className="flex flex-col gap-1.5">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-heading font-semibold text-foreground">{revision.template.title}</h2>
-        <span className="rounded-full bg-field px-2.5 py-0.5 text-caption text-muted-foreground" data-kind="schedule">日程定义 · 规则</span>
-        <span className={cn("rounded-full px-2.5 py-0.5 text-caption", stateTone[definition.state])}>{stateLabel[definition.state]} · v{definition.version}</span>
+        <span className="rounded-md bg-field px-2.5 py-0.5 text-caption text-muted-foreground" data-kind="schedule">日程定义 · 规则</span>
+        <span className={cn("text-caption", stateTone[definition.state])}>{stateLabel[definition.state]} · v{definition.version}</span>
       </div>
       <p className="flex items-center gap-1.5 text-small text-text-secondary"><CalendarClock size={15} aria-hidden="true" />{ruleText(revision.rule, revision.timezone)} · 责任 <RoleName projectId={context.projectId} roleId={revision.template.owner} /></p>
       <p className={muted}>上次已读结果：{last ? `${occurrenceLabel(last)} · 观察于 ${date(last.observedAtUtc)}` : busy ? "正在核对发生记录…" : history ? "尚无发生记录" : "发生记录待核"}</p>

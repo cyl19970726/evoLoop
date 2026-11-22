@@ -60,7 +60,7 @@ export function EvaluationPage({ context, evaluationId, selectedRevision, taskId
       {list.data && !items.length && (list.isError
         ? <p className="m-0 text-small text-text-secondary">上次读回时当前范围没有评价；当前待核对。</p>
         : <EmptyState title="还没有评价" reason="当前范围尚无评价定义。先准备进行中的共同任务与固定协议、材料和 Wiki 修订。" />)}
-      {items.length > 0 && <ul aria-label="评价" className="m-0 flex list-none flex-col overflow-hidden rounded-xl bg-raised p-0 shadow-sm">{items.map(item => <li key={`${item.evaluationId}:${item.id}`} className="border-t border-border first:border-t-0">
+      {items.length > 0 && <ul aria-label="评价" className="m-0 flex list-none flex-col overflow-hidden rounded-xl bg-raised p-0 border border-border">{items.map(item => <li key={`${item.evaluationId}:${item.id}`} className="border-t border-border first:border-t-0">
         <a href={evaluationListHref(context.projectId, item)} className="flex flex-col gap-0.5 px-4 py-3 outline-none hover:bg-selected focus-visible:shadow-[var(--focus-ring)]">
           <span className="break-words text-small font-medium text-foreground">{item.definition.question}</span>
           <span className={muted}>{evaluationRowMeta(item, date)}</span>
@@ -69,7 +69,7 @@ export function EvaluationPage({ context, evaluationId, selectedRevision, taskId
       {list.data?.nextCursor && <Button size="compact" variant="ghost" className="w-fit" disabled={list.isFetching}
         onClick={() => setMore({ key: filterKey, pages: pages + 1 })}>{list.isFetching ? "读取中…" : "继续读取"}</Button>}
     </section>
-    <details className="rounded-xl bg-raised p-4 shadow-sm">
+    <details className="rounded-xl bg-raised p-4 border border-border">
       <summary className="cursor-pointer text-small font-medium text-foreground">需要时建立新的冻结评价</summary>
       <div className="mt-3"><SectionBoundary label="建立评价表单">
         <DefinitionForm context={context} ownerTaskId={taskId} onApplied={id => { navigate(evaluationHref(context.projectId, id)); }} />
@@ -126,7 +126,7 @@ function EvaluationRail({ list, projectId, selectedId, filtered }: {
       {items.map(item => {
         const selected = item.evaluationId === selectedId;
         return <a key={`${item.evaluationId}:${item.id}`} href={evaluationListHref(projectId, item)} aria-current={selected ? "page" : undefined}
-          className={cn("selected-edge flex w-full min-w-0 flex-col gap-0.5 rounded-lg px-3 py-2 text-left outline-none focus-visible:shadow-[var(--focus-ring)]", selected ? "bg-accent hover:bg-accent" : "hover:bg-selected")}>
+          className={cn("selected-mark flex w-full min-w-0 flex-col gap-0.5 rounded-lg px-3 py-2 text-left outline-none focus-visible:shadow-[var(--focus-ring)]", selected ? "bg-accent hover:bg-accent" : "hover:bg-selected")}>
           <span className={cn("truncate text-small text-foreground", selected && "font-medium")}>{item.definition.question}</span>
           <span className="truncate text-caption text-muted-foreground">《{frozenTaskTitle(item)}》 · v{item.version}</span>
         </a>;

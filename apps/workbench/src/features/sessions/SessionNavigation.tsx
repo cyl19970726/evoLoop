@@ -74,11 +74,11 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
     const status = agentStatusLabel(session);
     const runtime = agentRuntimeLabel(session);
     const signal = `${short ? `标识 ${short} · ` : ""}${runtime ? `${runtime} · ` : ""}${taskSignal ?? hint ?? (roles || sessionClassReason(session))} · ${status}`;
-    const dot = session.busy === true ? "bg-primary" : session.runtimeState === "failed" ? "bg-destructive" : session.busy === false && session.runtimeState === "ready" ? "bg-border" : "bg-warning";
+    const dot = session.busy === true ? "bg-running" : session.runtimeState === "failed" ? "bg-destructive" : session.busy === false && session.runtimeState === "ready" ? "bg-border" : "bg-warning";
     const selected = selectedId === session.key;
     return <a key={session.key} href={sessionHref(projectId, session.key)} aria-current={selected ? "page" : undefined} onClick={onNavigate}
-      className={cn("selected-edge session-nav-item flex items-center gap-2.5 rounded-lg py-1.5 pl-2 pr-3 text-text-secondary hover:bg-selected focus-visible:shadow-[var(--focus-ring)] outline-none",
-        selected && "bg-accent font-medium text-accent-strong hover:bg-accent")}>
+      className={cn("selected-mark session-nav-item flex items-center gap-2.5 rounded-lg py-1.5 pl-2 pr-3 text-text-secondary hover:bg-selected focus-visible:shadow-[var(--focus-ring)] outline-none",
+        selected && "bg-accent font-semibold text-foreground hover:bg-accent")}>
       <AgentAvatar seed={session.key} roleSeed={session.roles[0]?.id ?? session.title} size={30} />
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate" title={name}>{name}</span>
@@ -95,7 +95,7 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
   const moreButton = (busy: boolean, label: string, onClick: () => void) => <Button variant="ghost" disabled={busy} onClick={onClick}
     className="session-nav-more mx-3 my-1 h-auto rounded-md px-2 py-1 text-small font-normal text-primary hover:bg-accent hover:text-primary disabled:text-muted-foreground disabled:opacity-100">{busy ? "加载中…" : label}</Button>;
   return <section ref={root} className="session-navigation flex flex-col" aria-label="智能体目录" data-ui="">
-    <label className="mb-1.5 flex h-9 items-center gap-2 rounded-full bg-field px-3 text-muted-foreground has-[input:focus-visible]:shadow-[var(--focus-ring)]">
+    <label className="mb-1.5 flex h-9 items-center gap-2 rounded-md bg-field px-3 text-muted-foreground has-[input:focus-visible]:shadow-[var(--focus-ring)]">
       <Search size={14} aria-hidden="true" />
       <input aria-label="搜索智能体名称或职责" placeholder="搜索智能体" value={query} className="w-full bg-transparent text-foreground outline-none" onChange={event => onState(previous => ({ ...previous, query: event.target.value,
         pages: { current: 1, historical: 1, unclassified: 1 },
@@ -144,9 +144,9 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
         <SheetTitle>连接或建立智能体</SheetTitle>
         <SheetDescription>同一职责可以有多个承接的智能体。登记不表示已发送消息或开始执行。</SheetDescription>
         <div className="grid gap-3">
-          <article className="rounded-lg bg-muted p-4"><h3 className="font-medium">连接已有会话</h3><p className="mt-1 text-small text-text-secondary">登记原会话引用，核实打开、读取和人工接单能力。</p>
+          <article className="border-t border-border px-0 py-4"><h3 className="font-medium">连接已有会话</h3><p className="mt-1 text-small text-text-secondary">登记原会话引用，核实打开、读取和人工接单能力。</p>
             <a className="mt-2 inline-block text-small text-primary" href={href(projectId, "roles")} onClick={() => { setConnectOpen(false); onNavigate(); }}>查看职责档案并连接</a></article>
-          <article className="rounded-lg bg-muted p-4"><h3 className="font-medium">建立受管智能体</h3><p className="mt-1 text-small text-text-secondary">使用项目授权预留，之后核实运行状态。</p>
+          <article className="border-t border-border px-0 py-4"><h3 className="font-medium">建立受管智能体</h3><p className="mt-1 text-small text-text-secondary">使用项目授权预留，之后核实运行状态。</p>
             <a className="mt-2 inline-block text-small text-primary" href={href(projectId, "runtime")} onClick={() => { setConnectOpen(false); onNavigate(); }}>打开受管执行入口</a></article>
         </div>
       </SheetContent>

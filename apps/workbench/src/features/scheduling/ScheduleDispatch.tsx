@@ -53,7 +53,7 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
 
 /** How this schedule hands its Task over, in the page's words. Nothing here is inferred: no read says 未知. */
 export function DispatchFacts({ read }: { read: { data?: ScheduleDispatchRead; isPending: boolean; isError: boolean; error: unknown } }) {
-  const card = "flex flex-col gap-3 rounded-xl bg-raised p-4 shadow-sm compact:p-5";
+  const card = "flex flex-col gap-3 rounded-xl bg-raised p-4 border border-border compact:p-5";
   const data = read.data;
   if (!data) return <section aria-label="派发方式" className={card} data-dispatch-facts="">
     <h3 className="text-label font-semibold text-foreground">派发方式</h3>
@@ -83,7 +83,7 @@ export function DispatchFacts({ read }: { read: { data?: ScheduleDispatchRead; i
   </section>;
 }
 
-const toneClass = { ok: "bg-accent text-foreground", wait: "bg-warning-soft text-foreground", bad: "bg-field text-text-secondary" } as const;
+const toneClass = { ok: "font-medium text-foreground", wait: "font-medium text-warning", bad: "text-text-secondary" } as const;
 
 /** The triggers, newest first: planned time, what happened, why, and the Task it made (or the open one it skipped for). */
 export function TriggerList({ rows, zoneOf, taskHref, dispatchProblem }: {
@@ -95,7 +95,7 @@ export function TriggerList({ rows, zoneOf, taskHref, dispatchProblem }: {
       className="flex flex-col gap-0.5 border-t border-border py-2.5 first:border-t-0">
       <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-small font-medium text-foreground">
         <span>{scheduleTime(row.plannedAtUtc, zoneOf(row.revisionId))}</span>
-        <span className={cn("rounded-full px-2.5 py-0.5 text-caption", toneClass[row.tone])} data-trigger-label="">{row.label}</span>
+        <span className={cn("text-caption", toneClass[row.tone])} data-trigger-label="">{row.label}</span>
       </span>
       {row.reasonText && <span className="text-small text-text-secondary">{row.reasonText}{row.reasonCode && row.dispatch?.reason && row.reasonText.indexOf(row.reasonCode) < 0 ? <span className={muted}> · {row.reasonCode}</span> : null}</span>}
       {row.dispatch?.state === "dispatched" && <span className={muted}>{row.dispatch.dispatchedAt ? `${date(row.dispatch.dispatchedAt)} 放进队伍` : "已放进队伍"}{row.dispatch.escalatedAt ? ` · 等待超过上限，已告知 Leader（${date(row.dispatch.escalatedAt)}）` : ""}。放进队伍不等于已开始或已完成。</span>}

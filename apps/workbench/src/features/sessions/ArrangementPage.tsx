@@ -88,7 +88,7 @@ function Column({ label, empty, children }: { label: string; empty: string; chil
 }
 
 const loadDot: Record<ArrangementRow["load"], string> = {
-  overloaded: "bg-destructive", busy: "bg-primary", idle: "bg-border", unusable: "bg-warning", unknown: "bg-transparent shadow-[inset_0_0_0_1px_var(--border-strong)]",
+  overloaded: "bg-destructive", busy: "bg-running", idle: "bg-border", unusable: "bg-warning", unknown: "bg-transparent shadow-[inset_0_0_0_1px_var(--border-strong)]",
 };
 
 const unreadText = (state: ReadState, what: string) => state === "loading" ? "正在读取" : state === "failed" ? `${what}未读取` : "—";
@@ -197,7 +197,7 @@ function Stat({ label, value, note, tone, onClick }: { label: string; value: num
     <span className="text-caption text-muted-foreground">{label}{note && <span className="text-text-secondary"> · {note}</span>}</span>
   </>;
   const box = "flex min-w-0 flex-col gap-0.5 rounded-xl bg-field px-4 py-3 text-left";
-  return onClick ? <Button variant="row" onClick={onClick} className={cn(box, "items-stretch bg-card font-normal text-foreground shadow-sm hover:bg-accent hover:text-foreground")}>{body}</Button> : <div className={box}>{body}</div>;
+  return onClick ? <Button variant="row" onClick={onClick} className={cn(box, "items-stretch bg-card font-normal text-foreground border border-border hover:bg-accent hover:text-foreground")}>{body}</Button> : <div className={box}>{body}</div>;
 }
 
 /** Project-wide counts the agent directory reports, independent of how many agents were read. */
@@ -296,7 +296,7 @@ export function ArrangementPage({ context, refresh, flow, operations }: { contex
             {reads.queues === "failed" && <Notice tone="waiting" title="队列暂不可读取">{queuesError}。“排队”一栏不完整，谁空闲也无法确认。</Notice>}
             {reads.queues === "stale" && <Notice tone="waiting" title={`队列重新读取失败 · ${staleLabel}`}>{queuesError}。“排队”一栏沿用上次读回的记录。</Notice>}
             {tasks.data && !tasks.data.complete && <Notice tone="waiting">任务较多，看板只包含已读取的前 {tasks.data.items.length} 项。</Notice>}
-            {board.rows.length ? <div className="@container rounded-xl bg-raised px-4 shadow-sm">
+            {board.rows.length ? <div className="@container rounded-xl bg-raised px-4 border border-border">
               <div aria-hidden="true" className="hidden grid-cols-[minmax(200px,1.1fr)_repeat(3,minmax(0,1fr))] gap-4 border-b border-border py-2 text-caption text-muted-foreground @2xl:grid">
                 <span>智能体</span><span>正在做</span><span>已分派</span><span>排队</span>
               </div>
@@ -306,11 +306,11 @@ export function ArrangementPage({ context, refresh, flow, operations }: { contex
           </section>
           {board.elsewhere.map(group => <section key={group.target} aria-label={group.label} className="flex flex-col gap-2">
             <h2 className={heading}>{group.label}<span className="ml-1.5 font-normal text-muted-foreground">{group.tasks.length}</span></h2>
-            <ul className="flex flex-col gap-2 rounded-xl bg-raised px-4 py-3 shadow-sm">{group.tasks.map(task => <TaskLine key={task.taskId} projectId={projectId} task={task} from={from} stale={board.stale} />)}</ul>
+            <ul className="flex flex-col gap-2 rounded-xl bg-raised px-4 py-3 border border-border">{group.tasks.map(task => <TaskLine key={task.taskId} projectId={projectId} task={task} from={from} stale={board.stale} />)}</ul>
           </section>)}
           {tasksShown && <section aria-labelledby="arrangement-unassigned" className="flex flex-col gap-2">
             <h2 id="arrangement-unassigned" className={heading}>没有承接者的任务<span className="ml-1.5 font-normal text-muted-foreground">{board.unassigned.length}</span></h2>
-            {board.unassigned.length ? <ul className="flex flex-col gap-2 rounded-xl bg-raised px-4 py-3 shadow-sm">{board.unassigned.map(task => <TaskLine key={task.taskId} projectId={projectId} task={task} extra={workNextStep(task.phase)} from={from} stale={board.stale} />)}</ul>
+            {board.unassigned.length ? <ul className="flex flex-col gap-2 rounded-xl bg-raised px-4 py-3 border border-border">{board.unassigned.map(task => <TaskLine key={task.taskId} projectId={projectId} task={task} extra={workNextStep(task.phase)} from={from} stale={board.stale} />)}</ul>
               : <p className="text-caption text-muted-foreground">{reads.tasksComplete ? "每项未关闭的任务都有承接者。" : "已读取的任务都有承接者。"}</p>}
             {(reads.queues === "failed" || reads.queues === "loading") && <p className="text-caption text-muted-foreground">队列还没读到：从排队中领取的任务也可能列在这里。</p>}
           </section>}

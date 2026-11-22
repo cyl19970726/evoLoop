@@ -162,7 +162,7 @@ export function FlowView({ board, events, context, source, startAt, connection, 
   const NodeButton = ({ id, className, children, label }: { id: NodeId; className?: string; children: ReactNode; label: string }) => (
     <Button variant="row" aria-label={label} aria-pressed={selected?.type === "node" && selected.id === id} data-node={id} style={pct(nodeBox(id))}
       onClick={() => setSelected({ type: "node", id })}
-      className={cn("absolute flex h-auto min-w-0 flex-col items-start justify-center gap-0.5 rounded-lg bg-card px-3 text-left shadow-sm hover:bg-card", flash.has(id) && "bg-accent", selected?.type === "node" && selected.id === id && "bg-accent hover:bg-accent", className)}>
+      className={cn("absolute flex h-auto min-w-0 flex-col items-start justify-center gap-0.5 rounded-lg bg-card px-3 text-left border border-border hover:bg-card", flash.has(id) && "bg-accent", selected?.type === "node" && selected.id === id && "bg-accent hover:bg-accent", className)}>
       {children}
     </Button>);
 
@@ -227,7 +227,7 @@ export function FlowView({ board, events, context, source, startAt, connection, 
           onChange={e => { setFresh([]); setStored(Number(e.target.value)); setMode("paused"); }} className="w-40" /></label>
       {GROUPS.map(g => <Button size="compact" key={g.id} aria-pressed={!hidden.has(g.id)} onClick={() => toggle(g.id)}
         className={cn(hidden.has(g.id) && "text-muted-foreground line-through")}>{g.label}</Button>)}
-      <Button size="compact" variant="ghost" aria-pressed={stuckOnly} onClick={() => setStuckOnly(v => !v)} className={cn(stuckOnly && "bg-accent text-accent-strong hover:bg-accent")}>只看卡住的</Button>
+      <Button size="compact" variant="ghost" aria-pressed={stuckOnly} onClick={() => setStuckOnly(v => !v)} className={cn(stuckOnly && "bg-accent font-semibold text-foreground hover:bg-accent")}>只看卡住的</Button>
     </div>);
 
   const connectionText = !connection ? null
@@ -258,14 +258,14 @@ export function FlowView({ board, events, context, source, startAt, connection, 
     return <section className="flex flex-col gap-4" aria-label="动态（窄屏泳道）" data-layout="lanes">
       {header}{controls}
       <ul className="flex flex-col gap-2" aria-label="节点">
-        {PEOPLE.map(p => <li key={p.id}><Button variant="row" data-node={p.id} aria-pressed={selected?.type === "node" && selected.id === p.id} onClick={() => setSelected({ type: "node", id: p.id })} className="flex h-auto w-full flex-col items-start rounded-lg bg-card px-3 py-2 text-left shadow-sm">
+        {PEOPLE.map(p => <li key={p.id}><Button variant="row" data-node={p.id} aria-pressed={selected?.type === "node" && selected.id === p.id} onClick={() => setSelected({ type: "node", id: p.id })} className="flex h-auto w-full flex-col items-start rounded-lg bg-card px-3 py-2 text-left border border-border">
           <span className="block text-small font-medium">{p.label}</span><span className="text-caption text-muted-foreground">{p.sub}</span></Button></li>)}
-        <li><Button variant="row" data-node="packets" aria-pressed={selected?.type === "node" && selected.id === "packets"} onClick={() => setSelected({ type: "node", id: "packets" })} className="flex h-auto w-full flex-col items-start rounded-lg bg-card px-3 py-2 text-left shadow-sm">
+        <li><Button variant="row" data-node="packets" aria-pressed={selected?.type === "node" && selected.id === "packets"} onClick={() => setSelected({ type: "node", id: "packets" })} className="flex h-auto w-full flex-col items-start rounded-lg bg-card px-3 py-2 text-left border border-border">
           <span className="block text-small font-medium">通知包托盘</span><span className="text-caption text-muted-foreground">开放 {board.graph.counts.openPackets ?? "读不到"}</span></Button></li>
-        <li><Button variant="row" data-node="leader" onClick={() => setSelected({ type: "node", id: "leader" })} className="flex h-auto w-full flex-col items-start rounded-lg bg-card px-3 py-2 text-left shadow-sm">
+        <li><Button variant="row" data-node="leader" onClick={() => setSelected({ type: "node", id: "leader" })} className="flex h-auto w-full flex-col items-start rounded-lg bg-card px-3 py-2 text-left border border-border">
           <span className="block text-small font-medium">Leader</span><span className="text-caption text-muted-foreground">{stuck.length ? `${stuck.length} 处卡住` : "没有读到卡住的地方"}</span></Button></li>
         {sessions.map(s => { const st = sessionStatus(s.sessionId); return <li key={s.sessionId}>
-          <Button variant="row" data-node={`session:${s.sessionId}`} onClick={() => setSelected({ type: "node", id: `session:${s.sessionId}` })} className="flex h-auto w-full flex-col items-start rounded-lg bg-card px-3 py-2 text-left shadow-sm">
+          <Button variant="row" data-node={`session:${s.sessionId}`} onClick={() => setSelected({ type: "node", id: `session:${s.sessionId}` })} className="flex h-auto w-full flex-col items-start rounded-lg bg-card px-3 py-2 text-left border border-border">
             <span className="block truncate text-small font-medium">{s.roleTitle ?? s.roleId}</span>
             <span className="text-caption text-muted-foreground"><span aria-hidden="true">{st.glyph} </span>{st.text}{s.current?.taskTitle ? ` · ${s.current.taskTitle}` : ""}</span></Button></li>; })}
       </ul>
@@ -285,7 +285,7 @@ export function FlowView({ board, events, context, source, startAt, connection, 
           {stations.map((s, i) => { const x = 100 + i * ((W - 200) / (STATIONS.length - 1)); return <g key={s.station}><circle cx={x} cy={582} r={7} fill="currentColor" className="text-card" stroke="currentColor" strokeWidth={2} /></g>; })}
         </svg>
         {PEOPLE.map(p => <NodeButton key={p.id} id={p.id} label={`${p.label}：${p.sub}`}><span className="truncate text-small font-medium">{p.label}</span><span className="truncate text-caption text-muted-foreground">{p.sub}</span></NodeButton>)}
-        <div style={pct(BOARD)} className="absolute rounded-lg bg-card p-3 shadow-sm" role="group" aria-label="调度板">
+        <div style={pct(BOARD)} className="absolute rounded-lg bg-card p-3 border border-border" role="group" aria-label="调度板">
           <p className="text-label font-medium">调度板</p>
           <dl className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 text-small">
             {stations.slice(0, 4).map(s => <div key={s.station} className="flex justify-between"><dt className="text-muted-foreground">{s.station}</dt><dd className="tabular-nums">{s.count === null ? "读不到" : s.count}</dd></div>)}

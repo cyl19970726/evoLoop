@@ -79,7 +79,7 @@ export function ProjectChooser({ token, principal, receipts, operationNotice, op
       {projects.length > 0 && <ul aria-label="项目" className="flex flex-col gap-2">{projects.map(project => {
         const pending = receipts.filter(r => r.projectId === project.id).length;
         return <li key={project.id}>
-          <div className="flex items-center gap-1 rounded-xl bg-raised shadow-sm hover:bg-selected">
+          <div className="flex items-center gap-1 rounded-xl bg-raised border border-border hover:bg-selected">
           <a className="project-item flex min-w-0 flex-1 items-center gap-3 rounded-xl px-4 py-3 text-foreground outline-none focus-visible:shadow-[var(--focus-ring)]" href={href(project.id, "overview")}>
             <span aria-hidden="true" className="flex size-10 shrink-0 items-center justify-center rounded-md bg-accent font-semibold text-accent-foreground">{projectInitial(project.title)}</span>
             <span className="flex min-w-0 flex-1 flex-col">
@@ -96,7 +96,7 @@ export function ProjectChooser({ token, principal, receipts, operationNotice, op
       })}</ul>}
       {!projects.length && !reading && !missing.length && <EmptyState title="还没有可读取的项目" reason="当前身份没有任何项目的授权。请让项目管理员把你加入项目，再点“刷新项目”。" />}
       {missing.length > 0 && <Notice tone="waiting">有 {missing.length} 个授权项目尚未创建或暂不可读取。服务异常时请先重试，已存在的项目不会被覆盖。</Notice>}
-      {missing.map(id => <section key={id} aria-label="创建项目" className="rounded-xl bg-raised p-4 shadow-sm">
+      {missing.map(id => <section key={id} aria-label="创建项目" className="rounded-xl bg-raised p-4 border border-border">
         <p className="text-small text-text-secondary">你有一个项目授权，但这里还没有读到对应的项目：可能尚未建立，也可能暂时读不到。</p>
         <FullIdentifiers className="mb-2 mt-1" summary="完整标识（用于 CLI）" rows={[{ label: "项目", value: id }]} />
         <ActionForm context={{ ...context, projectId: id, blocked: hasProjectReceipt(receipts, id), onChanged: () => { reread(); context.onChanged(); } }}

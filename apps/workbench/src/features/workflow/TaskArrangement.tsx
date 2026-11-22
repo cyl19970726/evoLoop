@@ -89,7 +89,7 @@ export function TaskAttentionSection({ context, detail, leader }: { context: Mut
       <Button size="compact" variant="ghost" className="ml-auto" disabled={read.isFetching} onClick={() => { setMore(null); void read.refetch(); }}>重新读取</Button>
     </div>
     <ReadNote read={read} what="关注项" />
-    {items.length > 0 && <ul className="flex flex-col gap-2">{items.map(item => <li key={item.id} className="flex flex-col gap-1 rounded-lg bg-muted px-4 py-3" data-attention-item={item.id}>
+    {items.length > 0 && <ul className="flex flex-col gap-2">{items.map(item => <li key={item.id} className="flex flex-col gap-1 border-t border-border px-0 py-3" data-attention-item={item.id}>
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-label font-medium text-foreground">{signalLabel[item.signal] ?? "关注项"}</span>
         <StatusTag tone={item.state === "open" ? item.severity === "urgent" ? "blocked" : "waiting" : "done"} label={`${item.severity === "urgent" ? "紧急" : "观察"} · ${item.state === "open" ? "待解决" : "已解决"}`} />

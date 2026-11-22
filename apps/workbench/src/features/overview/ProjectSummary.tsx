@@ -199,7 +199,7 @@ export function ProjectSummary({ token, projectId, refresh, active, flowGlance }
   const stale = !!current && (pending || !!error);
   const read = current ? `观察于 ${date(current.observedAt)}${stale ? " · 上次读回，当前状态待核对" : ""}` : pending ? "正在读取项目摘要…" : "尚未读回项目摘要";
   const empty = (text: string) => <p className={muted}>{text}</p>;
-  const card = "flex min-w-0 flex-col rounded-xl bg-raised px-4 py-3 shadow-sm compact:px-5";
+  const card = "flex min-w-0 flex-col rounded-xl bg-raised px-4 py-3 border border-border compact:px-5";
   return <div data-ui="" className="project-overview mx-auto flex w-full max-w-[980px] flex-col gap-3 px-4 py-3 compact:gap-5 compact:px-8 compact:py-7">
     <header className="flex items-start justify-between gap-3 compact:flex-wrap">
       <div className="min-w-0">

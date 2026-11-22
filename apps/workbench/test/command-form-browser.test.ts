@@ -95,7 +95,7 @@ test("the command form on the schedule page: @evoloop/ui markup, required fields
     });
     assert.deepEqual([look.legacy, look.island], [false, true], "no old region holds this form; the form marks itself as @evoloop/ui markup");
     assert.equal(look.submitBorder, "0px", JSON.stringify(look));
-    assert.ok(look.submitRadius >= 15 && look.submitHeight <= 32, `the submit button is the compact pill, not the old 38px button: ${JSON.stringify(look)}`);
+    assert.ok(look.submitRadius === 4 && look.submitHeight <= 32, `the submit button is the compact 4px control, not the old 38px button: ${JSON.stringify(look)}`);
     assert.equal(look.inputBorder, "0px");
 
     // Required fields: sending is refused field by field, and nothing is sent.

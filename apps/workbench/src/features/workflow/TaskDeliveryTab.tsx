@@ -112,7 +112,7 @@ export function TaskDeliveryTab({ projectId, detail, active, actionsHref, actorI
     <TabSection title="验收接力">
       <ReadNote read={relays} what="验收安排" />
       {relayItems && (relayItems.length
-        ? <ul className="flex flex-col gap-2" aria-label="验收接力">{relayItems.map(item => <li key={item.relayId} className="flex flex-col gap-0.5 rounded-lg bg-muted px-4 py-3">
+        ? <ul className="flex flex-col gap-2" aria-label="验收接力">{relayItems.map(item => <li key={item.relayId} className="flex flex-col gap-0.5 border-t border-border px-0 py-3">
           <p className="text-label font-medium text-foreground">{relayStageLabel[item.stage] ?? "验收"} · {relayStateLabel[item.state] ?? "状态未识别"} · {relayRecipient(item)}</p>
           <p className="text-label text-text-secondary">{item.scopeDescription}</p>
           <Fine>{relayProgress(item)}</Fine>
@@ -198,7 +198,7 @@ function DeliveryRecord({ projectId, detail, delivery, latest, title, run, activ
 }
 
 export function ObservationRecord({ observation }: { observation: Observation }) {
-  return <div className="flex flex-col gap-1.5 rounded-lg bg-muted px-4 py-3" data-observation={observation.id}>
+  return <div className="flex flex-col gap-1.5 border-t border-border px-0 py-3" data-observation={observation.id}>
     <p className="text-label font-medium text-foreground">{actorText(observation.observer)} · {observerKindLabel[observation.observerKind]} · {observationResultLabel[observation.result]}</p>
     <Fine>观察登记于 {date(observation.createdAt)} · 登记者 {actorText(observation.actorId)}</Fine>
     <EvidenceText label="使用证据" value={observation.evidence} />

@@ -13,7 +13,7 @@ interface StateFrameProps {
 
 function StateFrame({ icon, title, children, action, className, role }: StateFrameProps) {
   return (
-    <div role={role} className={cn("flex flex-col items-start gap-2 rounded-lg bg-muted px-5 py-4", className)}>
+    <div role={role} className={cn("flex flex-col items-start gap-2 border-t border-border px-0 py-4", className)}>
       <p className="m-0 flex items-center gap-2 text-small font-semibold text-foreground">{icon}{title}</p>
       {children && <div className="text-label leading-(--leading-body) text-text-secondary">{children}</div>}
       {action && <div className="pt-1">{action}</div>}
@@ -47,7 +47,7 @@ export function LoadingState({ lines = 3, label = "正在读取", className }: L
     <div role="status" aria-busy="true" className={cn("flex flex-col gap-2.5 py-2", className)}>
       <span className="sr-only">{label}</span>
       {Array.from({ length: lines }, (_, index) => (
-        <span key={index} aria-hidden="true" className="h-3 animate-pulse rounded-full bg-field motion-reduce:animate-none" style={{ width: `${92 - index * 17}%` }} />
+        <span key={index} aria-hidden="true" className="h-3 animate-pulse rounded-sm bg-field motion-reduce:animate-none" style={{ width: `${92 - index * 17}%` }} />
       ))}
     </div>
   );

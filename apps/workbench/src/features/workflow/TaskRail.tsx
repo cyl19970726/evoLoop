@@ -72,7 +72,7 @@ export function TaskRail({ list, view, onView, selectedId, linkFor }: {
     <Input type="search" aria-label="搜索任务" placeholder="搜索标题或负责职责…" value={view.query} onChange={event => onView({ query: event.target.value })} className="h-8 text-label" />
     <div role="group" aria-label="任务范围" className="flex gap-1">
       {(["all", "mine"] as const).map(scope => <Button key={scope} size="compact" variant="ghost" aria-pressed={view.scope === scope}
-        className={cn("flex-1", view.scope === scope && "bg-accent text-accent-strong hover:bg-accent")} onClick={() => onView({ scope })}>
+        className={cn("flex-1", view.scope === scope && "bg-accent font-semibold text-foreground hover:bg-accent")} onClick={() => onView({ scope })}>
         {scope === "all" ? "全部工作" : "我的承接"}{scope === "mine" && list.mineCount > 0 && <span className="tabular-nums text-muted-foreground">{list.mineCount}</span>}
       </Button>)}
     </div>

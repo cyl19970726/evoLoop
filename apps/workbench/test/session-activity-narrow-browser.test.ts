@@ -267,7 +267,7 @@ test("long Run activity and expanded source stay inside the Session page at mobi
     assert.ok((layout.activity ?? 0) <= (layout.activityWidth ?? 0), `${width}px activity overflow: ${JSON.stringify(layout)}`);
     if (process.env.EVOLOOP_CAPTURE_ACTIVITY_NARROW) await page.screenshot({ path: `/tmp/evoloop-activity-${width}.png`, fullPage: true });
   }
-  await page.setViewportSize({ width: 390, height: 520 });
+  await page.setViewportSize({ width: 390, height: 470 });
   await openAuditPanel();
   await page.locator(".session-feed:visible").getByLabel("活动范围").selectOption("all");
   // The details scroll inside the right column's own pane; the page itself does not move.

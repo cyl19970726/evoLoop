@@ -167,7 +167,7 @@ export function OrchestrationPanel({ projectId, refresh, taskId, verifiedRuns }:
       {loops.map(loop => {
         const marker = taskId && association && association.kind !== "unresolved" && association.loopId === loop.id ? association.kind === "current" ? "当前运行 · " : "最近派发 · " : "";
         return <Button variant="row" key={loop.id} data-loop-id={loop.id} aria-pressed={selected === loop.id} onClick={() => setManualLoopId(loop.id)}
-          className="w-auto max-w-full rounded-full bg-field px-3 py-1 text-label [overflow-wrap:anywhere] hover:bg-field">
+          className="w-auto max-w-full rounded-md bg-field px-3 py-1 text-label [overflow-wrap:anywhere] hover:bg-field">
           {marker}{loopName(titles[loop.id])} · {stateText(loop.state)} · 创建 {date(loop.createdAtUtc)}
         </Button>;
       })}
