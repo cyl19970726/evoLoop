@@ -67,7 +67,7 @@ export interface NowView {
 }
 
 /** What the agent is doing now. Every branch says something: a Task, a message, 空闲, or why it cannot be told. */
-export function nowWork({ session, work, assignments, relationLabel, timing, messageRunning, idleResult, questionCount, titleOf }: {
+export function nowWork({ session, work, assignments, relationLabel, timing, messageRunning, replyingPhrase = "正在回复消息", idleResult, questionCount, titleOf }: {
   session: Pick<ObservedSession, "kind" | "runtimeState" | "busy" | "latestBusinessRun" | "dispatch">;
   work: ObservedTask | null;
   assignments: Assignment[];
@@ -75,6 +75,8 @@ export function nowWork({ session, work, assignments, relationLabel, timing, mes
   relationLabel: string | null;
   timing: NowTiming | null;
   messageRunning: boolean;
+  /** The header's words for who is being answered ("正在回复你的消息"); the card says the same. */
+  replyingPhrase?: string;
   idleResult: SessionResult | null;
   questionCount: number;
   titleOf: (taskId: string) => string | null;
@@ -98,7 +100,7 @@ export function nowWork({ session, work, assignments, relationLabel, timing, mes
     summary: session.runtimeState === "closed" ? "这个智能体已关闭，不再接新任务。" : "智能体还没有就绪，当前工作待核对。", lines: [], ...plain, recent: null };
   // The native report of a message turn is exact; a Run record still marked running does not override it.
   if (session.busy === true && messageRunning)
-    return { badge: "回复消息", tone: "progress", task: null, summary: "正在回复消息，这一轮不属于任何任务。", lines: [], ...plain, recent: null };
+    return { badge: "回复消息", tone: "progress", task: null, summary: `${replyingPhrase}，这一轮不属于任何任务。`, lines: [], ...plain, recent: null };
   // A Run that has not ended names its Task even when no claim or assignment does (a reserved Run, for instance).
   if (session.kind === "owned" && run && activeRunStates.has(run.state))
     return { badge: runStateLabel(run.state), tone: runTone[run.state] ?? "unknown", task: { id: run.taskId, title: titleOf(run.taskId) },

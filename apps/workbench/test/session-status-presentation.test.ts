@@ -159,3 +159,22 @@ test("the agent page header speaks plainly and only claims live work it has obse
   for (const value of [agentHeaderStatus(session(null), null, true, null), agentHeaderStatus(session(true), live({ kind: "x" }), true, true)])
     assert.doesNotMatch(value, /PG|原生|Turn|writer/);
 });
+
+test("the header says for whom and for which task, how long it has been idle, and why it is paused (Task f2d82dfe)", async () => {
+  const { agentHeaderStatus, idleDuration, replyingPhrase } = await import("../src/features/sessions/sessionStatusPresentation.ts");
+  const session = (busy: boolean | null, run: { id: string; state: string } | null = null) => ({ kind: "owned" as const, runtimeState: "ready", busy, latestBusinessRun: run }) as Parameters<typeof agentHeaderStatus>[0];
+  const live = (source: { kind: string; id?: string } | null, status = "active", turn = "inProgress") =>
+    ({ freshness: "live", status, turn: { status: turn, source } }) as unknown as Parameters<typeof agentHeaderStatus>[1];
+  assert.equal(agentHeaderStatus(session(true), live({ kind: "message" }), true, true, { replyingTo: "me" }), "正在回复你的消息");
+  assert.equal(agentHeaderStatus(session(true), live({ kind: "message" }), true, true, { replyingTo: "Leader" }), "正在回复Leader的消息");
+  assert.equal(agentHeaderStatus(session(true), live({ kind: "message" }), true, true, { replyingTo: null }), "正在回复消息", "an unknown sender is not guessed");
+  assert.equal(agentHeaderStatus(session(true, { id: "r1", state: "running" }), live({ kind: "run", id: "r1" }), true, true, { taskTitle: "做表格" }), "正在做任务「做表格」（Leader 派发）");
+  assert.equal(agentHeaderStatus(session(false), live(null, "idle", "completed"), true, true, { idleFor: "5 分钟" }), "空闲 · 已 5 分钟");
+  assert.equal(agentHeaderStatus(session(true), live({ kind: "message" }), true, true, { holdReason: "模型服务额度不足或欠费" }), "已暂停（模型服务额度不足或欠费）");
+  assert.equal(replyingPhrase("me"), "正在回复你的消息");
+  assert.equal(idleDuration(30_000), "刚刚");
+  assert.equal(idleDuration(5 * 60_000), "5 分钟");
+  assert.equal(idleDuration(3 * 3_600_000), "3 小时");
+  assert.equal(idleDuration(2 * 86_400_000), "2 天");
+  assert.equal(idleDuration(Number.NaN), "刚刚");
+});

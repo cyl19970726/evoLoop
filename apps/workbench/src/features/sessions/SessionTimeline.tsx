@@ -5,7 +5,7 @@
 // and the long poll come from useSessionTimeline and are kept as they were.
 import { senderClassLabel } from "./senderClassPresentation";
 import { nativeFailureLine } from "./nativeFailurePresentation";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowDown, FileText, Info, LoaderCircle, MessageCircle, Users } from "lucide-react";
 import type { SessionSnapshot } from "@evoloop/contracts/session-observation";
 import type { SessionMessageProcessing, SessionMessageRecord } from "@evoloop/contracts/session-messages";
@@ -28,7 +28,14 @@ import { useProjectQuery } from "../../shared/query";
 import { sessionMessageEntry } from "./sessionMessageEntry";
 import { useSessionTimeline } from "./useSessionTimeline";
 import { ActorIdentifiers } from "../../shared/ui/ActorIdentifiers";
-import { settleEndedTools, workspaceReadingGroups, workspaceReadingOrder } from "./workspaceTimelineModel";
+import { settleEndedTools, workspaceReadingGroups } from "./workspaceTimelineModel";
+import { buildRounds, lastReplyId, roundEntries, timelineRows, type Round } from "./timelineRounds";
+import { useMessageFacts } from "./useMessageFacts";
+import { CoordinationGroup, CoordinationLine } from "./CoordinationLine";
+import { RoundTimes } from "./RoundTimes";
+import { runSourceLabel, sentAndStarted, type SentStarted } from "./roundPresentation";
+import { replyingPhrase } from "./sessionStatusPresentation";
+import { api } from "../../shared/api";
 import {
   elapsedText, entryStateLabel, isFailedEntry, toolStepKind, liveStatusText, pinnedToolIds, planExplanation, planSteps, recordLabel, toolDetailReason, toolGroupStatus, toolGroupSummary,
   entryAuthorText, reasoningSourceLabel, toolLabel, toolStepState, toolStepText, turnLabel, turnReasoningTokensText, turnSummaries,
@@ -53,6 +60,21 @@ function readingPosition(node: HTMLElement, follow: boolean): ReadingPosition {
     offset: entry ? entry.getBoundingClientRect().top - top : 0,
     viewportTop: entry?.getBoundingClientRect().top ?? null, follow };
 }
+/**
+ * Opening an agent shows its last reply from its beginning, with the line that says where the round came from just above it
+ * (the round's source when that is near, else a little context). Without any reply the view stays at the end, as before.
+ */
+function landOnLastReply(node: HTMLElement) {
+  const reply = node.querySelector<HTMLElement>("[data-last-reply]");
+  if (!reply) { node.scrollTop = node.scrollHeight; return; }
+  const box = node.getBoundingClientRect();
+  let source: Element | null = reply.previousElementSibling;
+  while (source && !source.hasAttribute("data-round-source")) source = source.previousElementSibling;
+  const replyTop = reply.getBoundingClientRect().top - box.top;
+  const sourceTop = source ? source.getBoundingClientRect().top - box.top : null;
+  const wanted = sourceTop !== null && replyTop - sourceTop < node.clientHeight * .6 ? sourceTop - 12 : replyTop - 48;
+  node.scrollTop += wanted;
+}
 function restorePosition(node: HTMLElement, prior: ReadingPosition) {
   const entry = [...node.querySelectorAll<HTMLElement>("[data-workspace-entry]")].find(item => item.dataset.workspaceEntry === prior.id);
   node.scrollTop = prior.follow ? node.scrollHeight : entry ? node.scrollTop + entry.getBoundingClientRect().top -
@@ -62,6 +84,7 @@ function restorePosition(node: HTMLElement, prior: ReadingPosition) {
 const replyProse = cn(readingProse, "[&_:is(h2,h3)]:mt-5 [&_:is(h2,h3)]:text-body [&_:is(h4,h5,h6)]:mt-4");
 /** Small text actions under an entry (详情、消息详情、查看来源): Button variant="link" at caption size. */
 const linkButton = "text-caption";
+
 
 /** Ticks once a second while `active`, for the live status line's elapsed time. */
 function useNow(active: boolean): number {
@@ -131,9 +154,30 @@ function ToolGroup({ entries, scope, context, sessionKey, mayReadOriginal }: { e
     })} />;
 }
 
-function TimelineEntry({ item, context, title, taskTitle, sessionKey, target, identity, taskHref, onDetail, onMessage, onExpanded }: {
+/** The agent's answer to a saved message, from the message list, for a round whose Turn the timeline has not shown. */
+function ReplyRecord({ id, reply, title, sessionKey, roleSeed, lastReply, projectId, onFull }: { id: string; reply: { body: string; truncated: boolean; at: string | null }; title: string; sessionKey: string; roleSeed: string; lastReply: boolean; projectId: string; onFull(): void }) {
+  return <article aria-label={title} className="flex min-w-0 gap-3" data-workspace-entry={id} data-reply-record="" {...(lastReply ? { "data-last-reply": "" } : {})}>
+    <AgentAvatar seed={sessionKey} roleSeed={roleSeed} size={26} className="mt-0.5" />
+    <div className="min-w-0 flex-1">
+      <header className="mb-1 flex flex-wrap items-center gap-x-2 text-caption text-muted-foreground"><strong className="font-medium text-text-secondary">{title}</strong>{reply.at && <time dateTime={reply.at}>{date(reply.at)}</time>}</header>
+      <AgentMessage className={replyProse}><MarkdownBody source={reply.body} identity={`workspace-${id}`} projectId={projectId} topHeading={3} /></AgentMessage>
+      {reply.truncated && <footer className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-caption"><Button variant="link" className={linkButton} onClick={onFull}>读取完整回复</Button></footer>}
+    </div>
+  </article>;
+}
+
+function RunStrip({ id, turnId, label, at, href }: { id: string; turnId: string | null; label: string; at: string | null; href: string | null }) {
+  return <article className="workspace-system-strip flex flex-wrap items-center gap-x-2 gap-y-1 self-center rounded-full bg-muted px-3 py-1.5 text-caption text-text-secondary" data-workspace-entry={id} data-round-source="" data-turn-id={turnId ?? undefined}>
+    <FileText size={14} aria-hidden="true" /><strong className="font-medium text-foreground">{label}</strong>
+    {at && <time dateTime={at}>{date(at)}</time>}
+    {href && <a className="text-primary hover:underline" href={href}>查看任务与指令</a>}
+  </article>;
+}
+
+function TimelineEntry({ item, context, title, sessionKey, target, identity, taskHref, times, replyAt, lastReply, onDetail, onMessage, onExpanded }: {
   item: WorkspaceEntry; context: MutationContext; title: string; sessionKey: string; target: SessionTarget; identity: SessionIdentity | null;
-  taskTitle: string | null;
+  /** An input's send time and processing start; a reply's time is `replyAt`. */
+  times: SentStarted | null; replyAt: { at: string; fromTurnStart: boolean } | null; lastReply: boolean;
   taskHref(taskId: string): string;
   onDetail(entry: WorkspaceEntry): void; onMessage(id: string): void; onExpanded?(entry: WorkspaceEntry): void;
 }) {
@@ -166,20 +210,19 @@ function TimelineEntry({ item, context, title, taskTitle, sessionKey, target, id
   const expandedBody = item.kind === "message" && fullText && item.state !== "running" && fullText.body.startsWith(item.body) ? fullText : null;
   const body = expandedBody?.body ?? (item.kind === "tool" ? toolStepText(item) : item.body);
   const runHref = item.origin?.kind === "run" && item.origin.taskId ? `${taskHref(item.origin.taskId)}${taskHref(item.origin.taskId).includes("?") ? "&" : "?"}run=${encodeURIComponent(item.origin.id)}` : null;
-  if (dispatched && item.origin?.taskId) return <article className="workspace-system-strip flex flex-wrap items-center gap-x-2 gap-y-1 self-center rounded-full bg-muted px-3 py-1.5 text-caption text-text-secondary" data-workspace-entry={item.id} data-turn-id={item.turnId ?? undefined}>
-    <FileText size={14} aria-hidden="true" /><strong className="font-medium text-foreground">系统派发 · 本轮任务</strong><span>来自任务运行 · {taskTitle || "任务标题待核对"}</span>
-    <a className="text-primary hover:underline" href={runHref!}>查看任务与指令</a>
-  </article>;
   const failedInput = item.kind === "message" && item.role === "input" && ["failed", "unknown", "interrupted", "declined"].includes(item.state);
   const stateTag = item.kind === "message" && item.role === "input" && ["pending", "running", "failed", "unknown", "interrupted", "declined"].includes(item.state)
-    ? <span className={cn("workspace-input-state rounded-full px-2 py-px text-caption", failedInput ? "bg-danger-soft text-destructive" : "bg-field text-text-secondary")}>{item.state === "pending" ? (item.kind === "message" && grantBlockText(item.blockedReason) !== null ? "受阻：缺少消息授权" : "排队中") : entryStateLabel[item.state]}</span> : null;
+    ? <span className={cn("workspace-input-state rounded-full px-2 py-px text-caption", failedInput ? "bg-danger-soft text-destructive" : "bg-field text-text-secondary")}>{item.state === "pending" ? (item.kind === "message" && grantBlockText(item.blockedReason) !== null ? "受阻：缺少消息授权" : "排队中") : item.state === "running" && mine ? replyingPhrase("me") : entryStateLabel[item.state]}</span> : null;
   const actions = <>
     {(expandedBody?.truncated ?? item.truncated) && <Button variant="link" className={linkButton} disabled={bodyBusy} onClick={() => void expandBody()}>{bodyBusy ? "读取完整内容中…" : `读取完整${assistant ? "回复" : "内容"}`}</Button>}
     {messageId && <Button variant="link" className={linkButton} onClick={() => onMessage(messageId)}>消息详情</Button>}
     {runHref && <a className="text-caption text-primary hover:underline" href={runHref}>查看来源任务</a>}
     {!messageId && item.nativeItemId && !mine && <Button variant="link" className={linkButton} onClick={() => onDetail(item)}>查看来源</Button>}
   </>;
-  const time = item.occurredAt ? <time dateTime={item.occurredAt}>{date(item.occurredAt)}</time> : null;
+  const input = item.kind === "message" && item.role === "input";
+  const time = input ? (times ? <RoundTimes times={times} /> : item.occurredAt ? <time dateTime={item.occurredAt}>{date(item.occurredAt)}</time> : null)
+    : replyAt ? <time dateTime={replyAt.at}>{replyAt.fromTurnStart ? "本轮开始 " : ""}{date(replyAt.at)}</time>
+      : item.occurredAt ? <time dateTime={item.occurredAt}>{date(item.occurredAt)}</time> : null;
   // A plan the native source wrote as numbered steps folds into one line; the running turn's plan is also pinned above the composer.
   const steps = item.kind === "plan" ? planSteps(item.body) : null;
   if (item.kind === "plan" && steps) {
@@ -192,11 +235,11 @@ function TimelineEntry({ item, context, title, taskTitle, sessionKey, target, id
     </article>;
   }
   const stale = item.freshness === "stale" && <span className="workspace-stale">上次观察</span>;
-  if (mine) return <article aria-label="我发出的消息" className="flex flex-col items-end gap-1 self-end" data-workspace-entry={item.id} data-turn-id={item.turnId ?? undefined}>
-    <MessageBubble footer={<span className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">{stateTag}{time}{stale}{actions}</span>}>{body || "（没有可公开的正文）"}</MessageBubble>
+  if (mine) return <article aria-label="我发出的消息" className="flex flex-col items-end gap-1 self-end" data-workspace-entry={item.id} data-round-source="" data-turn-id={item.turnId ?? undefined}>
+    <MessageBubble footer={<span className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1"><span>你的消息</span>{stateTag}{time}{stale}{actions}</span>}>{body || "（没有可公开的正文）"}</MessageBubble>
     {bodyError && <p role="alert" className="text-caption text-destructive">{bodyError}</p>}
   </article>;
-  return <article aria-label={label} className={cn("flex min-w-0 gap-3", item.kind !== "message" && "text-small")} data-workspace-entry={item.id} data-turn-id={item.turnId ?? undefined}>
+  return <article aria-label={label} className={cn("flex min-w-0 gap-3", item.kind !== "message" && "text-small")} data-workspace-entry={item.id} data-turn-id={item.turnId ?? undefined} {...(input ? { "data-round-source": "" } : {})} {...(lastReply ? { "data-last-reply": "" } : {})}>
     {assistant ? <AgentAvatar seed={sessionKey} roleSeed={title} size={26} className="mt-0.5" />
       : <span className="mt-0.5 flex size-[26px] shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground" aria-hidden="true">{item.author.kind === "actor" ? <Users size={14} /> : <Info size={14} />}</span>}
     <div className="min-w-0 flex-1">
@@ -293,15 +336,33 @@ function MessageInspector({ id, context, snapshot, onApplied }: { id: string; co
   </div>;
 }
 
-export function SessionTimeline({ context, snapshot, onApplied, taskHref, refresh = 0, reauthorizeVersion = 0, progress = null, waitingTurnIds, composerFacts = [], children }: {
-  context: MutationContext; snapshot: SessionSnapshot; onApplied(): void; taskHref(taskId: string): string; refresh?: number; reauthorizeVersion?: number;
+export function SessionTimeline({ context, snapshot, onApplied, taskHref, titleOf: knownTitleOf, refresh = 0, reauthorizeVersion = 0, progress = null, waitingTurnIds, composerFacts = [], children }: {
+  context: MutationContext; snapshot: SessionSnapshot; onApplied(): void; taskHref(taskId: string): string; titleOf?(taskId: string): string | null; refresh?: number; reauthorizeVersion?: number;
   progress?: NativeProgressView | null; waitingTurnIds?: ReadonlySet<string>; composerFacts?: string[]; children?: ReactNode;
 }) {
   const timeline = useSessionTimeline(context.token, context.projectId, context.principal.actorId, snapshot.session.key, refresh, reauthorizeVersion);
   const capability = sessionMessageEntry(snapshot.session.kind, snapshot.session.capabilities);
-  const items = useMemo(() => settleEndedTools(workspaceReadingOrder(timeline.entries, timeline.pending), timeline.turns), [timeline.entries, timeline.pending, timeline.turns]);
+  const settledEntries = useMemo(() => settleEndedTools(timeline.entries, timeline.turns), [timeline.entries, timeline.turns]);
+  // Message ids the page shows, so the message list is read far enough to tell who sent each and what was answered.
+  const wantedMessages = useMemo(() => [...new Set([...settledEntries, ...timeline.pending].flatMap(entry => entry.origin?.kind === "message" ? [entry.origin.id] : []))], [settledEntries, timeline.pending]);
+  const activeId = timeline.live?.activeTurnId ?? "";
+  const facts = useMessageFacts(context.projectId, snapshot.session.key, wantedMessages, timeline.loaded && !timeline.denied, `${settledEntries.length}:${timeline.pending.length}:${timeline.turns.length}:${activeId}`);
+  const rounds = useMemo(() => buildRounds(settledEntries, timeline.pending, timeline.turns, { messages: facts.messages, me: context.principal.actorId }),
+    [settledEntries, timeline.pending, timeline.turns, facts.messages, context.principal.actorId]);
+  const items = useMemo(() => roundEntries(rounds), [rounds]);
+  const rows = useMemo(() => timelineRows(rounds), [rounds]);
+  const lastReply = useMemo(() => lastReplyId(rounds), [rounds]);
+  // Titles of the Tasks the rounds are for: what the page already knows, then one read for the rest (the newest few).
+  const unknownTasks = useMemo(() => [...new Set(rounds.flatMap(round => round.taskId && !knownTitleOf?.(round.taskId) && round.taskId !== snapshot.currentWork?.id ? [round.taskId] : []))].slice(-12).sort(), [rounds, knownTitleOf, snapshot.currentWork?.id]);
+  const taskFacts = useProjectQuery(context.projectId, ["round-task-titles", ...unknownTasks], async () => {
+    const settled = await Promise.allSettled(unknownTasks.map(id => api().leaderTask(context.projectId, id)));
+    const titles: Record<string, string> = {};
+    settled.forEach((result, index) => { if (result.status === "fulfilled" && result.value.taskId === unknownTasks[index]) titles[unknownTasks[index]!] = result.value.title; });
+    return titles;
+  }, { enabled: unknownTasks.length > 0 && !timeline.denied, retry: false, keepPrevious: true });
+  const titleOf = (taskId: string): string | null => snapshot.currentWork?.id === taskId ? snapshot.currentWork.title : knownTitleOf?.(taskId) ?? taskFacts.data?.[taskId] ?? null;
+  const taskLink = (taskId: string, runId: string) => `${taskHref(taskId)}${taskHref(taskId).includes("?") ? "&" : "?"}run=${encodeURIComponent(runId)}`;
   const grantNotice = useMemo(() => grantBlockedNotice(items), [items]);
-  const groups = useMemo(() => workspaceReadingGroups(items), [items]);
   const summaries = useMemo(() => turnSummaries(items, timeline.turns, snapshot.results, waitingTurnIds), [items, timeline.turns, snapshot.results, waitingTurnIds]);
   const [inspector, setInspector] = useState<{ entry: WorkspaceEntry } | { messageId: string } | null>(null);
   const inspectorTrigger = useRef<HTMLElement | null>(null);
@@ -317,10 +378,13 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, refres
   const cacheGeneration = useRef(viewCacheGeneration);
   const scope = `${context.token}\0${context.projectId}\0${context.principal.actorId}\0${snapshot.session.key}`;
   const historyFill = useRef({ scope, count: 0, busy: false });
+  /** Opening an agent lands on its last reply once; a saved reading position (coming back from a Task) wins. */
+  const landing = useRef(false);
   useLayoutEffect(() => {
     historyFill.current = { scope, count: 0, busy: false };
     cacheGeneration.current = viewCacheGeneration;
     const saved = readingPositions.get(scope) ?? null;
+    landing.current = saved === null;
     restore.current = saved; follow.current = saved?.follow ?? true;
     inspectorTrigger.current = null; setInspector(null); setNearBottom(saved?.follow ?? true);
   }, [scope]);
@@ -346,11 +410,20 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, refres
     if (!node) return;
     if (restore.current && timeline.loaded && !timeline.moreBusy && items.length) {
       restorePosition(node, restore.current); restore.current = null;
+    } else if (landing.current && timeline.loaded && facts.settled && !timeline.moreBusy) {
+      // Wait for the message list too: it adds the replies and folds the Leader's lines, which moves everything.
+      if (timeline.error || timeline.denied) landing.current = false;
+      else if (items.length) {
+        landing.current = false; anchor.current = null;
+        landOnLastReply(node);
+        follow.current = node.scrollHeight - node.scrollTop - node.clientHeight < 90; setNearBottom(follow.current);
+        if (!follow.current) readingPositions.set(scope, readingPosition(node, false));
+      }
     } else if (anchor.current && !timeline.moreBusy) {
       restorePosition(node, anchor.current);
       anchor.current = null;
     } else if (!anchor.current && follow.current) node.scrollTop = node.scrollHeight;
-  }, [items, timeline.moreBusy, timeline.turns, timeline.loaded]);
+  }, [items, timeline.moreBusy, timeline.turns, timeline.loaded, facts.settled]);
   const more = async (keepLatest = false) => {
     const node = scroll.current;
     if (node) {
@@ -392,6 +465,39 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, refres
     const line = summaries.get(id);
     return line ? <TurnSummary key={`summary:${id}`} produced={line.produced} delivered={line.delivered} next={line.next} /> : null;
   };
+  const turnOf = (turnId: string | null) => turnId === null ? undefined : timeline.turns.find(turn => turn.id === turnId);
+  /** A reply's time: when the source gave one, else when the Turn finished (its last reply) or began, said as such. */
+  const replyTime = (round: Round, entry: WorkspaceEntry): { at: string; fromTurnStart: boolean } | null => {
+    if (entry.occurredAt) return { at: entry.occurredAt, fromTurnStart: false };
+    const turn = turnOf(round.turnId);
+    const last = [...round.body].reverse().find(item => item.kind === "message" && item.role === "assistant");
+    if (last?.id === entry.id && turn?.completedAt) return { at: turn.completedAt, fromTurnStart: false };
+    return turn?.startedAt ? { at: turn.startedAt, fromTurnStart: true } : null;
+  };
+  const entryView = (round: Round, entry: WorkspaceEntry, key = entry.id) => {
+    const input = entry.kind === "message" && entry.role === "input";
+    return <TimelineEntry key={key} item={entry} context={context} title={agentDisplayName(snapshot.session)} sessionKey={snapshot.session.key} target={snapshot.session.target} identity={snapshot.session.identity}
+      taskHref={taskHref} times={input ? sentAndStarted(round) : null} replyAt={input ? null : replyTime(round, entry)} lastReply={entry.id === lastReply}
+      onExpanded={timeline.replaceEntry} onDetail={detail => inspect({ entry: detail })} onMessage={messageId => inspect({ messageId })} />;
+  };
+  const bodyViews = (round: Round) => workspaceReadingGroups(round.body).map(group => group.kind === "reasoning"
+    ? [<ReasoningGroup key={`reasoning:${group.id}`} entries={group.entries} turn={timeline.turns.find(turn => turn.id === group.turnId)} context={context} />, summaryFor(group.entries.at(-1)!.id)]
+    : group.kind === "tools"
+      ? [<ToolGroup key={`tools:${group.id}`} entries={group.entries} scope={scope} context={context} sessionKey={snapshot.session.key} mayReadOriginal={mayReadOriginal} />, summaryFor(group.entries.at(-1)!.id)]
+      : [entryView(round, group.entry), summaryFor(group.entry.id)]);
+  const renderRound = (round: Round) => {
+    const { source, input } = round;
+    const head = source.kind === "run" && (input?.origin?.taskId ?? source.taskId) !== null
+      ? <RunStrip key={`source:${round.key}`} id={input?.id ?? round.key} turnId={round.turnId} label={runSourceLabel(source.by, titleOf(source.taskId ?? input!.origin!.taskId!))}
+        at={round.startedAt ?? round.at} href={taskLink(source.taskId ?? input!.origin!.taskId!, source.runId)} />
+      : source.kind === "message" && source.from === "leader" && input
+        ? <CoordinationLine key={`source:${round.key}`} round={round} projectId={context.projectId} titleOf={titleOf} taskHref={taskHref} onMessage={messageId => inspect({ messageId })} />
+        : input ? entryView(round, input, `source:${round.key}`) : null;
+    const reply = round.replyRecord;
+    return <Fragment key={round.key}>{head}{input && summaryFor(input.id)}{bodyViews(round)}
+      {reply && <ReplyRecord key={`reply:${round.key}`} id={`reply:${round.key}`} reply={reply} title={agentDisplayName(snapshot.session)} sessionKey={snapshot.session.key}
+        roleSeed={snapshot.session.title} lastReply={`reply:${round.key}` === lastReply} projectId={context.projectId} onFull={() => round.messageId && inspect({ messageId: round.messageId })} />}</Fragment>;
+  };
   const readingScope = <details className="workspace-reading-scope text-caption text-muted-foreground">
     <summary className="w-fit cursor-pointer hover:text-foreground">消息怎样处理与读取范围</summary>
     <div className="mt-1.5 flex flex-col gap-1">
@@ -420,12 +526,10 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, refres
     }}>
       {(timeline.nextCursor || timeline.messagesCursor) && <Button variant="ghost" size="compact" className="h-auto self-center px-3 py-1 text-caption font-normal text-primary hover:bg-accent hover:text-primary disabled:text-muted-foreground disabled:opacity-100" disabled={timeline.moreBusy || timeline.reconciling} onClick={() => void more()}>{timeline.reconciling ? "正在校准历史…" : timeline.moreBusy ? "正在读取更早内容…" : "加载更早的消息与活动"}</Button>}
       {!timeline.loaded && <p className="flex items-center gap-2 text-small text-muted-foreground" role="status"><LoaderCircle size={16} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />正在读取对话…</p>}
-      {timeline.loaded && !timeline.error && !groups.length && !children && !activeTurn && <div className="session-conversation-empty flex flex-col items-center gap-1.5 py-10 text-center text-small text-muted-foreground"><MessageCircle size={25} aria-hidden="true" /><strong className="text-body font-medium text-foreground">{timeline.page?.partial ? "当前来源尚未提供可读的活动" : "从这里开始沟通"}</strong><span>{timeline.page?.partial ? "这不代表原来没有历史记录，可在读取范围中查看原因。" : "发送消息后，这个智能体的回复与工具活动会连续显示在这里。"}</span></div>}
-      {groups.map(group => group.kind === "reasoning"
-        ? [<ReasoningGroup key={`reasoning:${group.id}`} entries={group.entries} turn={timeline.turns.find(turn => turn.id === group.turnId)} context={context} />, summaryFor(group.entries.at(-1)!.id)]
-        : group.kind === "tools"
-        ? [<ToolGroup key={`tools:${group.id}`} entries={group.entries} scope={scope} context={context} sessionKey={snapshot.session.key} mayReadOriginal={mayReadOriginal} />, summaryFor(group.entries.at(-1)!.id)]
-        : [<TimelineEntry key={group.entry.id} item={group.entry} context={context} title={agentDisplayName(snapshot.session)} taskTitle={snapshot.currentWork && group.entry.origin?.taskId === snapshot.currentWork.id ? snapshot.currentWork.title : null} sessionKey={snapshot.session.key} target={snapshot.session.target} identity={snapshot.session.identity} taskHref={taskHref} onExpanded={timeline.replaceEntry} onDetail={entry => inspect({ entry })} onMessage={messageId => inspect({ messageId })} />, summaryFor(group.entry.id)])}
+      {timeline.loaded && !timeline.error && !rows.length && !children && !activeTurn && <div className="session-conversation-empty flex flex-col items-center gap-1.5 py-10 text-center text-small text-muted-foreground"><MessageCircle size={25} aria-hidden="true" /><strong className="text-body font-medium text-foreground">{timeline.page?.partial ? "当前来源尚未提供可读的活动" : "从这里开始沟通"}</strong><span>{timeline.page?.partial ? "这不代表原来没有历史记录，可在读取范围中查看原因。" : "发送消息后，这个智能体的回复与工具活动会连续显示在这里。"}</span></div>}
+      {rows.map(row => row.kind === "coordination-group"
+        ? <CoordinationGroup key={row.id} rounds={row.rounds} projectId={context.projectId} titleOf={titleOf} taskHref={taskHref} onMessage={messageId => inspect({ messageId })} />
+        : renderRound(row.round))}
       {activeTurn && (live
         ? <LiveStatusLine className="workspace-turn-state" avatar={<AgentAvatar seed={snapshot.session.key} roleSeed={snapshot.session.title} size={20} />}
           text={liveStatusText(currentTool, replying)} elapsed={elapsedText(activeTurn.startedAt, now) ?? undefined}>
