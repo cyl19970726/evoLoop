@@ -15,6 +15,7 @@ import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { ResponsibleName, RoleName } from "../../shared/ui/RecordName";
 import { readOutcome, selectAttention, type ProjectOutcome } from "./contextPresentation";
 import { MilestonesBlock } from "./MilestonesBlock";
+import { dueCell, stageName, useStageProjection } from "../stages";
 import { readOverviewParam, writeOverviewParam } from "./overviewAddress";
 
 interface ContextSnapshot {
@@ -126,15 +127,26 @@ export function ProjectContext({ token, projectId, refresh, active }: { token: s
     <span aria-hidden="true" className="[&_svg]:size-4">{icon}</span><h2 className="text-label font-semibold text-foreground">{text}</h2>{link}
   </div>;
   const choose = (id: string) => { setSelection({ scope, id }); if (active) writeOverviewParam("stage", id); };
+  // A stage is named by its short name and due date (the stage projection); one without a short name keeps the first line of its text.
+  const projection = useStageProjection(projectId, active);
+  const projected = new Map((projection.data?.stages ?? []).map(entry => [entry.id, entry]));
+  const nameOf = (item: Stage) => { const known = projected.get(item.id); return stageName(known ?? { id: item.id, shortName: null }, item.deliverable); };
+  const dueOf = (item: Stage) => { const known = projected.get(item.id); return known?.dueOn ? dueCell(known.dueOn).text : null; };
   const stageButton = (item: Stage) => <Button variant="row" key={item.id} aria-pressed={stage?.id === item.id} onClick={() => choose(item.id)}
     className="rounded-lg px-3 py-2 text-small aria-pressed:bg-accent aria-pressed:font-semibold aria-pressed:text-foreground">
-    <span className="line-clamp-2">{item.deliverable}</span>
+    <span className="line-clamp-2" title={item.deliverable}>{nameOf(item)}{dueOf(item) ? ` · ${dueOf(item)}` : ""}</span>
   </Button>;
+  // The left list: one line per stage, the stage the service calls 当前 drawn as a selected item; a click lands on that stage's row in 目标与阶段.
+  const railLink = (item: Stage) => <a key={item.id} href={`${href(projectId, "journey")}?stage=${item.id}`} data-rail-stage={item.id}
+    aria-current={projection.data?.currentStageId === item.id ? "true" : undefined}
+    className="selected-mark block rounded-lg px-3 py-2 text-small text-text-secondary hover:bg-selected hover:text-foreground focus-visible:shadow-[var(--focus-ring)] outline-none">
+    <span className="line-clamp-1" title={item.deliverable}>{nameOf(item)}{dueOf(item) ? ` · ${dueOf(item)}` : ""}</span>
+  </a>;
   return <section data-ui="" className="project-context flex flex-col gap-3" aria-label="目标、当前取舍与使用反馈" aria-busy={reading}>
     {stages.length > 1 && <ContextRailContent>
       <nav aria-label="正在推进的阶段" className="flex flex-col gap-0.5 pt-2">
         <span className="px-3 pb-1.5 pt-2 text-caption text-muted-foreground">正在推进的阶段 · {stages.length}</span>
-        {stages.map(stageButton)}
+        {stages.map(railLink)}
       </nav>
     </ContextRailContent>}
     <section className={cn(card, "overview-goal")} aria-label="当前目标">
@@ -145,7 +157,7 @@ export function ProjectContext({ token, projectId, refresh, active }: { token: s
       {stage && stages.length > 1 && <label className="flex flex-col gap-1">
         <span className={muted}>切换阶段 · 共 {stages.length} 个正在推进</span>
         <Select className="w-full" value={stage.id} onChange={event => choose(event.target.value)}>
-          {stages.map(item => <option key={item.id} value={item.id}>{item.deliverable}</option>)}
+          {stages.map(item => <option key={item.id} value={item.id}>{nameOf(item)}</option>)}
         </Select>
       </label>}
       {stage ? <dl className="grid grid-cols-2 gap-x-3 gap-y-1 compact:gap-3">
