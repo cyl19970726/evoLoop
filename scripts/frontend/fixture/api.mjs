@@ -145,6 +145,8 @@ export function answer(path, params) {
     const sub = match[2];
     if (!sub) return ok(agents.snapshot(name));
     if (sub === "/timeline") return ok(agents.timeline(name));
+    const itemRead = /^\/timeline\/items\/([^/]+)$/.exec(sub ?? "");
+    if (itemRead) { const found = agents.timelineItem(name, params.get("turnId"), decodeURIComponent(itemRead[1])); return found ? ok(found) : missing("没有这条内容"); }
     if (sub === "/timeline/updates") return ok({ cursor: "3", resetRequired: false, entries: [], turns: [], freshness: "live", limitations: [] });
     if (sub === "/messages") return ok({ items: [], nextCursor: null, metadata: agents.directory().metadata });
     if (sub === "/profile") return ok(agents.observedSession(name).profile);
