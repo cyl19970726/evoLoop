@@ -553,6 +553,11 @@ async function exerciseInternalRework(result: "failed" | "notUsed") {
   assert.equal(secondRun.taskRevisionId, (await currentTask(taskId)).currentRevisionId);
   assert.match(secondRun.input, /返工/);
   assert.ok(secondRun.input.includes(firstDeliveryId) && secondRun.input.includes(rework[0]!.reworkObservationId!) && secondRun.input.includes(`The fixed result was returned as ${result}`));
+  // Task c58b83e2: the timeline reads this Run's source from the line entry — a rework, naming the return opinion and the delivery it came from.
+  const dispatch = (await uow.read(projectId, reader => reader.sessionLines!.listRunDispatches!([secondRun.id, firstRunId]))).get(secondRun.id)!;
+  assert.equal(dispatch.source, "rework");
+  assert.equal(dispatch.reworkObservationId, rework[0]!.reworkObservationId);
+  assert.equal(dispatch.reworkDeliveryId, firstDeliveryId);
   for (const item of await workflow.listTaskRevisions(lead, projectId, taskId)) assert.ok(!secondRun.input.includes(item.revision.id), "the Run instruction names no Task revision");
   assert.equal((await currentTask(taskId)).state, "in_progress");
   assert.ok(live.id);

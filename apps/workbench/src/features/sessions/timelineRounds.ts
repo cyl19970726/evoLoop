@@ -4,8 +4,9 @@
 // Rounds from both sources are merged into one sequence by time; inside a Turn the native order is kept.
 //
 // Nothing here reads the network or the DOM: the page hands in what the timeline and the saved-message list returned.
-import type { WorkspaceEntry, WorkspaceMessage, WorkspaceTurn } from "@evoloop/contracts/session-timeline";
+import type { RunDispatch, WorkspaceEntry, WorkspaceMessage, WorkspaceTurn } from "@evoloop/contracts/session-timeline";
 import type { SessionConversationItem } from "../../shared/sessionClient";
+import { dispatchLabel } from "./roundPresentation";
 import { queuedMessageSummary } from "./queuedMessagePresentation";
 
 /** One saved message as the message list returns it: sender class, send time, and how it was processed. */
@@ -16,7 +17,7 @@ export type MessageFrom = "me" | "leader" | "other" | "unknown";
 
 export type RoundSource =
   /** The Run for a Task started this Turn. `by` is who dispatched it: a person who dispatched it themselves, else the Leader's line. */
-  | { kind: "run"; runId: string; taskId: string | null; by: "me" | "leader" }
+  | { kind: "run"; runId: string; taskId: string | null; dispatch: RunDispatch | null; label: string }
   | { kind: "message"; messageId: string; from: MessageFrom; classLabel: string | null }
   | { kind: "none" };
 
@@ -92,7 +93,7 @@ function sourceOf(turn: WorkspaceTurn | undefined, input: WorkspaceEntry | null,
   const origin = turn?.origin ?? input?.origin ?? null;
   if (origin?.kind === "run") {
     // A Run is project dispatch even when the initiating actor is the reader (the Run record does not say who sent it as a person).
-    return { source: { kind: "run", runId: origin.id, taskId: origin.taskId, by: "leader" }, messageId: null, taskId: origin.taskId };
+    return { source: { kind: "run", runId: origin.id, taskId: origin.taskId, dispatch: origin.dispatch ?? null, label: dispatchLabel(origin.dispatch, me) }, messageId: null, taskId: origin.taskId };
   }
   const messageId = origin?.kind === "message" ? origin.id : input?.origin?.kind === "message" ? input.origin.id : null;
   if (messageId) {

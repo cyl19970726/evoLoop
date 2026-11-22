@@ -2,6 +2,18 @@
 import { actorId, agentKey, agents, ago, id, metadata, projectId, roles } from "./common.mjs";
 import { revisionIdOf, runIdOf, tasks } from "./work.mjs";
 
+/** How a line took a Run in (Task c58b83e2): the five sources the agent page words differently. `none` is a Run no entry names. */
+const entry = (source, who, extra = {}) => ({ source, actorId: who, viaController: who === "leader-codex-agent", scheduleId: null, scheduleTitle: null,
+  reworkObservationId: null, reworkDeliveryId: null, ...extra });
+export const dispatches = {
+  leader: entry("leader", "leader-codex-agent"),
+  proxy: entry("leader", "requirements-claude-agent"),
+  schedule: entry("schedule", "scheduler-actor", { scheduleId: id(880), scheduleTitle: "每日评估" }),
+  rework: entry("rework", "system", { reworkObservationId: id(881), reworkDeliveryId: id(882) }),
+  me: entry("leader", actorId),
+  none: null,
+};
+
 const capability = { available: true, reason: null };
 const unavailable = { available: false, reason: "当前不可用" };
 const observedRole = key => ({ ...roles[key], state: "active" });
@@ -29,7 +41,8 @@ export function observedSession(name) {
     kind: "owned", roles: [observedRole(a.role)], membership: "current", membershipReason: "verified", runtime: { provider: "codex", model: "gpt-6-sol" }, runtimeState: "ready",
     busy: a.busy, currentTask: task ? observedTask(task) : null,
     latestBusinessRun: name === "dev" ? { id: runIdOf(tasks.t2), taskId: tasks.t2.id, state: "running", updatedAt: ago(3),
-      source: { kind: "run", id: runIdOf(tasks.t2), revision: null, evidence: "project-record", href: "" } } : null,
+      source: { kind: "run", id: runIdOf(tasks.t2), revision: null, evidence: "project-record", href: "" },
+      ...(process.env.FIXTURE_HEADER_DISPATCH ? { dispatch: dispatches[process.env.FIXTURE_HEADER_DISPATCH] ?? null } : {}) } : null,
     lastProgressAt: ago(name === "dev" ? 3 : name === "verify" ? 12 : 60 * 5),
     capabilities: { observe: capability, send: { ...capability, mode: "owned-conversation" }, open: { ...unavailable, ref: null },
       interrupt: unavailable, close: unavailable },
@@ -69,7 +82,7 @@ export function snapshot(name) {
     metadata,
     nativeObservation: name === "dev" ? { projectId, sessionId: agents.dev.sessionId, threadId: "thread-dev", version: 4, observedAt: ago(1),
       lastEventAt: ago(1), freshness: "live", staleReason: null, status: "active",
-      currentTurn: { id: "turn-3", status: "inProgress", source: { kind: "run", runId: runIdOf(tasks.t2) } },
+      currentTurn: { id: "turn-3", status: "inProgress", source: { kind: "run", runId: runIdOf(tasks.t2), taskId: tasks.t2.id, taskRevisionId: tasks.t2.id, operationId: id(902), actorId: "leader-codex-agent" } },
       items: [{ id: "tool-a", kind: "commandExecution", name: "运行单元测试", status: "completed", summary: "48 项通过", truncated: false },
         { id: "tool-b", kind: "commandExecution", name: "构建工作台", status: "inProgress", summary: "正在构建", truncated: false }],
       plan: null, diff: null, usage: null } : null,
@@ -96,7 +109,16 @@ const tool = (key, name, summary, minutes, turnId, state = "completed") => ({ id
 
 export function timeline(name) {
   const key = agentKey(name);
-  const entries = name !== "dev" ? [] : [
+  // FIXTURE_ROUND_SOURCES=1: one Run round per source, for the screenshots of the five labels and the unread one.
+  const sourceRounds = Object.keys(dispatches).flatMap((variant, index) => {
+    const task = [tasks.t2, tasks.t3, tasks.t4, tasks.t6, tasks.t1, tasks.t8][index];
+    const run = { kind: "run", id: runIdOf(task), taskId: task.id, taskRevisionId: revisionIdOf(task), initiatingActorId: "leader-codex-agent", dispatch: dispatches[variant] };
+    return [{ id: `run-input-${variant}`, kind: "message", role: "input", phase: "unknown", body: "项目派发任务", clientId: null, state: "completed", turnId: `turn-${variant}`,
+      nativeItemId: `in-${variant}`, nativeKind: "userMessage", author: { kind: "actor", id: "leader-codex-agent", label: "leader-codex-agent" }, origin: run,
+      occurredAt: at(120 - index * 15), observedAt: at(120 - index * 15), freshness: "persisted", truncated: false },
+    assistant(`answer-${variant}`, `已接手「${task.title}」。`, 118 - index * 15, `turn-${variant}`)];
+  });
+  const entries = process.env.FIXTURE_ROUND_SOURCES ? sourceRounds : name !== "dev" ? [] : [
     message("m1", "任务列表的筛选要写进地址，返回时保留。先做这一项。", 95,
       { origin: { kind: "message", id: "m1", taskId: tasks.t2.id, taskRevisionId: revisionIdOf(tasks.t2), initiatingActorId: actorId } }),
     tool("tool-1", "读取需求总图", "读到第 1 版，共 4 节", 93, "turn-1"),
@@ -116,7 +138,7 @@ export function timeline(name) {
       assistant("answer-url", "参考：https://example.com/docs/chat-panel?tab=long#section 和 https://github.com/cyl19970726/evoLoop/pull/516，详见 www.example.org。\n\n```sh\nnpm run build && npm run test:unit\n```", 7, "turn-3"),
       { ...assistant("answer-long", longReply.slice(0, longReply.indexOf("const c = comp") + "const c = comp".length), 5, "turn-4"), truncated: true });
   }
-  return { sessionKey: key, sessionTitle: agents[name].title, entries, pending: [], turns: [], nextCursor: null, messagesCursor: null,
+  return { sessionKey: key, sessionTitle: agents[name].title, entries, pending: [], turns: process.env.FIXTURE_ROUND_SOURCES ? sourceRounds.filter(item => item.kind === "message" && item.role === "input").map(item => ({ id: item.turnId, state: "completed", startedAt: item.occurredAt, completedAt: item.occurredAt, origin: item.origin })) : [], nextCursor: null, messagesCursor: null,
     observedAt: ago(1), partial: false, limitations: [], unsupportedKinds: [],
     live: { cursor: "3", resetRequired: false, entries: [], turns: [], freshness: "live", limitations: [], activeTurnId: null },
     capabilities: { history: true, live: true, originalToolDetail: false, reason: null } };

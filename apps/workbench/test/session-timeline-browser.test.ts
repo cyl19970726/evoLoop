@@ -175,7 +175,7 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
           value = timelinePage(key, { entries: Array.from({ length: 10 }, (_, index) => timelineAssistant(`older-native-${index}`, `较早原生内容 ${index}`, {
             turnId: `old-turn-${index}`, occurredAt: new Date(Date.parse(stamp) - (10 - index) * 1000).toISOString(),
             ...(index === 0 ? { origin: { kind: "run" as const, id: "97000005-0000-4000-8000-000000000005",
-              taskId, taskRevisionId: taskId, initiatingActorId: "reader" } } : {}),
+              taskId, taskRevisionId: taskId, initiatingActorId: "reader", dispatch: { source: "leader", actorId: "leader-1", viaController: true, scheduleId: null, scheduleTitle: null, reworkObservationId: null, reworkDeliveryId: null } } } : {}),
           })), pending: [timelineMessage("native-page-pg-input", "原生分页携带的权威已保存输入", {
             turnId: "old-turn-0", origin: { kind: "message", id: "native-page-pg-input", taskId: null,
               taskRevisionId: null, initiatingActorId: "reader" },
@@ -202,7 +202,7 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
               { id: "historical-running-turn", state: "running", startedAt: stamp, completedAt: null, origin: null }],
             nextCursor: "native-1", messagesCursor: "messages-1", cursor: "1", liveEntries: [liveAnswer, ...longToolHistory, protectedTool],
             liveTurns: [{ id: "live-turn", state: "running", startedAt: stamp, completedAt: null,
-              origin: { kind: "run", id: "97000005-0000-4000-8000-000000000005", taskId, taskRevisionId: taskId, initiatingActorId: "reader" } }] });
+              origin: { kind: "run", id: "97000005-0000-4000-8000-000000000005", taskId, taskRevisionId: taskId, initiatingActorId: "reader", dispatch: { source: "leader", actorId: "leader-1", viaController: true, scheduleId: null, scheduleTitle: null, reworkObservationId: null, reworkDeliveryId: null } } }] });
         }
       } else if (url.pathname.endsWith("/timeline/updates")) {
         const key = decodeURIComponent(url.pathname.slice(`${root}/session-work/`.length, -"/timeline/updates".length));
@@ -984,7 +984,7 @@ test("revocation invalidates a held homepage, inspector and cache until an expli
       else if (url.pathname.endsWith("/timeline")) {
         latestReads++;
         const held = holdHomepage;
-        value = timelinePage(sessionKey, { entries: [timelineAssistant(held ? "stale-a" : "authorized", held ? "STALE_AUTHORIZED_A" : "CURRENT_AUTHORIZED_BODY"), timelineMessage("ordinary-own", "真正的本人普通消息"), timelineMessage("project-dispatch", "项目派发任务：保留固定来源", { turnId: "dispatch-turn", nativeItemId: "dispatch-item", nativeKind: "userMessage", origin: { kind: "run", id: "97000005-0000-4000-8000-000000000005", taskId, taskRevisionId: taskId, initiatingActorId: "reader" } }), protectedTool] });
+        value = timelinePage(sessionKey, { entries: [timelineAssistant(held ? "stale-a" : "authorized", held ? "STALE_AUTHORIZED_A" : "CURRENT_AUTHORIZED_BODY"), timelineMessage("ordinary-own", "真正的本人普通消息"), timelineMessage("project-dispatch", "项目派发任务：保留固定来源", { turnId: "dispatch-turn", nativeItemId: "dispatch-item", nativeKind: "userMessage", origin: { kind: "run", id: "97000005-0000-4000-8000-000000000005", taskId, taskRevisionId: taskId, initiatingActorId: "reader", dispatch: { source: "leader", actorId: "leader-1", viaController: true, scheduleId: null, scheduleTitle: null, reworkObservationId: null, reworkDeliveryId: null } } }), protectedTool] });
         if (held) { homepageHeld = true; await homepageGate; }
       } else if (url.pathname.endsWith("/recovery")) { status = 404; value = { message: "无恢复记录" }; }
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;

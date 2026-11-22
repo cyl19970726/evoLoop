@@ -33,6 +33,7 @@ import { nextWork, nowWork, type LineRead, type NextItem, type NowTiming } from 
 import { ActivityFeed, clearActivityDetails, type ActivityFilter } from "./ActivityFeed";
 import { SessionRecoveryOverview, SessionRecoveryResources } from "./SessionRecoveryObservation";
 import { checkedRecoveryView, type RecoveryRead } from "./recoveryPresentation";
+import { dispatchLabel } from "./roundPresentation";
 import { currentNativeRunId, currentWorkRelationLabel, idleSessionResult, idleDuration, latestSessionResult, agentHeaderStatus, replyingPhrase, sessionResultUseLabel, type HeaderFacts } from "./sessionStatusPresentation";
 import { shortClassLabel } from "./timelineRounds";
 import { NativeSessionPanel } from "./NativeSessionPanel";
@@ -368,6 +369,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
   const workedRunTaskId = session.latestBusinessRun?.taskId ?? null;
   const headerFacts: HeaderFacts = { replyingTo, holdReason: held ? holdCauseLabel(held) : null,
     taskTitle: workedRunTaskId ? titleOf(workedRunTaskId) : null,
+    dispatch: session.latestBusinessRun?.dispatch !== undefined ? dispatchLabel(session.latestBusinessRun.dispatch, context.principal.actorId) : null,
     idleFor: session.lastProgressAt && Number.isFinite(Date.parse(session.lastProgressAt)) ? idleDuration(Date.now() - Date.parse(session.lastProgressAt)) : null };
   const statusLabel = agentHeaderStatus(session, observation.progress, nativeReadCurrent && !observation.error, runtimeAvailable, headerFacts);
   const relationLabel = work ? currentWorkRelationLabel(work, session, recoveryRead.status === "ready" ? recoveryRead.view.gate?.phase : undefined) : null;

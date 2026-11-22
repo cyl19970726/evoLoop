@@ -7,6 +7,7 @@ import type { SessionIdentity } from "@evoloop/contracts/session-identity";
 import type { ObservedRole, ObservedSession, ObservedTask, SessionActivity, SessionActivityPage, SessionChanges,
   SessionDirectory, SessionObservationReader, SessionSnapshot, ObservedResource } from "@evoloop/contracts/session-observation";
 import { PgSessionAssignments } from "./session-assignments.js";
+import { readRunDispatches } from "./session-line.js";
 
 type Row = QueryResultRow;
 const iso = (v: Date | string | null | undefined): string | null => v ? new Date(v).toISOString() : null;
@@ -221,7 +222,9 @@ export class PgSessionObservation implements SessionObservationReader {
         model: (row.runtime.model ?? row.runtime.observed_model ?? null) as string | null } : null,
       runtimeState: row.runtime?.state ?? null, busy: row.kind === "owned" ? !!inFlight.rows[0]?.busy : null,
       currentTask: current ? this.task(current, current.relation) : null,
-      latestBusinessRun: run ? { id: run.run_id, taskId: run.task_id, state: run.state, updatedAt: iso(run.updated_at)!, source: this.source("run", run.run_id) } : null,
+      latestBusinessRun: run ? { id: run.run_id, taskId: run.task_id, state: run.state, updatedAt: iso(run.updated_at)!, source: this.source("run", run.run_id),
+        // One Session's own read looks the dispatch up; the directory's batch read leaves it out (no per-row query).
+        ...(prepared ? {} : { dispatch: (await readRunDispatches(this.client, this.projectId, [run.run_id])).get(run.run_id) ?? null }) } : null,
       lastProgressAt: run ? iso(run.updated_at) : null,
       capabilities: { observe: { available: true, reason: null },
         send,

@@ -65,7 +65,7 @@ test("a reply the record holds comes back to the round; one the timeline shows i
 test("a Run's Turn is a dispatch round; who sent a message comes from the record, then the protocol text, never from guesswork", () => {
   const run = timelineMessage("run-1", "", { turnId: "t1", nativeItemId: "i1", origin: { kind: "run", id: "run-1", taskId: "task-1", taskRevisionId: null, initiatingActorId: "leader-1" } });
   const [dispatch] = buildRounds([run, timelineAssistant("a1", "x", { turnId: "t1" })], [], [turn("t1", at(9), { kind: "run", id: "run-1", taskId: "task-1", taskRevisionId: null, initiatingActorId: "leader-1" })], facts());
-  assert.deepEqual(dispatch!.source, { kind: "run", runId: "run-1", taskId: "task-1", by: "leader" });
+  assert.deepEqual(dispatch!.source, { kind: "run", runId: "run-1", taskId: "task-1", dispatch: null, label: "来源待核对" }, "a Run no line entry names is not guessed to be anyone's");
   assert.equal(dispatch!.taskId, "task-1");
 
   const rounds = buildRounds([], [

@@ -7,12 +7,28 @@ export interface WorkspaceAuthor {
   id: string | null;
   label: string;
 }
+/**
+ * How the Session's line took a Run in (session_line_entry, matched by run id). `viaController` is true when the actor is the
+ * line's controller (the Leader); a person or another identity who queued it for the line is a different actor. Absent when no
+ * entry names the Run (older data): the reader then says the source is waiting to be checked, never a guess.
+ */
+export interface RunDispatch {
+  source: 'leader' | 'schedule' | 'rework';
+  actorId: string;
+  viaController: boolean;
+  scheduleId: string | null;
+  scheduleTitle: string | null;
+  reworkObservationId: string | null;
+  reworkDeliveryId: string | null;
+}
 export interface WorkspaceOrigin {
   kind: 'run' | 'message' | 'native';
   id: string;
   taskId: string | null;
   taskRevisionId: string | null;
   initiatingActorId: string | null;
+  /** For a Run origin: the line entry that dispatched it. Null: no entry names this Run. */
+  dispatch?: RunDispatch | null;
 }
 export interface WorkspaceOrderAnchor {
   kind: 'timeline-position' | 'native-item' | 'turn-boundary' | 'saved-message' | 'live-item';
