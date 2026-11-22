@@ -768,7 +768,10 @@ export function leaderWorkTaskFromRow(row: QueryResultRow, observedAt: string): 
     pendingImpactCount: int(row.pending_impact_count),
     queueHold: row.queue_hold ?? null,
     goal: row.goal_id ? { goalId: row.goal_id, outcome: row.goal_outcome } : null,
-    stage: row.stage_id ? { stageId: row.stage_id, deliverable: row.stage_deliverable } : null,
+    stage: row.stage_id ? { stageId: row.stage_id, deliverable: row.stage_deliverable,
+      shortName: String(row.stage_short_name ?? "").trim() || String(row.stage_deliverable ?? "").split("\n").map((line: string) => line.trim()).find(Boolean) || "未命名阶段",
+      dueOn: row.stage_due_on ? String(row.stage_due_on instanceof Date ? row.stage_due_on.toISOString().slice(0, 10) : row.stage_due_on).slice(0, 10) : null } : null,
+    stageOwnership: row.stage_id ? { state: "stage", reason: null } : row.has_stage_row ? { state: "none", reason: row.no_stage_reason ?? null } : { state: "unassigned", reason: null },
     plan: row.plan_version === null || row.plan_version === undefined ? null : {
       plannedStartAt: optionalIso(row.planned_start_at), dueAt: optionalIso(row.due_at),
       priority: row.priority === null || row.priority === undefined ? null : int(row.priority),
@@ -1002,7 +1005,8 @@ export async function readLeaderWorkTasks(db: Database, projectId: string, query
           WHERE pm.project_id=facts.project_id AND pm.delivery_id=facts.delivery_id),'[]'::jsonb) AS precondition_voided,
         (SELECT o.result FROM consumer_observation o WHERE o.project_id=facts.project_id AND o.delivery_id=facts.delivery_id
           AND o.observer=proposal.consumer ORDER BY o.sequence DESC LIMIT 1) AS consumer_own_result,
-        stage.stage_id,stage.deliverable AS stage_deliverable,
+        stage.stage_id,stage.deliverable AS stage_deliverable,sm.short_name AS stage_short_name,sm.due_on::text AS stage_due_on,
+        ts.task_id IS NOT NULL AS has_stage_row,ts.no_stage_reason,
         goal.goal_id,goal.outcome AS goal_outcome,
         COALESCE(dependencies.items,'[]'::jsonb) AS dependency_facts,
         CASE WHEN native_observation.session_id IS NULL THEN NULL ELSE
@@ -1022,7 +1026,9 @@ export async function readLeaderWorkTasks(db: Database, projectId: string, query
           AND r.revision_id=p.task_revision_id
         WHERE p.project_id=facts.project_id AND p.task_id=facts.task_id
         ORDER BY r.version DESC LIMIT 1) proposal ON true
-      LEFT JOIN project_stage stage ON stage.project_id=facts.project_id AND stage.stage_id=proposal.stage_id
+      LEFT JOIN task_stage ts ON ts.project_id=facts.project_id AND ts.task_id=facts.task_id
+      LEFT JOIN project_stage stage ON stage.project_id=facts.project_id AND stage.stage_id=ts.stage_id
+      LEFT JOIN stage_milestone sm ON sm.project_id=stage.project_id AND sm.stage_id=stage.stage_id
       LEFT JOIN project_goal goal ON goal.project_id=stage.project_id AND goal.goal_id=stage.goal_id
       LEFT JOIN session_native_observation native_observation ON
         native_observation.project_id=facts.project_id AND native_observation.session_id=facts.latest_run_session_id

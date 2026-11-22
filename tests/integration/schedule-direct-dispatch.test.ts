@@ -139,6 +139,8 @@ test("a direct schedule's Task is made without a triage notice, then appended to
   const made = await r.fire(1);
   assert.equal(made[0]?.state, "created");
   const taskId = await r.taskOfOccurrence(scheduleId);
+  // The schedule's Task is recorded as "not part of any stage (schedule routine)", not refused and not left unassigned.
+  assert.deepEqual((await r.pool.query("SELECT stage_id, no_stage_reason FROM task_stage WHERE task_id=$1", [taskId])).rows, [{ stage_id: null, no_stage_reason: "不属于阶段（日程例行）" }]);
   assert.deepEqual(await r.notices(taskId), [], "no triage notice for a Task that goes straight to a line");
   assert.deepEqual((await r.logOf(scheduleId)).map(row => row.state), ["pending"], "the intent was written with the Task: a restart before the append loses nothing");
   // Restart in between: a fresh dispatcher finishes what is pending.

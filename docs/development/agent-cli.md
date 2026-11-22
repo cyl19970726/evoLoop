@@ -89,6 +89,8 @@ npm run --silent cli -- operation "$OPERATION_ID" --project "$PROJECT_ID"
 
 工作起点可以是目标、Task、过程文档或现有材料，不要求先创建 Wiki、Role 或讨论。用 `task.create` 提供清楚的 title/content/acceptance/owner，系统一次保存 Task 与主正文；`context` 即使在 todo 时也读取固定主正文。
 
+**建任务必须选阶段。** `task.create` 要写 `stageId`，或 `noStage: true` 加 `noStageReason`；两样都缺或都写会被拒，信息同时写明两种选法。带阶段的 Task 仍要 `consumer`、`evidence`、`stopCondition`（缺则 `INCOMPLETE_PROPOSAL`）。日程与系列自动建的 Task 不被拒，记为“不属于阶段（日程例行）”。已有 Task 改归属用 `task.stage.set`（`taskId`、`stageId` 或 `null` 加 `noStageReason`、`reason`）：要 Task 写权限，不带 Task 版本，不增 Task 修订，待办、进行中、已交付可改，已关闭拒绝；`command schema task.stage.set` 可看字段。
+
 普通 Task 的 `task.create.timing` 可写 UTC 约定执行时点、IANA 时区和 `none`/`daily`。也可读 `tasks/TASK_ID/timing` 后以 `task.timing.set` 的当前 Task 版本和 timing 版本设置或改时；`task.timing.stop` 只停止以后复制。`task.update.repeatScope` 默认仅本次，显式 `this_and_future` 才把本次正文修订同步为以后模板；已开始或结束的任务可通过 `task.timing.set.scope=future` 单独改以后要求。每日复制要求已打开 `scheduling.enabled`，且私有配置 `scheduling.taskTimingGrants` 里有与项目、actor 和 owner Role 匹配的授权，不必为每个 Task ID 预设范围；此前按 `task-timing:<首次Task ID>` 精确授权的系列仍可继续管理。不会借用另一日程的 grant。CLI 以当前 `command schema task.create`、`task.timing.set`、`task.timing.stop` 的实际字段为准；复制规则见[接口合同](../architecture/contracts.md#普通-task-的一次与每日复制)，授权配置与时间读取见[运行接线手册](runtime-operations.md#4-普通-task-的每日复制)。
 
 若声明 `consumer`，须填精确匹配的消费者标识；Agent 消费者应在启动前通过 `session` 核实实际 `principal.actorId`，并确认它会亲自使用当前 Delivery、签署观察。不要填 roleId、显示名或身份解释；解释写入 `evidence` 或 `reason`。外部 human 消费者继续使用现有 reviewer attestation 合同。验收确实要求使用时，应同时声明 `consumer` 并设置 `useRequired: true`；此时 `task.close` 要求当前 Delivery 最新的声明消费者观察结果为 `used`，worker 完成、仅有 Delivery 或其他 actor 使用都不能替代。`command schema task.create` 和 `command schema task.update` 会显示这些字段说明。

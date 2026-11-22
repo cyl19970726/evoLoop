@@ -86,6 +86,10 @@ test("root due once, open A/B do not prevent independent B/C and tick is idempot
   assert.deepEqual(await tick(a).tick(projectId,first,actorId,roleId),[]);
   const b=(await tick(a).tick(projectId,second,actorId,roleId))[0]!;
   assert.equal(b.created,true);assert.notEqual(b.taskId,a);
+  // A series-made Task gets an explicit "not part of any stage" ownership row (milestones-design.md §6), with its history.
+  const bStage=(await pool.query(`SELECT stage_id,no_stage_reason,version FROM task_stage WHERE project_id=$1 AND task_id=$2`,[projectId,b.taskId])).rows;
+  assert.deepEqual(bStage.map(r=>[r.stage_id,r.no_stage_reason,r.version]),[[null,"不属于阶段（日程例行）",1]]);
+  assert.equal((await pool.query(`SELECT count(*)::int AS n FROM task_stage_history WHERE project_id=$1 AND task_id=$2`,[projectId,b.taskId])).rows[0].n,1);
   const bSource=(await pool.query(`SELECT current_revision_id FROM task WHERE project_id=$1 AND task_id=$2`,
     [projectId,b.taskId])).rows[0].current_revision_id;
   await queries(q=>q.set({type:"task.timing.set",projectId,operationId:randomUUID(),taskId:b.taskId,

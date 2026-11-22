@@ -24,6 +24,7 @@ export const commandPermissionPolicy = {
   "document.restore": document(true),
   "task.create": task(),
   "task.update": task(),
+  "task.stage.set": task(),
   "task.reviewBasis": task(true),
 
   "goal.create": task(),

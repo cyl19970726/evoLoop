@@ -243,6 +243,12 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
           ? <StatusTag tone={phaseStatus[projection.phase].tone} label={phaseStatus[projection.phase].label} />
           : <StatusTag tone={state.tone} label={state.label} />}
         <span className="text-label text-text-secondary">{responsibilityLabel}</span>
+        {leaderTask?.stageOwnership && <span className="text-label text-text-secondary" data-task-stage={leaderTask.stageOwnership.state}
+          title={leaderTask.stageOwnership.state === "none" ? leaderTask.stageOwnership.reason ?? undefined : undefined}>
+          {leaderTask.stageOwnership.state === "stage" && leaderTask.stage
+            ? <>阶段 <a className="text-primary hover:underline" href={`${href(projectId, "journey")}?stage=${encodeURIComponent(leaderTask.stage.stageId)}`}>{leaderTask.stage.shortName}</a></>
+            : leaderTask.stageOwnership.state === "none" ? "不属于阶段" : "未归属"}
+        </span>}
       </div>
     </header>
     {(leaderState === "loading" || leaderState === "checking") && <p className="text-caption text-muted-foreground" role="status">{leaderState === "checking" ? "任务或工作安排已在读取期间变化，正在重新核对…" : "正在核对本任务当前的进展与具体责任…"}</p>}
