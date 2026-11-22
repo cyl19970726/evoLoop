@@ -124,7 +124,7 @@ test("a pause reason reads as a sentence; the server's code and wording stay beh
   const known = lineSuspendReason(raw);
   assert.deepEqual([known.code, known.original], ["RECIPIENT_UNAVAILABLE", raw]);
   assert.match(known.text, /业务身份/); assert.doesNotMatch(known.text, /RECIPIENT_UNAVAILABLE|[A-Za-z]{2,}/, "no code or English in the sentence");
-  for (const code of ["RETRY_LIMIT", "MESSAGE_MISSING", "MESSAGE_UNDELIVERED", "CONFIRMATION_TIMEOUT", "CONFIRMATION_STALE"])
+  for (const code of ["RETRY_LIMIT", "MESSAGE_MISSING", "MESSAGE_UNDELIVERED", "CONFIRMATION_TIMEOUT", "CONFIRMATION_NOT_DELIVERED", "CONFIRMATION_STALE"])
     assert.doesNotMatch(lineSuspendReason(`${code}: whatever the pump wrote`).text.replaceAll("Leader", ""), /[A-Za-z]{2,}/, code);
   // A refused step's own Chinese message is kept; its code is still available, but not in the sentence.
   assert.deepEqual(lineSuspendReason("TASK_NOT_READY: 依赖的任务还没有通过验收"),

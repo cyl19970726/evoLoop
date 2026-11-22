@@ -81,7 +81,7 @@ test("late recovery from an older snapshot cannot overwrite failure or a newer r
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "恢复竞态会话" }).waitFor();
-  await page.getByRole("button", { name: "会话详情" }).click();
+  { const details = page.getByRole("button", { name: "会话详情" }); if (await details.getAttribute("aria-expanded") !== "true") await details.click(); const info = page.locator(".session-information").first(); if (await info.getAttribute("open") === null) await info.locator(":scope > summary").click(); }   // one switch for the right column: press it only when closed
   await waitCount("recoveryReads", 1); // Old recovery GET is still held.
 
   await page.evaluate('document.dispatchEvent(new Event("visibilitychange"));');

@@ -4,6 +4,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { WorkflowService } from "@evoloop/core";
 import { DomainError } from "@evoloop/contracts/ports";
+import { LadderUnreadable, readLadder } from "./ladder.js";
 import { milestoneStatus, milestoneStatusLabel, type MilestonePhase, type MilestonesView, type StagePhaseLink, type VersionInfo } from "@evoloop/contracts/milestones";
 
 export interface RoadmapPhase { id: string; title: string; deliver: string; exit: string }
@@ -50,7 +51,7 @@ export async function readBuildInfo(repoRoot: string): Promise<{ commit: string 
   } catch { return { commit: null, builtAt: null }; }
 }
 
-export interface MilestoneRouteOptions { service: WorkflowService; repoRoot: string; startedAt?: string }
+export interface MilestoneRouteOptions { service: WorkflowService; repoRoot: string; startedAt?: string; repositories?: () => ReadonlyArray<{ projectId: string; root: string }> }
 
 export function registerMilestoneRoutes(app: FastifyInstance, options: MilestoneRouteOptions): void {
   const startedAt = options.startedAt ?? new Date().toISOString();
@@ -62,6 +63,19 @@ export function registerMilestoneRoutes(app: FastifyInstance, options: Milestone
     if (!request.principal) throw new DomainError("FORBIDDEN", "Authentication required");
     await options.service.getProject(request.principal, projectId);
     return { ...(await readBuildInfo(options.repoRoot)), startedAt };
+  });
+  // The verification ladder: this project's own registered repositories, never the deployed checkout. No roadmap is `available:false`; an unreadable repository is a 409 LADDER_UNREADABLE.
+  app.get("/api/projects/:projectId/ladder", async (request, reply) => {
+    const { projectId } = z.strictObject({ projectId: z.uuid() }).parse(request.params);
+    if (!request.principal) throw new DomainError("FORBIDDEN", "Authentication required");
+    await options.service.getProject(request.principal, projectId);
+    const roots = [...new Set((options.repositories?.() ?? []).filter(item => item.projectId === projectId).map(item => item.root))];
+    const evidence = await options.service.getLadderEvidence(request.principal, projectId);
+    try { return await readLadder(roots, evidence); }
+    catch (error) {
+      if (error instanceof LadderUnreadable) return reply.status(409).send({ code: "LADDER_UNREADABLE", message: error.message });
+      throw error;
+    }
   });
   app.get("/api/projects/:projectId/milestones", async request => {
     const { projectId } = z.strictObject({ projectId: z.uuid() }).parse(request.params);

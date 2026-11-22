@@ -5,7 +5,7 @@
 // hook: an unknown result keeps the draft with its original operation ID and, once checked, applied clears it. A
 // 即时输入 found received on any path (at once, on reading the receipt, after 核对结果) clears the draft too, so the same
 // text is never sent again by mistake.
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { hasDecisionAuthority, hasPermission, mayAccessSession } from "@evoloop/contracts";
 import type { SessionSnapshot } from "@evoloop/contracts/session-observation";
 import type { WorkspaceEntry, WorkspaceTurn } from "@evoloop/contracts/session-timeline";
@@ -23,7 +23,7 @@ import { sessionClient } from "../../shared/sessionClient";
 import type { SubmissionOutcome } from "../../shared/submissionOutcome";
 import { href } from "../../shared/ui/shared";
 import type { NativeProgressView } from "./NativeSessionPanel";
-import { composerPlan, contextUseText, mentionCandidates, mentionedAgents, messageWithSkill, sentResultText, type SentResult } from "./composerPresentation";
+import { composerPlan, contextUseText, destinationNote, mentionCandidates, mentionedAgents, messageWithSkill, receiptPhase, receiptText, sentResultText, type SentResult } from "./composerPresentation";
 import { isLeaderSession } from "./arrangementModel";
 import { latestPlan, planExplanation, planSteps } from "./conversationPresentation";
 import { agentStatusLabel } from "./sessionStatusPresentation";
@@ -55,9 +55,12 @@ const skillSourceLabel: Record<string, string> = { evoloop: "evoLoop 业务", pr
 /** Where the running turn came from, for stopping it: an ordinary message (with its processing record) or a task's run. */
 type TurnSource = { kind: "message" | "run"; id: string };
 
-export function SessionComposer({ context, snapshot, entries, activeTurn, live, progress, facts, readingScope, onApplied }: {
+/** What the page already knows about where a message would go: the provider's pause, the Task being worked on, whom the turn answers. */
+export interface ComposerRouting { held: string | null; taskTitle: string | null; replying: boolean }
+
+export function SessionComposer({ context, snapshot, entries, activeTurn, live, progress, facts, routing, onApplied }: {
   context: MutationContext; snapshot: SessionSnapshot; entries: WorkspaceEntry[]; activeTurn: WorkspaceTurn | undefined; live: boolean;
-  progress: NativeProgressView | null; facts: string[]; readingScope: ReactNode; onApplied(): void;
+  progress: NativeProgressView | null; facts: string[]; routing: ComposerRouting; onApplied(): void;
 }) {
   const { session } = snapshot;
   const { projectId, principal } = context;
@@ -69,7 +72,9 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
   const [sending, setSending] = useState(false);
   const [outcome, setOutcome] = useState<{ text: ReactNode; failed: boolean } | null>(null);
   // How the last message went out (inserted, started, queued, queued after the Turn changed); kept until the next send.
-  const [delivered, setDelivered] = useState<SentResult | null>(null);
+  // The one receipt of the last message: it changes in place (已发出 → 处理中 → 已回复) and goes when the next message is typed.
+  const [delivered, setDelivered] = useState<(SentResult & { messageId?: string }) | null>(null);
+  const [worked, setWorked] = useState(false);
   const [stopOpen, setStopOpen] = useState(false);
   // The message is gone: clear the box and its kept draft, the chosen skill and @ names, and what was said about it.
   const sent = () => { setValue(""); setSkill(null); setPicked([]); setOutcome(null); };
@@ -85,7 +90,8 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
   const afterDirect = useRef<{ content: string; agents: Agent[] } | null>(null);
   const direct = useDirectInput({ projectId, sessionId: owned ?? "", actorId: principal.actorId, active: !!owned, onAccepted: receipt => {
     command.dropDraft(); command.clear(); sent();
-    setDelivered(receipt.queuedMessageId ? { kind: "converted", reason: receipt.reason }
+    setWorked(false);
+    setDelivered(receipt.queuedMessageId ? { kind: "converted", reason: receipt.reason, messageId: receipt.queuedMessageId }
       : { kind: receipt.mode === "start" ? "started" : "inserted" });
     const copies = afterDirect.current; afterDirect.current = null;
     if (copies) void sendCopies(copies.content, copies.agents);
@@ -101,6 +107,18 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
     direct: direct.capability, directPending: direct.pending, running, canWrite: canWriteSession, blocked: context.blocked,
     leader: isLeaderSession(session),
   });
+
+  const startsAtOnce = direct.capability?.available === true && direct.capability.mode === "start";
+  const destination = destinationNote({ kind: session.kind, running, taskTitle: routing.taskTitle, replying: routing.replying, held: routing.held,
+    startsAtOnce, canInsert: plan.modEnter === "steer" });
+  // Where the last message stands: a saved message by its own record, an inserted or started input by whether its turn has run.
+  const sentEntry = delivered?.messageId ? entries.find(entry => entry.kind === "message" && entry.role === "input" && entry.origin?.id === delivered.messageId) : undefined;
+  useEffect(() => { if (delivered && !delivered.messageId && running) setWorked(true); }, [delivered, running]);
+  const phase = !delivered ? null
+    : delivered.messageId || delivered.kind === "queued" ? receiptPhase(sentEntry?.state ?? null)
+      : running ? "working" as const : worked ? "replied" as const : "sent" as const;
+  // The next message being typed retires a finished receipt: nothing stale stays above the box.
+  useEffect(() => { if (phase === "replied" && value.trim()) setDelivered(null); }, [phase, value]);
 
   // Messages I saved that are still waiting: they can be withdrawn until they are handled.
   const queued = entries.filter((entry): entry is Extract<WorkspaceEntry, { kind: "message" }> => entry.kind === "message" && entry.role === "input"
@@ -174,8 +192,13 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
       if (!["queued", "manual_pending"].includes(detail.message.state)) { setOutcome({ text: "这条消息已经开始处理或已结束，不能再撤回。", failed: true }); onApplied(); return; }
       const result = await sendSessionCommand(context, { type: "session.message.cancel", messageId, expectedVersion: detail.message.version,
         reason: "发送者在输入框上方撤回了这条排队消息" });
-      setOutcome({ text: result.applied ? "已撤回，正在读取消息记录。" : result.message, failed: result.failed });
-      if (result.applied) onApplied();
+      setOutcome({ text: result.applied ? "已撤回，原文放回了输入框。" : result.message, failed: result.failed });
+      if (result.applied) {
+        // The text goes back into the box (after what is already typed), so a withdrawn message is never lost.
+        if (detail.message.content) change(value.trim() ? `${value.replace(/\s+$/, "")}\n\n${detail.message.content}` : detail.message.content);
+        setDelivered(old => old?.messageId === messageId ? null : old);
+        onApplied();
+      }
     } catch (cause) { setOutcome({ text: `撤回前读取消息失败：${errorText(cause)}；没有撤回。`, failed: true }); }
   }
 
@@ -201,9 +224,10 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
     setOutcome(null); setDelivered(null);
     if (action === "post") {
       // Copies follow only an applied message; the hook calls back once it is applied, now or after it is checked.
-      await command.submit(() => ({ type: "session.message.post", messageId: crypto.randomUUID(), target: session.target, content,
+      const messageId = crypto.randomUUID();
+      await command.submit(() => ({ type: "session.message.post", messageId, target: session.target, content,
         ...(session.kind === "owned" && taskAttached && snapshot.currentWork ? { context: { taskId: snapshot.currentWork.id, taskRevisionId: snapshot.currentWork.revisionId } } : {}) }),
-      () => { setDelivered({ kind: "queued" }); void sendCopies(content, agents); });
+      () => { setWorked(false); setDelivered({ kind: "queued", messageId }); void sendCopies(content, agents); });
       return;
     }
     setSending(true); command.clear();
@@ -215,9 +239,8 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
     } finally { setSending(false); }
   }
 
-  const queueCount = queued.length;
   const usage = contextUseText(progress?.usage);
-  const meta = [...facts, ...(usage ? [usage] : []), ...(queueCount ? [`排队 ${queueCount} 条`] : []),
+  const meta = [...facts, ...(usage ? [usage] : []),
     ...(plan.hint ? [plan.hint] : []), ...(running && mayStop ? ["Esc 停止"] : stopNote && running ? [stopNote] : [])];
   // data-dirty: leaving the project, reloading or signing out asks first while a message is unsent.
   return <div className="session-composer-host relative flex shrink-0 flex-col gap-2 pt-2" data-dirty={value.trim() ? "true" : undefined}>
@@ -227,12 +250,13 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
       onCancel={context.blocked ? undefined : id => void withdraw(id)} />}
     {direct.receipt}
     {plan.disabledReason && <p role="status" className="text-caption text-muted-foreground">{plan.disabledReason}</p>}
-    {command.outcome && <p role={command.outcome.failed ? "alert" : "status"} className={command.outcome.failed ? "text-caption text-destructive" : "text-caption text-muted-foreground"}>{command.outcome.message}
+    {command.outcome?.failed && <p role={command.outcome.failed ? "alert" : "status"} className="text-caption text-destructive">{command.outcome.message}
       {/* The service's original answer, folded: for a missing message grant that is only the code (no configuration text, no local path). */}
       {command.outcome.detail && <ErrorDetails failure={{ text: command.outcome.message, detail: command.outcome.detail }} />}</p>}
-    {/* One status for one input: once the receipt reads 已读到, the earlier 已插入/已开始 line is replaced, not left beside it. */}
-    {delivered && !(direct.itemRecorded && (delivered.kind === "inserted" || delivered.kind === "started")) && <p role="status" data-sent-result={delivered.kind} className="text-caption text-muted-foreground">{sentResultText(delivered)}</p>}
+    {/* One receipt for one message, updated in place. A failure or an unchecked result has its own notice above and is never mixed in here. */}
+    {delivered && phase && <p role="status" data-sent-result={delivered.kind} data-receipt-phase={phase} className="text-caption text-muted-foreground">{phase === "sent" ? sentResultText(delivered) : receiptText[phase]}</p>}
     {outcome && <p role={outcome.failed ? "alert" : "status"} className={outcome.failed ? "text-caption text-destructive" : "text-caption text-muted-foreground"}>{outcome.text}</p>}
+    <p data-destination="" role="note" className="text-caption text-muted-foreground">{destination}</p>
     <Composer
       value={value}
       onChange={change}
@@ -245,7 +269,7 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
       sendMode={plan.sendMode}
       splitSend={plan.split ?? undefined}
       onSend={text => { if (plan.enter) void deliver(plan.enter, text); }}
-      onQueue={plan.modEnter ? text => void deliver("post", text) : undefined}
+      onQueue={plan.modEnter ? text => void deliver(plan.modEnter!, text) : undefined}
       onQueueUnavailable={() => setOutcome({ text: plan.queueNote ?? "现在不能排到下一轮。", failed: false })}
       onStop={mayStop ? () => setStopOpen(true) : undefined}
       attachments={attachments}
@@ -263,7 +287,6 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
       onPickAgent={agent => { const found = agents.find(item => item.id === agent.id); if (found) setPicked(old => [...old.filter(item => item.id !== found.id), found]); }}
       meta={meta.map(item => <span key={item}>{item}</span>)}
     />
-    {readingScope}
     {mayStop && source && <StopTurn context={context} sessionId={owned!} source={source} open={stopOpen} onOpenChange={setStopOpen}
       onStopped={() => { setStopOpen(false); onApplied(); }} />}
   </div>;

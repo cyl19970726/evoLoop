@@ -162,9 +162,9 @@ test("long Run activity and expanded source stay inside the Session page at mobi
   await page.getByRole("heading", { name: "窄屏活动测试会话" }).waitFor();
   // At 390px the agent's facts live in the right column, a drawer that opens only when asked (展开右栏). The header's
   // 重新读取 sits under that drawer, so the helpers close it before rereading and open it again to read the facts.
-  const panelToggle = page.getByRole("button", { name: "展开右栏" });
+  const panelToggle = page.getByRole("button", { name: "会话详情" });   // the one switch for the column
   async function openPanel() {
-    if (await panelToggle.isVisible()) { await panelToggle.click(); await page.getByRole("button", { name: "关闭右栏" }).waitFor(); }
+    if (!(await page.locator(".session-panel").isVisible())) { await panelToggle.click(); await page.getByRole("button", { name: "关闭右栏" }).waitFor(); }
     await page.locator(".session-panel").waitFor({ state: "visible" });
   }
   async function closePanel() {

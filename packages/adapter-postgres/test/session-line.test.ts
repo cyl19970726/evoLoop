@@ -463,7 +463,13 @@ test("review 3, 4, 5: a stale confirmation, a plain acknowledgement, a failed re
   assert.equal(await reject({ type: "task.assignment.acknowledge", projectId: p, operationId: randomUUID(), taskId: a, expectedVersion: assignment.version,
     expectedTaskVersion: (await task(a)).version, evidence: "ok" }, worker), "CONFIRMATION_VERDICT_REQUIRED");
   // 4b: no answer in time suspends the entry.
-  const late = makePump({ now: () => Date.now() + 2 * 60 * 60 * 1000, confirmationTimeoutMs: 60 * 60 * 1000 });
+  // The request has reached the Session (it left the queue) and nobody answers: the answer period runs out.
+  const delivered = (over: Record<string, unknown>) => new Proxy(workflow, { get: (target, key) => key === "getSessionMessageRecord"
+    ? async (...args: unknown[]) => { const record = await (target.getSessionMessageRecord as (...a: unknown[]) => Promise<Record<string, unknown> | null>)(...args);
+      return record ? { ...record, ...over } : record; }
+    : (target as never)[key] }) as WorkflowService;
+  const deliveredNow = new Date().toISOString();
+  const late = makePump({ workflow: delivered({ state: "processing", updatedAt: deliveredNow }), now: () => Date.now() + 2 * 60 * 60 * 1000, confirmationTimeoutMs: 60 * 60 * 1000 });
   await ticks(late, 2);
   assert.match((await entryOf(a)).suspendReason!, /^CONFIRMATION_TIMEOUT/);
   // 4c: a request that failed suspends it.
@@ -638,6 +644,30 @@ test("follow-up 1c: retries back off instead of repeating on every poll", async 
   await sleep(350); await ticks(slow, 3); assert.equal(log.length, 2, "the second backoff (600 ms) is longer than the first");
   await sleep(300); await ticks(slow, 1); assert.equal(log.length, 3);
   assert.equal(await countKind("entry.retried", t), 3, "one retry per refusal, none per poll");
+});
+
+test("confirmation timers: waiting behind other input does not use the answer period; it has its own longer limit and reason", async () => {
+  await cleanLine();
+  const t = await newTask("Busy session"); await append(t);
+  await ticks(makePump(), 2);
+  const hour = 60 * 60 * 1000;
+  const view = (over: Record<string, unknown>) => new Proxy(workflow, { get: (target, key) => key === "getSessionMessageRecord"
+    ? async (...args: unknown[]) => { const record = await (target.getSessionMessageRecord as (...a: unknown[]) => Promise<Record<string, unknown> | null>)(...args);
+      return record ? { ...record, ...over } : record; }
+    : (target as never)[key] }) as WorkflowService;
+  const parked = { state: "queued", blockedReason: "SESSION_INPUT_BUSY: another native send owns this Session" };
+  // 1: queued behind another input for longer than the answer period: still waiting.
+  await ticks(makePump({ workflow: view(parked), now: () => Date.now() + 2 * hour, confirmationTimeoutMs: hour, confirmationDeliveryTimeoutMs: 6 * hour }), 3);
+  assert.equal((await entryOf(t)).state, "starting", "not suspended while undelivered");
+  // 1 (continued): it is delivered late; the answer period counts from delivery, not from the request.
+  const deliveredAt = new Date(Date.now() + 2 * hour).toISOString();
+  await ticks(makePump({ workflow: view({ state: "processing", updatedAt: deliveredAt }), now: () => Date.now() + 2 * hour + 30 * 1000, confirmationTimeoutMs: hour }), 3);
+  assert.equal((await entryOf(t)).state, "starting", "30 seconds after delivery is not late");
+  // 3: undelivered past the longer limit: suspended with its own reason.
+  await ticks(makePump({ workflow: view(parked), now: () => Date.now() + 7 * hour, confirmationTimeoutMs: hour, confirmationDeliveryTimeoutMs: 6 * hour }), 3);
+  const e = await entryOf(t);
+  assert.equal(e.state, "suspended"); assert.match(e.suspendReason!, /^CONFIRMATION_NOT_DELIVERED/);
+  await cleanLine();
 });
 
 test("follow-up 2: SESSION_INPUT_BUSY on the confirmation request keeps the entry waiting; any other reason suspends", async () => {

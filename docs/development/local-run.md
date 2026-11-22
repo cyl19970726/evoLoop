@@ -271,6 +271,7 @@ node scripts/restore.mjs --from /absolute/private-backups/evoloop-20261020 \
 - `commit`、`builtAt` 由服务端读**已部署目录根部的 `build-info.json`**（`{"commit": "<7–40 位十六进制>", "builtAt": "<ISO 时间>"}`）。文件缺失、不是合法 JSON 或字段不合规时，两者都是 `null`，页面写“版本未读到”，不回退旧值。
 - `startedAt` 是服务进程启动时间，页面叫“启动时间”，不是发布时间。
 - 发布脚本在 `build` 步骤（构建和 carry-assets 之后）把 `build-info.json` 写进源码目录根（`commit` 是该目录 `HEAD` 的完整哈希，`builtAt` 是写入时的 UTC 时间）；写不出来（取不到提交哈希、目录不可写）这一步失败，此时还没有停服务，什么都没有变。`post-check` 钩子通过后，发布脚本自己再请求配置里的 `versionUrl`（`GET /api/version`），`commit` 必须与本次发布的提交一致（互为前缀，7–40 位）；服务还没起来会按 `versionCheck.retries`（默认 10）、`intervalMs`（默认 3000）重试，最后仍不一致或读不到提交就**判发布失败**，按现有规则停掉并恢复旧服务，发布记录里 `acceptance.versionCheck` 写 `failed` 与原因，成功时写 `passed` 与读到的提交。`versionUrl` 是必填的（私有配置里写服务自己的地址）；确实不检查要显式写 `skipVersionCheck: true`，发布记录会写 `skipped by config` 并打警告。回滚（`rollback`）不做这个检查。私有发布钩子里原来临时补写 `build-info.json` 的部分在这个版本生效后可以去掉（由需求 Session 处理）。
+- 验证阶梯 `/ladder` 读该项目登记的仓库（裸仓库用 `git show`，不联网）里 `refs/remotes/origin/main`（没有则 `refs/heads/main`）的 `docs/roadmap.md`，所以仓库要有 main 分支并随合并同步；没有该文件返回“没有”，没有 main 分支才是 409 `LADDER_UNREADABLE`。
 - `/milestones` 读已部署的 `docs/roadmap.md` 阶段表；阶段与路线图阶段的关联存在 `stage_phase_key`（迁移 101），用 `stage.phaseKey.set`（Task 决定权）设置；未关联显示“未登记”。
 
 ### 迁移 118：阶段里程碑与任务归属旁表

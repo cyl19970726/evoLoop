@@ -103,7 +103,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
     const result = await sessionClient("", projectId).snapshot(sessionKey, signal);
     if (result.session.key !== sessionKey) throw new Error("会话响应与所选智能体不符");
     return result;
-  }, { enabled: active, refetchInterval: active && owned ? 5000 : false, retry: false });
+  }, { enabled: active, refetchInterval: active && owned ? 2000 : false, retry: false });
   const snapshot = snapshotRead.data?.session.key === sessionKey ? snapshotRead.data : undefined;
   const snapshotOk = !!snapshot && !snapshotRead.isError;
   const runtimeStatus = useProjectQuery(projectId, ["runtime", "status"], () => runtimeClient("", projectId).status(), { enabled: active && owned, retry: false });
@@ -209,6 +209,9 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
     return `${href(projectId, "task", taskId)}?${params}`;
   }
   const panel = useContextPanel();
+  // 会话详情 in the header is this page's one switch for the right column; the shell's own 收起右栏 / 展开右栏 step aside.
+  const claimSwitch = panel?.claimSwitch;
+  useEffect(() => active ? claimSwitch?.() : undefined, [claimSwitch, active]);
   const panelTab: PanelTab = tab === "results" ? "results" : "activity";
   // A link to this agent's queue or results asks for that view: on a wide window the right column opens on it.
   // Below 1100px the column is a drawer and opens only when the reader asks.
@@ -557,7 +560,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
       </div>
       <div className="session-workspace-actions flex shrink-0 items-center gap-0.5">
         {headerButton("重新读取", <RefreshCw aria-hidden="true" className={snapshotRead.isFetching ? "animate-spin motion-reduce:animate-none" : undefined} />, reread, { disabled: snapshotRead.isFetching && !snapshotRead.isRefetching })}
-        {headerButton("会话详情", <Info aria-hidden="true" />, () => showInformation(!informationOpen), { "aria-expanded": informationOpen, "aria-controls": "session-information-panel" })}
+        {headerButton("会话详情", <Info aria-hidden="true" />, () => { if (panel?.open) panel.setOpen(false); else showInformation(true); }, { "aria-expanded": !!panel?.open, "aria-controls": "session-information-panel" })}
         {headerButton(session.kind === "owned" ? "关闭受管智能体" : "归档与归类", session.kind === "owned" ? <X aria-hidden="true" /> : <FileText aria-hidden="true" />,
           () => { panel?.setOpen(true); setCloseOpen(value => !value); }, { "aria-expanded": closeOpen, "aria-controls": "session-close-panel" })}
       </div>
@@ -571,7 +574,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
     </div>
     {active && <SessionTimeline key={`${context.principal.actorId}:${projectId}:${session.key}`} context={context} snapshot={current} taskHref={taskHref} titleOf={titleOf}
       refresh={refresh + readAgain} reauthorizeVersion={accessReadAgain} onApplied={() => void snapshotRead.refetch()} progress={observation.progress}
-      waitingTurnIds={waitingTurnIds} composerFacts={configuredModel ? [`模型 ${String(configuredModel)}`] : []}>
+      waitingTurnIds={waitingTurnIds} composerFacts={configuredModel ? [`模型 ${String(configuredModel)}`] : []} holdReason={headerFacts.holdReason ?? null}>
       {session.kind === "owned" && session.target.kind === "owned" && (native.questions.some(request => request.state === "pending" || request.state === "response_saved") || native.error) &&
         <NativeSessionPanel projectId={projectId} sessionId={session.target.sessionId} questions={native.questions} progress={observation.progress} progressError={observation.error} progressCurrentRead={nativeReadCurrent && !observation.error}
           readError={(snapshotRead.isError ? errorText(snapshotRead.error) : "") || native.error}

@@ -29,10 +29,10 @@ export interface ComposerFacts {
 
 export interface ComposerPlan {
   enter: ComposerAction | null;
-  modEnter: "post" | null;
+  modEnter: "post" | "steer" | null;
   sendMode: ComposerSendMode;
   /** Both ways are open at once and shown as two named buttons (the Leader's page, running, insert and queue both possible). */
-  split: { sendLabel: string; queueLabel: string } | null;
+  split: { sendLabel: string; queueLabel: string; sendWay?: "insert" | "queue"; queueWay?: "insert" | "queue" } | null;
   running: boolean;
   /** Set when nothing can be sent; the composer is disabled and says why. */
   disabledReason: string | null;
@@ -45,6 +45,8 @@ export interface ComposerPlan {
   placeholder: string;
 }
 
+/** The one reason shown while the agent works and nothing can be added to its turn: stable, whatever the runtime said. */
+export const queueOnlyHint = "它正在工作，这条消息只能排在这一轮之后 · Enter 排队";
 const defaultPlaceholder = "发消息，/ 调用技能，@ 转给其他智能体";
 
 /** Why the running turn cannot take an addition now, from the reason the runtime's capability gives. */
@@ -84,13 +86,18 @@ export function composerPlan(facts: ComposerFacts): ComposerPlan {
   }
   const post = facts.canSave ? "post" as const : null;
   if (running) {
-    if (direct?.mode === "steer") return { ...base, enter: "steer", modEnter: post, sendMode: "steer", disabledReason: null, queueNote,
-      split: facts.leader && post ? { sendLabel: "插入当前这一轮", queueLabel: "排队" } : null,
-      hint: post ? "Enter 补充到这一轮 · ⌘/Ctrl+Enter 排到下一轮" : "Enter 补充到这一轮", placeholder: "补充到这一轮…" };
+    // 默认排队、不打断；插入当前这一轮要人明确选（第二个按钮或 ⌘/Ctrl+Enter）。
+    if (direct?.mode === "steer") return post
+      ? { ...base, enter: "post", modEnter: "steer", sendMode: "queue", disabledReason: null, queueNote,
+        split: { sendLabel: "排到这一轮之后", queueLabel: "插入当前这一轮", sendWay: "queue", queueWay: "insert" },
+        hint: "Enter 排到这一轮之后 · ⌘/Ctrl+Enter 插入当前这一轮", placeholder: "发消息，默认排在这一轮之后…" }
+      : { ...base, enter: "steer", modEnter: null, sendMode: "steer", disabledReason: null, queueNote,
+        hint: "Enter 补充到这一轮", placeholder: "补充到这一轮…" };
+    // Only queueing is possible while it works: one stable reason, however the runtime words its refusal (the detail stays in steerNote).
     const note = steerNote(facts.direct, facts.directPending);
     if (!post) return { ...off(facts.saveReason || "当前不能保存消息。"), steerNote: note };
     return { ...base, enter: "post", modEnter: "post", sendMode: "queue", disabledReason: null, steerNote: note,
-      hint: `${note}；Enter 排到下一轮` };
+      hint: queueOnlyHint };
   }
   if (direct?.mode === "start") return { ...base, enter: "start", modEnter: post, sendMode: "send", disabledReason: null, queueNote,
     hint: post ? "Enter 立即开始一轮 · ⌘/Ctrl+Enter 保存为排队消息" : "Enter 立即开始一轮" };
@@ -107,7 +114,7 @@ export function sentResultText(result: SentResult): string {
   switch (result.kind) {
     case "inserted": return "已插入当前这一轮：运行时已接收，不代表智能体已阅读或采用。";
     case "started": return "已开始新的一轮：运行时已接收，不代表智能体已阅读或采用。";
-    case "queued": return "已排队：这一轮结束后按顺序处理，输入框上方可撤回。";
+    case "queued": return "已发出，已排队：开始处理时这里会更新，输入框上方可撤回。";
     case "converted": return `没有插入，已转排队：${convertedReason(result.reason)}这条消息已按排队保存，只有一条，输入框上方可撤回。`;
   }
 }
@@ -153,3 +160,45 @@ export function contextUseText(usage: { last: { totalTokens: number | null }; mo
   if (used == null || !window) return null;
   return `上下文 ${Math.min(100, Math.round(used / window * 100))}%`;
 }
+
+/** What the agent's state means for the message about to be sent (said before sending, in the words of its state right now). */
+export interface DestinationFacts {
+  kind: "owned" | "external";
+  /** A turn is running now. */
+  running: boolean;
+  /** The Task being worked on, when the turn is a Task's run and its title is read. */
+  taskTitle: string | null;
+  /** The running turn answers a message (no Task). */
+  replying: boolean;
+  /** The provider is paused: its cause in words, "" when the cause is not read, null when not paused. */
+  held: string | null;
+  /** Enter would start a turn at once (the runtime declared it can). */
+  startsAtOnce: boolean;
+  /** Insertion into the running turn is available as an explicit choice. */
+  canInsert: boolean;
+}
+export function destinationNote(f: DestinationFacts): string {
+  if (f.kind === "external") return "这是外部智能体：消息只保存，需要人工转交，不会自动处理。";
+  if (f.held !== null) return `${f.held ? `已暂停（${f.held}）` : "已暂停"}。现在发的消息会保存排队，恢复前不会处理。`;
+  if (f.running) {
+    const doing = f.taskTitle ? `它正在做任务「${f.taskTitle}」` : f.replying ? "它正在回复一条消息" : "它正在工作";
+    return `${doing}。这条消息默认排在这一轮之后，不打断它。${f.canInsert ? `要现在就插入${f.taskTitle ? `这项任务「${f.taskTitle}」` : "这一轮"}，点“插入当前这一轮”。` : ""}`;
+  }
+  return f.startsAtOnce ? "它现在空闲：这条消息会马上开始处理并回复。" : "它现在空闲：这条消息保存后按顺序处理。";
+}
+
+/** The single receipt of a sent message: it changes in place from 已发出 to 处理中 to 已回复, or says why it failed. */
+export type ReceiptPhase = "sent" | "working" | "replied" | "failed";
+export function receiptPhase(state: string | null): ReceiptPhase {
+  switch (state) {
+    case null: case "pending": case "unknown": return "sent";
+    case "running": return "working";
+    case "completed": return "replied";
+    default: return "failed";
+  }
+}
+export const receiptText: Record<Exclude<ReceiptPhase, "sent">, string> = {
+  working: "处理中：它已开始处理这条消息。",
+  replied: "已回复：回复在上方对话里。",
+  failed: "没有处理成功：处理失败或被中断，详情见这条消息的“消息详情”。",
+};

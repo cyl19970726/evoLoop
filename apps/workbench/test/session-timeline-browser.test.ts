@@ -700,7 +700,8 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   assert.ok((await directPage.locator(".session-direct-receipt").innerText()).includes(originalInputId));
   await directPage.getByText("只按原输入核对，不会重发", { exact: false }).waitFor();
   await directPage.getByRole("button", { name: "核对结果（不会重发）" }).click();
-  await directPage.getByText("已读到：运行时已记录这条输入的原生条目；不代表智能体已采用").waitFor();   // the checked receipt carries its Item
+  await directPage.locator("[data-receipt-phase]").waitFor();   // the checked receipt is now the composer's one receipt line, not a second notice
+  assert.equal(await directPage.locator(".session-direct-receipt").count(), 0, "an accepted receipt does not repeat itself in a second block");
   assert.equal(await directPage.getByRole("combobox", { name: "消息" }).inputValue(), "", "a received input leaves nothing to send again");
   await directPage.getByRole("combobox", { name: "消息" }).fill("核对之后的新一条");
   await directPage.getByRole("button", { name: "发送", exact: true, disabled: false }).waitFor();
