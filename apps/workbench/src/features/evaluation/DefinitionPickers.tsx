@@ -116,7 +116,7 @@ function RefRowView({ projectId, ref, onRemove }: { projectId: string; ref: Eval
   const named = ref.kind === "document" || ref.kind === "wiki";
   const name = read.data?.name ?? fixedRefName(ref);
   const version = read.data?.version ?? (!named ? "固定修订" : read.isError ? "名称与版本未能核对，标识见完整标识" : "正在核对名称与版本…");
-  return <li className="flex min-w-0 flex-col gap-0.5 rounded-lg bg-muted px-3 py-2">
+  return <li className="flex min-w-0 flex-col gap-0.5 border-t border-border px-0 py-2">
     <div className="flex min-w-0 items-start justify-between gap-2">
       <span className="flex min-w-0 flex-col"><span className="break-words text-small text-foreground">{name}</span><span className={muted}>{version}</span></span>
       <Button size="compact" variant="ghost" onClick={onRemove} aria-label={`移除 ${name}`}>移除</Button>
@@ -270,7 +270,7 @@ export function FixedRefsChoice({ projectId, value, onChange, control, label, al
   return <div role="group" aria-label={label} className="flex min-w-0 flex-col gap-2">
     {rows.length > 0 && <ul className="m-0 flex list-none flex-col gap-1.5 p-0">{rows.map((row, index) => row.ref
       ? <RefRowView key={`${index}:${row.line}`} projectId={projectId} ref={row.ref} onRemove={() => onChange(withoutRef(value, index))} />
-      : <li key={`${index}:${row.line}`} className="flex min-w-0 flex-col gap-0.5 rounded-lg bg-muted px-3 py-2">
+      : <li key={`${index}:${row.line}`} className="flex min-w-0 flex-col gap-0.5 border-t border-border px-0 py-2">
         <div className="flex items-start justify-between gap-2"><span className="text-small text-destructive">这一项无法识别：{row.problem}</span>
           <Button size="compact" variant="ghost" onClick={() => onChange(withoutRef(value, index))}>移除</Button></div>
         <FullIdentifiers summary="原文" rows={[{ label: "原文", value: row.line, text: true }]} />

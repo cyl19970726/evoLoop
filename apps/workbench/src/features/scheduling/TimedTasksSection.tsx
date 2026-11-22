@@ -48,8 +48,8 @@ const renderList = (list: typeof items) => (
       <div className="flex flex-wrap items-center gap-2">
         <CalendarClock size={15} aria-hidden="true" className="text-muted-foreground" />
         <a href={timedTaskHref(projectId, item.latestTask.taskId, item, actorId)} className="text-small font-medium text-foreground underline">{item.title}</a>
-        <span className="rounded-full bg-field px-2.5 py-0.5 text-caption text-muted-foreground">{seriesKindText(item)}</span>
-        <span className={cn("rounded-full px-2.5 py-0.5 text-caption", item.seriesState === "stopped" ? "bg-field text-muted-foreground" : "bg-accent text-foreground")}>{seriesStateText(item)}</span>
+        <span className="rounded-md bg-field px-2.5 py-0.5 text-caption text-muted-foreground">{seriesKindText(item)}</span>
+        <span className={cn("text-caption", item.seriesState === "stopped" ? "text-muted-foreground" : "font-medium text-foreground")}>{seriesStateText(item)}</span>
       </div>
       <dl className="m-0 flex flex-col gap-0.5 text-small">
         <div className="flex flex-wrap gap-x-2"><dt className={muted}>下次时间</dt><dd className="m-0 text-foreground">{nextTimeText(item, now)}</dd></div>
@@ -61,9 +61,9 @@ const renderList = (list: typeof items) => (
       <FullIdentifiers rows={[{ label: "系列", value: item.seriesId }, { label: "首个任务", value: item.rootTaskId }, { label: "最近任务", value: item.latestTask.taskId }]} />
     </li>)}</ul>
   );
-  return <section aria-label="定时任务" className="flex flex-col gap-3 rounded-xl bg-raised p-4 shadow-sm compact:p-5">
+  return <section aria-label="定时任务" className="flex flex-col gap-3 rounded-xl bg-raised p-4 border border-border compact:p-5">
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <h2 className="flex flex-wrap items-center gap-2 text-heading font-semibold text-foreground">定时任务{loaded ? ` · ${items.length}${view.hasMore ? "+" : ""}` : ""}<span className="rounded-full bg-field px-2.5 py-0.5 text-caption font-normal text-muted-foreground" data-kind="task-timing">Task 自己的执行时间</span></h2>
+      <h2 className="flex flex-wrap items-center gap-2 text-heading font-semibold text-foreground">定时任务{loaded ? ` · ${items.length}${view.hasMore ? "+" : ""}` : ""}<span className="rounded-md bg-field px-2.5 py-0.5 text-caption font-normal text-muted-foreground" data-kind="task-timing">Task 自己的执行时间</span></h2>
       <Button size="compact" variant="ghost" onClick={onRefresh} disabled={view.fetching}>{view.fetching ? "读取中…" : "重新读取"}</Button>
     </div>
     <p className={muted}>这不是上面的日程定义：日程是项目里的规则，这里列的是某个 Task 自己设的执行时间（一次定时与每日重复，含已停止的系列）。修改仍在任务详情里做；列出不等于已执行，也不等于已验收。</p>

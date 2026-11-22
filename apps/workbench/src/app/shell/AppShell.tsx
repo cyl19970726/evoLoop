@@ -120,8 +120,8 @@ export function AppShell(props: AppShellProps) {
   return <ContextRailProvider><ContextPanelProvider space={space}>
     <div className="min-h-dvh bg-sunken text-foreground">
       <div data-ui=""><a href="#workspace-main" onClick={event => { event.preventDefault(); document.getElementById("workspace-main")?.focus(); }}
-        className="sr-only z-50 rounded-md bg-raised px-3 py-2 shadow-md focus:not-sr-only focus:fixed focus:left-3 focus:top-3">跳到内容</a></div>
-      {import.meta.env.DEV && <div data-ui="" role="status" className="fixed bottom-3 right-3 z-40 rounded-full bg-warning-soft px-3 py-1 text-caption text-warning compact:bottom-3 max-compact:bottom-20">
+        className="sr-only z-50 focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:rounded-md focus:bg-raised focus:px-3 focus:py-2 focus:shadow-md">跳到内容</a></div>
+      {import.meta.env.DEV && <div data-ui="" role="status" className="fixed bottom-3 right-3 z-40 rounded-md bg-warning-soft px-3 py-1 text-caption text-warning compact:bottom-3 max-compact:bottom-20">
         {window.location.port === "5181" ? "开发测试预览 · 模拟数据 · 尚未发布" : "开发预览 · 连接现有数据 · 尚未发布"}</div>}
       {/* One tree for every width, switched by CSS at 760px: crossing it restyles the frame in the same frame as the
           viewport change and never remounts the pages (their state and drafts stay). */}
@@ -140,7 +140,7 @@ export function AppShell(props: AppShellProps) {
       </Sheet>
       <div data-shell="frame" data-rail={compact ? "drawer" : railHidden ? "hidden" : "shown"}
         className={cn("block compact:grid compact:min-h-dvh", railHidden ? "compact:grid-cols-[68px_minmax(0,1fr)]" : "compact:grid-cols-[68px_264px_minmax(0,1fr)]")}>
-        <nav data-ui="" data-shell="rail" aria-label="空间" className="sticky top-0 hidden h-dvh flex-col items-center gap-2 py-4 compact:flex">
+        <nav data-ui="" data-shell="rail" aria-label="空间" className="shell-ground sticky top-0 hidden h-dvh flex-col items-center gap-2 py-4 compact:flex">
           <a href="/" aria-label="evoLoop 项目列表" className="mb-4 rounded-lg focus-visible:shadow-[var(--focus-ring)]"><Logo size={36} /></a>
           <RailLink href={spaceLink("work")} label="工作" selected={space === "work"} icon={<BriefcaseBusiness size={20} />} />
           <RailLink href={spaceLink("agents")} label="智能体" selected={space === "agents"} icon={<Users size={20} />} />
@@ -150,7 +150,7 @@ export function AppShell(props: AppShellProps) {
           </div>
         </nav>
         {!railHidden && <div className="sticky top-0 hidden h-dvh compact:block"><ContextRail {...railProps} /></div>}
-        <div className="flex min-w-0 bg-background compact:m-2 compact:ml-0 compact:min-h-[calc(100dvh-16px)] compact:rounded-xl compact:shadow-lg">
+        <div className="flex min-w-0 bg-background compact:min-h-dvh compact:border-l compact:border-border">
           <main id="workspace-main" ref={mainRef} tabIndex={-1} className="min-w-0 flex-1 outline-none max-compact:pb-20 max-compact:[&_h1[data-echo]]:sr-only"><ProviderHoldBar listing={props.providerHolds} projectId={projectId} route={route} />{props.notices?.map(({ key, ...notice }) => <ShellNotice key={key} {...notice} />)}{props.children}</main>
           <ContextPanelColumn />
         </div>
@@ -167,8 +167,8 @@ export function AppShell(props: AppShellProps) {
 
 function RailLink({ href: target, label, selected, icon, count = 0 }: { href: string; label: string; selected: boolean; icon: React.ReactNode; count?: number | null }) {
   return <a href={target} aria-current={selected ? "page" : undefined}
-    className={cn("selected-edge relative flex w-[52px] flex-col items-center gap-1 rounded-lg py-2 text-caption text-muted-foreground hover:bg-selected hover:text-foreground focus-visible:shadow-[var(--focus-ring)] outline-none",
-      selected && "bg-accent font-medium text-accent-strong hover:bg-accent")}>
+    className={cn("selected-mark relative flex w-[52px] flex-col items-center gap-1 rounded-lg py-2 text-caption text-muted-foreground hover:bg-selected hover:text-foreground focus-visible:shadow-[var(--focus-ring)] outline-none",
+      selected && "bg-accent font-semibold text-foreground hover:bg-accent")}>
     {icon}{label}
     {count !== 0 && <CountDot count={count} className="absolute right-2 top-1" />}
   </a>;
@@ -176,7 +176,7 @@ function RailLink({ href: target, label, selected, icon, count = 0 }: { href: st
 
 function TabLink({ href: target, label, selected, icon, count = 0 }: { href: string; label: string; selected: boolean; icon: React.ReactNode; count?: number | null }) {
   return <a href={target} aria-current={selected ? "page" : undefined}
-    className={cn("selected-edge relative flex flex-col items-center gap-0.5 py-2 text-caption text-muted-foreground", selected && "font-medium text-foreground")}>
+    className={cn("selected-mark relative flex flex-col items-center gap-0.5 py-2 text-caption text-muted-foreground", selected && "font-medium text-foreground")}>
     {icon}{label}
     {count !== 0 && <CountDot count={count} className="absolute right-[22%] top-1" />}
   </a>;
@@ -187,10 +187,10 @@ function ContextRail(props: AppShellProps & { space: Space; sessionState: Sessio
   const { route, projectId, space, inDrawer = false, compact } = props;
   const selectedSession = route.session ? route.session.includes(":") ? route.session : `owned:${route.session}` : undefined;
   // On the wide frame the object list scrolls inside the rail; in the drawer the whole drawer scrolls.
-  return <aside aria-label="项目导航" className={cn("flex flex-col gap-0.5 pb-3 pl-1 pr-3 pt-3.5", inDrawer ? "min-h-full pl-3" : "h-full")}>
+  return <aside aria-label="项目导航" className={cn("shell-ground flex flex-col gap-0.5 pb-3 pl-1 pr-3 pt-3.5", inDrawer ? "min-h-full pl-3" : "h-full")}>
     <div data-ui="">
-      <a href="/" onClick={props.onNavigate} className="mb-3 flex items-center gap-2.5 rounded-lg bg-raised px-3 py-2.5 shadow-sm hover:shadow-md focus-visible:shadow-[var(--focus-ring)] outline-none">
-        <span aria-hidden="true" className="flex size-[30px] shrink-0 items-center justify-center rounded-md bg-accent font-semibold text-accent-foreground">{projectInitial(props.projectTitle)}</span>
+      <a href="/" onClick={props.onNavigate} className="mb-3 flex items-center gap-2.5 rounded-lg bg-raised px-3 py-2.5 border border-border hover:bg-selected focus-visible:shadow-[var(--focus-ring)] outline-none">
+        <span aria-hidden="true" className="flex size-[30px] shrink-0 items-center justify-center rounded-full bg-accent font-semibold text-accent-foreground">{projectInitial(props.projectTitle)}</span>
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="truncate font-semibold" title={props.projectTitle}>{props.projectTitle || "正在读取项目…"}</span>
           <span className="text-caption text-muted-foreground">切换项目</span>
@@ -225,8 +225,8 @@ const readOperationsOpen = () => { try { return localStorage.getItem(operationsK
 function NavLink({ item, route, projectId, onNavigate, nested = false }: { item: NavItem; route: Route; projectId: string; onNavigate(): void; nested?: boolean }) {
   const current = leafOf(route.section) === item.section;
   return <a href={href(projectId, item.section)} onClick={onNavigate} aria-current={current ? "page" : undefined}
-    className={cn("selected-edge flex items-center rounded-md px-3 py-2 text-text-secondary hover:bg-selected hover:text-foreground focus-visible:shadow-[var(--focus-ring)] outline-none",
-      nested && "py-1.5 pl-2.5 text-small text-muted-foreground", current && "bg-accent font-medium text-accent-strong hover:bg-accent")}>{item.label}</a>;
+    className={cn("selected-mark flex items-center rounded-md px-3 py-2 text-text-secondary hover:bg-selected hover:text-foreground focus-visible:shadow-[var(--focus-ring)] outline-none",
+      nested && "py-1.5 pl-2.5 text-small text-muted-foreground", current && "bg-accent font-semibold text-foreground hover:bg-accent")}>{item.label}</a>;
 }
 
 function SectionList({ items, route, projectId, onNavigate, present, group = false }: { items: readonly NavItem[]; route: Route; projectId: string; onNavigate(): void; present?: ReadonlySet<Section> | undefined; group?: boolean }) {

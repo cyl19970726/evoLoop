@@ -83,7 +83,7 @@ function savedView(command: CommandView, saved: string): CommandView {
 function WriteBlock({ id, title, description, open, onToggle, children }: {
   id?: string; title: string; description?: ReactNode; open: boolean; onToggle(open: boolean): void; children: ReactNode;
 }) {
-  return <details id={id} open={open} onToggle={event => onToggle(event.currentTarget.open)} className="group min-w-0 scroll-mt-20 rounded-xl bg-raised px-4 py-3 shadow-sm">
+  return <details id={id} open={open} onToggle={event => onToggle(event.currentTarget.open)} className="group min-w-0 scroll-mt-20 rounded-xl bg-raised px-4 py-3 border border-border">
     <summary className="cursor-pointer text-small font-medium text-foreground">{title}</summary>
     <div className="mt-3 flex flex-col gap-3">{description && <p className={mutedText}>{description}</p>}{children}</div>
   </details>;
@@ -311,7 +311,7 @@ export function ReferencePanel({ context, taskId, taskRevisionId, taskVersion }:
             </Select>}</Field>
             {knowledgeFailure && <Notice tone="error">{errorText(knowledgeFailure)}</Notice>}
             {published.data?.length === 0 && !published.error && <p className="text-label text-text-secondary">这个项目还没有可以选择的已发布知识。</p>}
-            {fixedKnowledge && <div className="flex flex-col gap-1 rounded-lg bg-muted p-3 text-label">
+            {fixedKnowledge && <div className="flex flex-col gap-1 border-t border-border px-0 py-3 text-label">
               <p className="font-medium text-foreground">{fixedKnowledge.title}</p>
               <p className="text-text-secondary">创建时{validityLabel[fixedKnowledge.validity]} · 当前{validityLabel[fixedKnowledge.observedValidity]} · {epistemicLabel[fixedKnowledge.epistemicStatus] ?? "认识状态未知"}</p>
               <p className="text-text-secondary">固定来源：{fixedKnowledge.sources.length ? `${fixedKnowledge.sources.length} 项` : "这一版知识没有列出来源"}</p>

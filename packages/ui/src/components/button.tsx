@@ -4,23 +4,23 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "../lib/cn";
 
 /**
- * Buttons are pills. One primary (brand, solid terracotta) button per screen; the secondary is the soft brand fill; a selected row or tab is accent-soft (DEC-051). Links stay accent.
+ * Buttons are 4px-radius controls. One primary (brand, solid ink green) button per screen; the secondary is an outline button (panel colour with a strong hairline); a selected row or tab is a neutral fill with heavier text and nothing else. Links are green (accent).
  * Three variants are not pills: `link` is an action written as a link inside text, `row` is a row or card that picks
  * what the page shows (aria-pressed or aria-current marks the chosen one), `tab` is one tab in a strip (aria-selected).
  * They take the `inline` size unless another is given: no height, padding or type size of their own.
  */
 export const buttonVariants = cva(
-  "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-full border-0 font-medium outline-none transition-[background-color,box-shadow] duration-150 focus-visible:shadow-[var(--focus-ring)] disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+  "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-md border-0 font-medium outline-none transition-[background-color,box-shadow] duration-150 focus-visible:shadow-[var(--focus-ring)] disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0",
   {
     variants: {
       variant: {
         primary: "bg-brand text-on-brand hover:bg-brand-hover active:bg-brand-pressed",
-        secondary: "bg-brand-soft text-on-brand-soft hover:bg-brand-soft-hover active:bg-brand-soft-pressed",
+        secondary: "bg-brand-soft text-on-brand-soft shadow-[inset_0_0_0_1px_var(--border-strong)] hover:bg-brand-soft-hover active:bg-brand-soft-pressed focus-visible:shadow-[var(--focus-ring)]",
         ghost: "bg-transparent text-text-secondary hover:bg-field hover:text-foreground",
         danger: "bg-danger-soft text-destructive hover:bg-selected",
         link: "rounded-sm bg-transparent font-normal text-primary underline-offset-4 hover:underline disabled:text-muted-foreground disabled:opacity-100",
-        row: "selected-edge w-full justify-start whitespace-normal rounded-md bg-transparent text-left font-normal text-text-secondary hover:bg-selected hover:text-foreground aria-pressed:bg-accent aria-pressed:hover:bg-accent aria-pressed:font-medium aria-pressed:text-accent-strong aria-[current=true]:bg-accent aria-[current=true]:hover:bg-accent aria-[current=true]:font-medium aria-[current=true]:text-accent-strong",
-        tab: "rounded-md bg-transparent px-2.5 py-1 text-small font-normal text-text-secondary hover:bg-selected aria-selected:bg-accent aria-selected:hover:bg-accent aria-selected:text-accent-strong aria-selected:shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--accent)_55%,transparent)] aria-selected:focus-visible:shadow-[var(--focus-ring)]",
+        row: "selected-mark w-full justify-start whitespace-normal rounded-md bg-transparent text-left font-normal text-text-secondary hover:bg-selected hover:text-foreground focus-visible:shadow-[var(--focus-ring)]",
+        tab: "selected-mark rounded-md bg-transparent px-2.5 py-1 text-small font-normal text-text-secondary hover:bg-selected focus-visible:shadow-[var(--focus-ring)]",
       },
       size: {
         default: "h-9 px-4 text-small [&_svg]:size-4",

@@ -203,7 +203,7 @@ export function ContextPanelColumn({ embedded = false }: { embedded?: boolean } 
           <IconButton label={`关闭 ${tab.title}`} icon={<X aria-hidden="true" />} className="size-6 rounded-sm [&_svg]:size-3.5" onClick={() => close(tab.id)} />
         </span>)}
       </div>
-      {activeTab?.href && <a href={activeTab.href} aria-label="在中间打开" title="在中间打开" className="flex size-8 shrink-0 items-center justify-center rounded-full text-primary hover:bg-accent focus-visible:shadow-[var(--focus-ring)] outline-none"><ArrowUpRight size={16} aria-hidden="true" /></a>}
+      {activeTab?.href && <a href={activeTab.href} aria-label="在中间打开" title="在中间打开" className="flex size-8 shrink-0 items-center justify-center rounded-md text-primary hover:bg-accent focus-visible:shadow-[var(--focus-ring)] outline-none"><ArrowUpRight size={16} aria-hidden="true" /></a>}
       {inline && ownSwitches === 0 && <IconButton label="收起右栏" icon={<PanelRightClose size={17} />} compact onClick={() => update({ ...state, open: false })} />}
       {!inline && <IconButton label="关闭右栏" icon={<X size={17} />} compact onClick={() => update({ ...state, open: false })} />}
     </div>

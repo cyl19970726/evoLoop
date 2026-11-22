@@ -122,7 +122,7 @@ function FixedRevision({ projectId, taskId, revisionId }: { projectId: string; t
     return value;
   });
   const back = <Button asChild size="compact" variant="primary"><a href={taskSectionHref(projectId, taskId)}>返回当前任务</a></Button>;
-  return <TabSection title="固定历史任务修订" action={back} className="rounded-lg bg-muted p-5" id="task-fixed-revision">
+  return <TabSection title="固定历史任务修订" action={back} className="border-t border-border px-0 py-5" id="task-fixed-revision">
     {!read.data ? read.error ? <ErrorState title="固定修订不可读取" happened={errorText(read.error)}
       next="不能把当前任务当成当时的依据；可以重新读取。" action={<Button size="compact" onClick={() => void read.refetch()}>重新读取</Button>} />
       : <LoadingState lines={6} label="正在读取指定修订与当时的完整依据" />

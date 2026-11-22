@@ -20,6 +20,7 @@
   --color-ring: var(--accent);
   --color-sunken: var(--surface-sunken);
   --color-selected: var(--surface-selected);
+  --color-running: var(--running);
   --color-warning: var(--warning);
   --color-warning-soft: var(--warning-soft);
   --color-danger-soft: var(--danger-soft);
@@ -63,9 +64,9 @@
   --breakpoint-wide: 90rem;
 }
 
-/* The place you are, besides its fill: a 3px accent edge on a selected row, card or link (palette B, Task a523f45e). The fill alone (accent-soft) is too close to the panel. */
-@utility selected-edge {
-  &[aria-current="page"], &[aria-current="true"], &[aria-pressed="true"] { box-shadow: inset 3px 0 0 var(--accent); }
-  /* The keyboard focus ring (DEC-049, drawn inside the element) stays on top of the edge: a selected place that has focus shows both. */
-  &[aria-current="page"]:focus-visible, &[aria-current="true"]:focus-visible, &[aria-pressed="true"]:focus-visible { box-shadow: var(--focus-ring), inset 3px 0 0 var(--accent); }
+/* The place you are: one neutral fill and heavier text (design language, one signal per state). No edge bar, no outline.
+   On the shell (rails) the fill is one step darker (--selected-on-shell, set by .shell-ground); the keyboard focus ring stays on top. */
+@utility selected-mark {
+  &[aria-current="page"], &[aria-current="true"], &[aria-pressed="true"], &[aria-selected="true"], &[data-state="active"] { background-color: var(--selected-fill, var(--accent-soft)); color: var(--text); font-weight: 600; }
 }
+.shell-ground { --selected-fill: var(--selected-on-shell); }

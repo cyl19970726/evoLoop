@@ -11,7 +11,7 @@ import { mutedText } from "../../shared/ui/PageParts";
 import { date, href } from "../../shared/ui/shared";
 import { budgetReminder, contextGauge, todayTiles, tokenText, usageDayText } from "./usagePresentation";
 
-const card = "flex min-w-0 flex-col gap-2 rounded-lg bg-muted px-3 py-2.5";
+const card = "flex min-w-0 flex-col gap-2 border-t border-border px-0 py-2.5";
 const bar: Record<string, string> = { done: "bg-primary", waiting: "bg-warning", blocked: "bg-destructive" };
 /** Where 项目用量 sits on 统筹安排; an agent's reminder links here. */
 export const projectUsageAnchor = "project-usage";
@@ -36,8 +36,8 @@ export function useUsageRead(projectId: string, token: string) {
 /** A bar for a share of a threshold (an agent's context, the project's daily limit), coloured by its state. */
 export function UsageBar({ ratio, tone, label, valueText }: { ratio: number; tone: string; label: string; valueText?: string | null }) {
   return <div role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(ratio * 100)} {...(valueText ? { "aria-valuetext": valueText } : {})}
-    className="h-1.5 w-full overflow-hidden rounded-full bg-field">
-    <div className={cn("h-full rounded-full", bar[tone] ?? "bg-primary")} style={{ width: `${Math.max(2, Math.round(ratio * 100))}%` }} />
+    className="h-1.5 w-full overflow-hidden rounded-sm bg-field">
+    <div className={cn("h-full rounded-sm", bar[tone] ?? "bg-primary")} style={{ width: `${Math.max(2, Math.round(ratio * 100))}%` }} />
   </div>;
 }
 
@@ -69,7 +69,7 @@ export function SessionUsageView({ usage, sessionId, projectId, nativeUsage = nu
       <h3 className="text-label font-semibold text-foreground">今日</h3>
       {/* Two by two: at four across a real day's figures (hundreds of millions of tokens) were cut to "2313…" with no unit. The figure
           wraps instead of being cut, and a rounded one carries its exact value as a tooltip and for screen readers. */}
-      {tiles ? <dl className="grid min-w-0 grid-cols-2 gap-1.5">{tiles.map(tile => <div key={tile.label} className="flex min-w-0 flex-col gap-0.5 rounded-md bg-raised px-2 py-1.5">
+      {tiles ? <dl className="grid min-w-0 grid-cols-2 gap-1.5">{tiles.map(tile => <div key={tile.label} className="flex min-w-0 flex-col gap-0.5 py-1.5">
         <dt className="text-caption text-muted-foreground">{tile.label}</dt>
         <dd className="m-0 min-w-0 text-small font-medium text-foreground tabular-nums [overflow-wrap:anywhere]" {...(tile.full ? { title: tile.full } : {})}>
           {tile.value}{tile.full && <span className="sr-only">（完整值 {tile.full}）</span>}

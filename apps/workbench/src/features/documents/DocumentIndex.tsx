@@ -51,7 +51,7 @@ export function DocumentIndex({ context }: { context: MutationContext }) {
         {canWrite && <Button variant="primary" size="compact" aria-expanded={create} onClick={() => setCreate(value => !value)}>保存文档</Button>}
       </div>
     </header>
-    {create && <section aria-label="保存过程文档" className="flex flex-col gap-3 rounded-xl bg-raised p-4 shadow-sm compact:p-5">
+    {create && <section aria-label="保存过程文档" className="flex flex-col gap-3 rounded-xl bg-raised p-4 border border-border compact:p-5">
       <h2 className="text-heading font-semibold text-foreground">保存过程文档</h2>
       {/* Both are the shared command form: a Markdown text written here, or an original uploaded as a file. */}
       <div className="flex min-w-0 flex-col gap-3">
