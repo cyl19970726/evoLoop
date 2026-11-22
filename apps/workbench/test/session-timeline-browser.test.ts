@@ -92,6 +92,7 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
           value = directReceipt;
         }
       }
+      else if (url.pathname.endsWith("/messages") && url.pathname.includes("/session-work/")) value = { items: [], nextCursor: null, metadata };
       else if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session"] }, capabilities: {} };
       else if (url.pathname === root) value = { id: projectId, title: "测试项目", createdAt: stamp };
       else if (url.pathname === `${root}/session-work`) {
@@ -116,7 +117,7 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
         url.pathname === `${root}/runtime/sessions` || url.pathname.startsWith(`${root}/references/`)) value = [];
       else if (url.pathname === `${root}/runtime`) value = { available: false, error: null, allowedCwds: [], grants: [] };
       else if (url.pathname === `${root}/orchestration/work-status`) value = { items: [] };
-      else if (url.pathname.startsWith(`${root}/session-work/`) && !url.pathname.includes("/timeline")) {
+      else if (url.pathname.startsWith(`${root}/session-work/`) && !url.pathname.includes("/timeline") && !url.pathname.endsWith("/messages")) {
         const key = decodeURIComponent(url.pathname.slice(`${root}/session-work/`.length));
         value = snapshotFor(key);
       } else if (url.pathname.endsWith("/timeline")) {
@@ -626,6 +627,16 @@ test("dual-source history keeps the reader anchor, exhausts cursors, merges live
   assert.ok(fillCountsBeforeReading.native > 0 && fillCountsBeforeReading.native < 3 &&
     fillCountsBeforeReading.messages > 0 && fillCountsBeforeReading.messages < 3,
     `autofill stops once the pane is filled, before its three-page budget: ${JSON.stringify(fillCountsBeforeReading)}`);
+  // Opening lands on the last reply, which here sits above newer saved messages; the reader asks for the latest to follow it.
+  await fillCase.page.evaluate(() => new Promise<void>(resolve => {
+    const timeline = [...document.querySelectorAll<HTMLElement>(".session-workspace")].find(element => element.getClientRects().length > 0)!
+      .querySelector<HTMLElement>(".workspace-timeline-scroll")!;
+    timeline.scrollTop = 0;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      timeline.scrollTop = timeline.scrollHeight;
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    }));
+  }));
   for (const viewport of [{ width: 390, height: 844 }, { width: 871, height: 871 }, { width: 2880, height: 1772 }]) {
     await fillCase.page.setViewportSize(viewport);
     await fillCase.page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
@@ -787,6 +798,7 @@ test("a reset survives a busy read, unavailable history and stale pagination res
       const root = `/api/projects/${projectId}`;
       let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
       if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session"] }, capabilities: {} };
+      else if (url.pathname.endsWith("/messages") && url.pathname.includes("/session-work/")) value = { items: [], nextCursor: null, metadata };
       else if (url.pathname === root) value = { id: projectId, title: "时间线重置竞态测试", createdAt: stamp };
       else if (url.pathname === `${root}/session-work`) value = { items: [snapshotFor(sessionKey).session], nextCursor: null,
         observationCursor: "0", metadata, totals: { current: 1, historical: 0, unclassified: 0 },
@@ -954,6 +966,7 @@ test("revocation invalidates a held homepage, inspector and cache until an expli
     if (url.pathname.startsWith("/api/")) {
       let value: unknown = { items: [], nextCursor: null, metadata }, status = 200;
       if (url.pathname === "/api/session") value = { principal: { actorId: "reader", projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }, capabilities: {} };
+      else if (url.pathname.endsWith("/messages") && url.pathname.includes("/session-work/")) value = { items: [], nextCursor: null, metadata };
       else if (url.pathname === root) value = { id: projectId, title: "撤权竞态测试", createdAt: stamp };
       else if (url.pathname === `${root}/session-work`) value = { items: [snapshotFor(sessionKey).session], nextCursor: null,
         observationCursor: "0", metadata, totals: { current: 1, historical: 0, unclassified: 0 },
@@ -993,7 +1006,7 @@ test("revocation invalidates a held homepage, inspector and cache until an expli
   assert.equal(await dispatch.count(), 1, "a Run input remains project dispatch even when the initiating actor is the current reader");
   assert.equal(await dispatch.getAttribute("data-turn-id"), "dispatch-turn");
   assert.equal(await dispatch.locator(".lucide-user-round").count(), 0, "project dispatch does not use the personal chat avatar");
-  assert.match(await dispatch.innerText(), /系统派发 · 本轮任务/);
+  assert.match(await dispatch.innerText(), /Leader 派发 · 任务「/);
   assert.ok((await dispatch.getByRole("link", { name: "查看任务与指令" }).getAttribute("href"))?.includes(taskId));
   assert.equal(await page.getByRole("article", { name: "我发出的消息", exact: true }).count(), 1, "only the ordinary saved message is mine");
   await page.locator(".workspace-tools-toggle").click();

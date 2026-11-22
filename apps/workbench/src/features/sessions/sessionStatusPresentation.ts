@@ -6,6 +6,11 @@ type StatusSource = Pick<ObservedSession, "kind" | "runtimeState" | "busy"> & {
   latestBusinessRun?: { id?: string; state: string } | null;
 };
 
+/** The words for the header, the bubble and the right rail while the agent answers a message: one phrase, so the three say the same. */
+export function replyingPhrase(from: "me" | string | null): string {
+  return from === "me" ? "正在回复你的消息" : from ? `正在回复${from}的消息` : "正在回复消息";
+}
+
 const lifecycle: Record<string, string> = {
   reserved: "已预留", creating: "创建中", ready: "就绪", closing: "关闭中", unknown: "生命周期待核对", closed: "已关闭",
 };
@@ -76,22 +81,47 @@ export function sessionHeaderStatusLabel(session: StatusSource, progress: Native
   return "原生执行状态待核对";
 }
 
+/**
+ * What the header may add to the status: for whom and for which Task (Task f2d82dfe). Each is read separately and says nothing when
+ * it is not read: an unread sender gives "正在回复消息", an unread title gives "正在执行任务", never a guess.
+ */
+export interface HeaderFacts {
+  /** The held provider's cause in words (额度不足或欠费 / 鉴权失败), when the agent's provider is paused. */
+  holdReason?: string | null;
+  /** Who sent the message being answered: "me", or the sender class's short name; null when not read. */
+  replyingTo?: "me" | string | null;
+  /** The title of the Task being worked on, when read. */
+  taskTitle?: string | null;
+  /** How long the agent has been idle, already in words ("3 小时"); null when no time is known. */
+  idleFor?: string | null;
+}
+
+/** How long, in the largest whole unit: 刚刚 / N 分钟 / N 小时 / N 天. */
+export function idleDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 60_000) return "刚刚";
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 60) return `${minutes} 分钟`;
+  const hours = Math.floor(minutes / 60);
+  return hours < 24 ? `${hours} 小时` : `${Math.floor(hours / 24)} 天`;
+}
+
 /** Header wording for people, from the same facts as sessionHeaderStatusLabel; it never promotes a record to live work. */
 export function agentHeaderStatus(session: StatusSource, progress: NativeProgressView | null,
-  currentRead: boolean, runtimeAvailable: boolean | null): string {
+  currentRead: boolean, runtimeAvailable: boolean | null, facts: HeaderFacts = {}): string {
   if (session.kind !== "owned" || session.runtimeState !== "ready") return agentStatusLabel(session);
+  if (facts.holdReason) return `已暂停（${facts.holdReason}）`;
   if (runtimeAvailable === false) return "连接不可用 · 状态待核对";
   if (!currentRead || runtimeAvailable !== true || progress?.freshness !== "live") return agentStatusLabel(session);
   const turn = progress.turn;
   if (progress.status === "active" && turn?.status === "inProgress") {
     if (session.busy !== true) return "运行记录不一致，待核对";
-    if (turn.source?.kind === "message") return "正在回复消息";
+    if (turn.source?.kind === "message") return replyingPhrase(facts.replyingTo ?? null);
     if (turn.source?.kind === "run") return turn.source.id === session.latestBusinessRun?.id && session.latestBusinessRun.state === "running"
-      ? "正在执行任务" : "正在执行 · 任务记录待核对";
+      ? facts.taskTitle ? `正在做任务「${facts.taskTitle}」（Leader 派发）` : "正在执行任务" : "正在执行 · 任务记录待核对";
     return "正在运行 · 来源待核对";
   }
   if (session.busy === true) return "有在途工作 · 执行待核对";
-  if (progress.status === "idle" && turn?.status !== "inProgress" && session.busy === false) return "空闲";
+  if (progress.status === "idle" && turn?.status !== "inProgress" && session.busy === false) return facts.idleFor ? `空闲 · 已 ${facts.idleFor}` : "空闲";
   return "执行状态待核对";
 }
 
