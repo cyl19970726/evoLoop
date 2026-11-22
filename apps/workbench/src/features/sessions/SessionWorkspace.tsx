@@ -209,6 +209,9 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
     return `${href(projectId, "task", taskId)}?${params}`;
   }
   const panel = useContextPanel();
+  // 会话详情 in the header is this page's one switch for the right column; the shell's own 收起右栏 / 展开右栏 step aside.
+  const claimSwitch = panel?.claimSwitch;
+  useEffect(() => active ? claimSwitch?.() : undefined, [claimSwitch, active]);
   const panelTab: PanelTab = tab === "results" ? "results" : "activity";
   // A link to this agent's queue or results asks for that view: on a wide window the right column opens on it.
   // Below 1100px the column is a drawer and opens only when the reader asks.

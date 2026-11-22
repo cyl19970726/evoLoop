@@ -192,7 +192,7 @@ test("the composer sends, adds, queues, stops, lists skills and agents, and says
     // The right column: inline from 1100px, a drawer that opens only when asked below that.
     if (viewport.width < 1100) {
       assert.equal(await page.locator(".session-panel").isVisible(), false, `${viewport.width}: the right column does not open by itself`);
-      await page.getByRole("button", { name: "展开右栏" }).click();
+      { const details = page.getByRole("button", { name: "会话详情" }); if (await details.getAttribute("aria-expanded") !== "true") await details.click(); }
     }
     const panel = page.locator(".session-panel");
     await panel.getByRole("tab", { name: "动态" }).waitFor();

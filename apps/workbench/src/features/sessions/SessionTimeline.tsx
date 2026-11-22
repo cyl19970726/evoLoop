@@ -345,6 +345,13 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, titleO
   // Message ids the page shows, so the message list is read far enough to tell who sent each and what was answered.
   const wantedMessages = useMemo(() => [...new Set([...settledEntries, ...timeline.pending].flatMap(entry => entry.origin?.kind === "message" ? [entry.origin.id] : []))], [settledEntries, timeline.pending]);
   const activeId = timeline.live?.activeTurnId ?? "";
+  // The reply reached the timeline on the 1.5 s update channel; the receipt and the header read the snapshot. Read it now instead of at its next tick, so the three settle together.
+  const seenActive = useRef(activeId);
+  const settleRead = useRef(onApplied); settleRead.current = onApplied;
+  useEffect(() => {
+    const was = seenActive.current; seenActive.current = activeId;
+    if (was && !activeId) settleRead.current?.();
+  }, [activeId]);
   const facts = useMessageFacts(context.projectId, snapshot.session.key, wantedMessages, timeline.loaded && !timeline.denied, `${settledEntries.length}:${timeline.pending.length}:${timeline.turns.length}:${activeId}`);
   const rounds = useMemo(() => buildRounds(settledEntries, timeline.pending, timeline.turns, { messages: facts.messages, me: context.principal.actorId }),
     [settledEntries, timeline.pending, timeline.turns, facts.messages, context.principal.actorId]);

@@ -147,7 +147,8 @@ export function Composer({
       onChange(next);
       onPickAgent?.(entry.item);
       const position = menu.start + entry.item.name.length + 2;
-      requestAnimationFrame(() => { textarea.current?.setSelectionRange(position, position); setCaret(position); });
+      // Only while nothing has been typed since: a late frame must not pull the caret back into the middle of what the person is writing.
+      requestAnimationFrame(() => { if (textarea.current && textarea.current.value === next) { textarea.current.setSelectionRange(position, position); setCaret(position); } });
     }
     textarea.current?.focus();
   }

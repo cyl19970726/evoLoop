@@ -31,7 +31,7 @@ test("the agent's right column shows what it does now and next on its first scre
     await page.getByRole("button", { name: "进入", exact: true }).click();
     await page.getByRole("heading", { level: 1 }).filter({ visible: true }).first().waitFor();
     // Below 1100px the column is a drawer (a sheet from the bottom on a phone) and opens only when asked.
-    if (width < 1100) { await page.getByRole("button", { name: "展开右栏" }).filter({ visible: true }).first().click(); await page.getByRole("dialog").first().waitFor(); }
+    if (width < 1100) { { const details = page.getByRole("button", { name: "会话详情" }).filter({ visible: true }).first(); if (await details.getAttribute("aria-expanded") !== "true") await details.click(); } await page.getByRole("dialog").first().waitFor(); }
     const panel = page.locator(".session-panel").filter({ visible: true }).first();
     await panel.locator("section[aria-label=正在做]").waitFor();
     // The sheet slides in: measure once it has stopped moving.
