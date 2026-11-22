@@ -27,7 +27,7 @@ export function SettingsSection({ id, title, children }: { id?: string; title: s
 
 /** Label / value rows inside one raised card; values wrap instead of overflowing. */
 export function Facts({ rows }: { rows: Array<[string, ReactNode]> }) {
-  return <dl className="rounded-xl bg-raised px-4 shadow-sm">
+  return <dl className="rounded-xl bg-raised px-4 border border-border">
     {rows.map(([label, value]) => <div key={label} className="grid gap-1 border-t border-border py-3 first:border-t-0 compact:grid-cols-[160px_minmax(0,1fr)] compact:gap-4">
       <dt className="text-small text-text-secondary">{label}</dt>
       <dd className="m-0 min-w-0 break-words text-small text-foreground">{value}</dd>
@@ -38,7 +38,7 @@ export function Facts({ rows }: { rows: Array<[string, ReactNode]> }) {
 export interface LinkItem { href: string; title: string; detail: string; icon?: ReactNode; external?: boolean }
 
 export function LinkList({ items, label }: { items: LinkItem[]; label: string }) {
-  return <ul aria-label={label} className="flex flex-col overflow-hidden rounded-xl bg-raised shadow-sm">
+  return <ul aria-label={label} className="flex flex-col overflow-hidden rounded-xl bg-raised border border-border">
     {items.map(item => <li key={item.href} className="border-t border-border first:border-t-0">
       <a href={item.href} {...item.external ? { target: "_blank", rel: "noreferrer" } : {}}
         className="flex items-center gap-3 px-4 py-3 text-foreground outline-none hover:bg-selected focus-visible:shadow-[var(--focus-ring)]">

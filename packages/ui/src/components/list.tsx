@@ -32,7 +32,7 @@ export function ListRow({ leading, title, meta, trailing, selected, href, onSele
     </>
   );
   const rowClass = cn(
-    "selected-edge flex w-full items-center gap-2.5 rounded-md border-0 px-3 py-2 text-left no-underline outline-none transition-colors duration-150 focus-visible:shadow-[var(--focus-ring)]",
+    "selected-mark flex w-full items-center gap-2.5 rounded-md border-0 px-3 py-2 text-left no-underline outline-none transition-colors duration-150 focus-visible:shadow-[var(--focus-ring)]",
     selected ? "bg-accent" : "bg-transparent hover:bg-field/60",
     (href || onSelect) && "cursor-pointer",
     className,

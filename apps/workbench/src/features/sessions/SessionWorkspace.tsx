@@ -103,7 +103,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
     const result = await sessionClient("", projectId).snapshot(sessionKey, signal);
     if (result.session.key !== sessionKey) throw new Error("会话响应与所选智能体不符");
     return result;
-  }, { enabled: active, refetchInterval: active && owned ? 5000 : false, retry: false });
+  }, { enabled: active, refetchInterval: active && owned ? 2000 : false, retry: false });
   const snapshot = snapshotRead.data?.session.key === sessionKey ? snapshotRead.data : undefined;
   const snapshotOk = !!snapshot && !snapshotRead.isError;
   const runtimeStatus = useProjectQuery(projectId, ["runtime", "status"], () => runtimeClient("", projectId).status(), { enabled: active && owned, retry: false });
@@ -209,6 +209,9 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
     return `${href(projectId, "task", taskId)}?${params}`;
   }
   const panel = useContextPanel();
+  // 会话详情 in the header is this page's one switch for the right column; the shell's own 收起右栏 / 展开右栏 step aside.
+  const claimSwitch = panel?.claimSwitch;
+  useEffect(() => active ? claimSwitch?.() : undefined, [claimSwitch, active]);
   const panelTab: PanelTab = tab === "results" ? "results" : "activity";
   // A link to this agent's queue or results asks for that view: on a wide window the right column opens on it.
   // Below 1100px the column is a drawer and opens only when the reader asks.
@@ -395,7 +398,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
         : !lineRead.data.available ? { status: "none", reason: "服务还不提供智能体队伍" } : { status: "ready", entries: lineEntries };
   const next = nextWork({ kind: session.kind, currentTaskId: now.task?.id ?? null, line, queue: current.queue, assignments: current.assignments,
     partial: current.metadata.partial, titleOf, phaseOf });
-  const card = "flex min-w-0 flex-col gap-1.5 rounded-lg bg-muted px-3 py-2.5";
+  const card = "flex min-w-0 flex-col gap-1.5 border-t border-border px-0 py-2.5";
   const cardHeading = "flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1";
   const taskTitle = (taskId: string, title: string | null) => <a className="min-w-0 text-small font-medium text-foreground [overflow-wrap:anywhere] hover:underline" href={taskHref(taskId)}>{title || "任务标题暂不可读"}</a>;
   // 正在做: one Task (or a message, 空闲, or why it cannot be told) with its stage, how it was taken on and how long it has run.
@@ -463,7 +466,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
     outputTokens: observation.progress.usage.total.outputTokens ?? null, current: observation.progress.freshness === "live" && nativeReadCurrent } : null;
   const usageCard = session.kind === "owned" && session.target.kind === "owned"
     ? <SessionUsagePanel projectId={projectId} token={context.token} sessionId={session.target.sessionId} nativeUsage={nativeUsage} />
-    : <section aria-label="上下文与用量" className="session-usage flex min-w-0 flex-col gap-1 rounded-lg bg-muted px-3 py-2.5">
+    : <section aria-label="上下文与用量" className="session-usage flex min-w-0 flex-col gap-1 border-t border-border px-0 py-2.5">
       <h2 className="text-label font-semibold text-foreground">上下文与用量</h2>
       <p className="text-small text-text-secondary">外部接入的智能体没有同步上下文和用量，不按 0 计。</p>
     </section>;
@@ -520,7 +523,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
           <p className="flex min-w-0 items-center gap-1.5 font-semibold"><SessionIdentityMark target={session.target} identity={session.identity} name={name} size="small" /><span className="truncate">{name}</span></p>
           <p className="text-small text-text-secondary">{session.roles.map(role => role.title).join("、") || "职责待核对"}</p>
           <p className="mt-1 text-caption text-muted-foreground">{session.kind === "owned" ? "项目受管" : "外部接入"} · {sessionMembership(session.membership)} · 所在机器待接入</p>
-          <p className="mt-1 flex items-center gap-1.5 text-caption"><span aria-hidden="true" className={busyNow ? "size-1.5 rounded-full bg-primary" : "size-1.5 rounded-full bg-border"} />{statusLabel}</p>
+          <p className="mt-1 flex items-center gap-1.5 text-caption"><span aria-hidden="true" className={busyNow ? "size-1.5 rounded-full bg-running" : "size-1.5 rounded-full bg-border"} />{statusLabel}</p>
         </div>
       </section>
       <Tabs value={panelTab} onValueChange={value => showPanelTab(value as PanelTab)}>
@@ -548,16 +551,16 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
     {/* While the right column is closed its toggle sits at the top right of this area: the header leaves room for it. */}
     <header className="session-detail-header mb-2 flex min-h-11 min-w-0 shrink-0 items-center gap-2">
       <div className="session-detail-heading flex min-w-0 flex-1 items-center gap-2 compact:justify-center">
-        <div className="flex min-w-0 items-center gap-2 rounded-full bg-raised py-1 pl-1.5 pr-3.5 shadow-sm">
+        <div className="flex min-w-0 items-center gap-2 py-1 pl-1.5 pr-3.5">
           <AgentAvatar seed={session.key} roleSeed={session.roles[0]?.id ?? session.title} size={26} />
           <h1 className="min-w-0 truncate text-body font-semibold">{name}</h1>
-          <span aria-hidden="true" className={busyNow ? "size-1.5 shrink-0 rounded-full bg-primary" : "size-1.5 shrink-0 rounded-full bg-border"} />
+          <span aria-hidden="true" className={busyNow ? "size-1.5 shrink-0 rounded-full bg-running" : "size-1.5 shrink-0 rounded-full bg-border"} />
           <span className="session-status-badge min-w-0 truncate text-caption text-muted-foreground">{statusLabel}</span>
         </div>
       </div>
       <div className="session-workspace-actions flex shrink-0 items-center gap-0.5">
         {headerButton("重新读取", <RefreshCw aria-hidden="true" className={snapshotRead.isFetching ? "animate-spin motion-reduce:animate-none" : undefined} />, reread, { disabled: snapshotRead.isFetching && !snapshotRead.isRefetching })}
-        {headerButton("会话详情", <Info aria-hidden="true" />, () => showInformation(!informationOpen), { "aria-expanded": informationOpen, "aria-controls": "session-information-panel" })}
+        {headerButton("会话详情", <Info aria-hidden="true" />, () => { if (panel?.open) panel.setOpen(false); else showInformation(true); }, { "aria-expanded": !!panel?.open, "aria-controls": "session-information-panel" })}
         {headerButton(session.kind === "owned" ? "关闭受管智能体" : "归档与归类", session.kind === "owned" ? <X aria-hidden="true" /> : <FileText aria-hidden="true" />,
           () => { panel?.setOpen(true); setCloseOpen(value => !value); }, { "aria-expanded": closeOpen, "aria-controls": "session-close-panel" })}
       </div>
@@ -571,7 +574,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
     </div>
     {active && <SessionTimeline key={`${context.principal.actorId}:${projectId}:${session.key}`} context={context} snapshot={current} taskHref={taskHref} titleOf={titleOf}
       refresh={refresh + readAgain} reauthorizeVersion={accessReadAgain} onApplied={() => void snapshotRead.refetch()} progress={observation.progress}
-      waitingTurnIds={waitingTurnIds} composerFacts={configuredModel ? [`模型 ${String(configuredModel)}`] : []}>
+      waitingTurnIds={waitingTurnIds} composerFacts={configuredModel ? [`模型 ${String(configuredModel)}`] : []} holdReason={headerFacts.holdReason ?? null}>
       {session.kind === "owned" && session.target.kind === "owned" && (native.questions.some(request => request.state === "pending" || request.state === "response_saved") || native.error) &&
         <NativeSessionPanel projectId={projectId} sessionId={session.target.sessionId} questions={native.questions} progress={observation.progress} progressError={observation.error} progressCurrentRead={nativeReadCurrent && !observation.error}
           readError={(snapshotRead.isError ? errorText(snapshotRead.error) : "") || native.error}

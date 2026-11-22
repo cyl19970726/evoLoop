@@ -162,9 +162,9 @@ test("long Run activity and expanded source stay inside the Session page at mobi
   await page.getByRole("heading", { name: "窄屏活动测试会话" }).waitFor();
   // At 390px the agent's facts live in the right column, a drawer that opens only when asked (展开右栏). The header's
   // 重新读取 sits under that drawer, so the helpers close it before rereading and open it again to read the facts.
-  const panelToggle = page.getByRole("button", { name: "展开右栏" });
+  const panelToggle = page.getByRole("button", { name: "会话详情" });   // the one switch for the column
   async function openPanel() {
-    if (await panelToggle.isVisible()) { await panelToggle.click(); await page.getByRole("button", { name: "关闭右栏" }).waitFor(); }
+    if (!(await page.locator(".session-panel").isVisible())) { await panelToggle.click(); await page.getByRole("button", { name: "关闭右栏" }).waitFor(); }
     await page.locator(".session-panel").waitFor({ state: "visible" });
   }
   async function closePanel() {
@@ -267,7 +267,7 @@ test("long Run activity and expanded source stay inside the Session page at mobi
     assert.ok((layout.activity ?? 0) <= (layout.activityWidth ?? 0), `${width}px activity overflow: ${JSON.stringify(layout)}`);
     if (process.env.EVOLOOP_CAPTURE_ACTIVITY_NARROW) await page.screenshot({ path: `/tmp/evoloop-activity-${width}.png`, fullPage: true });
   }
-  await page.setViewportSize({ width: 390, height: 520 });
+  await page.setViewportSize({ width: 390, height: 470 });
   await openAuditPanel();
   await page.locator(".session-feed:visible").getByLabel("活动范围").selectOption("all");
   // The details scroll inside the right column's own pane; the page itself does not move.

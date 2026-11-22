@@ -63,7 +63,7 @@ export function RolePresence({ context, role }: { context: MutationContext; role
     {read.isPending && <LoadingState lines={2} label="正在读取承载" />}
     {error && <Notice tone="error" title="读取失败">读取失败：{error}；{read.data ? "所示内容是上次读回，不能视为当前状态。" : "当前身份没有已核对的承载与领域，不能沿用其他身份的入口。"}<ErrorDetails error={read.error} /></Notice>}
     {current && hosts.length === 0 && domains.length === 0 && <p className="text-small text-text-secondary">尚无已登记的承载或业务领域。</p>}
-    {(hosts.length > 0 || domains.length > 0) && <ul aria-label="承载与业务领域" className="flex flex-col overflow-hidden rounded-xl bg-raised shadow-sm">
+    {(hosts.length > 0 || domains.length > 0) && <ul aria-label="承载与业务领域" className="flex flex-col overflow-hidden rounded-xl bg-raised border border-border">
       {hosts.map(host => <li key={host.id} className="flex min-w-0 flex-col gap-1.5 border-t border-border px-4 py-3 first:border-t-0">
         <strong className="text-small font-semibold text-foreground">{hostTitle(host)}</strong>
         {host.host.kind === "owned"

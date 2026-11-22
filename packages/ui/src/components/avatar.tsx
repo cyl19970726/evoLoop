@@ -160,7 +160,7 @@ export function AgentMark({ color, icon, label, size = 28, className }: AgentMar
   const value = agentMarkColors[color];
   return (
     <span role="img" aria-label={label} title={label} data-mark-color={color}
-      className={cn("inline-flex shrink-0 items-center justify-center rounded-md border-[1.5px] border-solid", className)}
+      className={cn("inline-flex shrink-0 items-center justify-center rounded-full border-[1.5px] border-solid", className)}
       style={{ width: size, height: size, color: value, borderColor: value, background: `color-mix(in srgb, ${value} 10%, var(--surface-raised))` }}>
       {icon}
     </span>

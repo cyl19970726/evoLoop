@@ -36,7 +36,7 @@ export function nativeReadError(cause: unknown): string {
 export function RunList({ context, runs, readOnlySessions, empty }: { context: MutationContext; runs: readonly RuntimeRunRecord[]; readOnlySessions: ReadonlySet<string>; empty: string }) {
   if (!runs.length) return <p className="text-small text-text-secondary">{empty}</p>;
   const sorted = [...runs].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || a.id.localeCompare(b.id));
-  return <ul aria-label="运行记录" className="flex flex-col overflow-hidden rounded-xl bg-raised shadow-sm">
+  return <ul aria-label="运行记录" className="flex flex-col overflow-hidden rounded-xl bg-raised border border-border">
     {sorted.map(run => <li key={`${run.id}:${run.version}`} className="border-t border-border first:border-t-0">
       <RunItem context={context} run={run} mayAbandon={readOnlySessions.has(run.sessionId)} />
     </li>)}

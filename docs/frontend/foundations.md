@@ -3,6 +3,8 @@
 本页定义工作台共用的设计 token、Logo 和状态的视觉表达。数值只在 `packages/ui/src/tokens.css` 维护一份，文档只说明用途和规则。
 
 **目标与现状。** 视觉已定稿（[DEC-037](../decisions.md#用户已确定的方向)，具体色值由 [DEC-049](../decisions.md#用户已确定的方向) 改为浅色“宣纸”、深色“松烟”）：暖纸底、墨蓝强调、陶土品牌色（Logo、账号头像和按钮，DEC-051），浅色为默认，另有一套深色。token 在 `packages/ui/src/tokens.css`，Tailwind 主题在 `packages/ui/src/theme.css`，元素的默认样式（正文字体与行高、文字颜色、等宽数字、键盘焦点框、选中底色、减少动效）在 `packages/ui/src/base.css`，也只引用 token。旧的全局 CSS 和旧变量名已在 #229 PR10 删除，工作台只有一个样式入口 `apps/workbench/src/main.css`，不写规则，页面用 Tailwind 工具类引用 token。`apps/workbench/test/style-budget.test.ts` 固定这几条：颜色字面量只出现在 `tokens.css`（头像插画的配色在 `avatar.tsx`，见下文），工作台不写 CSS 规则，源码里不再有 `data-legacy`。迁移由[前端改版 issue #229](https://github.com/cyl19970726/evoLoop/issues/229) 跟踪。
+> **2026-11-22 起，色值、圆角、阴影、按钮与选中的写法以[设计语言](principles.md#设计语言)和 `packages/ui/src/tokens.css` 为准**（Task 870a2e38-953d-467c-ad9f-4269be69bd93）：中性灰加墨绿，不用陶土做按钮，选中是中性底加粗字，没有胶囊和左侧竖条。下面凡与之冲突的色值和 DEC-051 的叙述，是被取代的历史记录。
+
 
 ## 颜色
 

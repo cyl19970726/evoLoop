@@ -193,7 +193,7 @@ function CandidateDetail({ projectId, read, actions }: { projectId: string; read
 
 function RetractSources({ projectId, sources, read, actions }: { projectId: string; sources: SourceDocument[] | undefined; read: SourcesRead; actions: ReviewActions }) {
   const error = read.error;
-  return <details className="group rounded-lg bg-muted px-4 py-3">
+  return <details className="group border-t border-border px-0 py-3">
     <summary className="cursor-pointer text-small font-semibold text-foreground outline-none focus-visible:shadow-[var(--focus-ring)]">撤回固定来源</summary>
     <div className="mt-3 flex flex-col gap-3">
       <p className={quiet}>来源被证明错误或不该再用时撤回。撤回会把引用它的知识页标为待复核；旧版本仍可回读。</p>

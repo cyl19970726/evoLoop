@@ -136,7 +136,7 @@ export function EvaluationDetail({ context, read, selectedRevision, hold }: {
           <p className={cn(muted, "m-0")}>修订追加，不覆盖旧版；每版的尝试与结论各自保留。</p>
           <ul className="m-0 flex list-none flex-col gap-1 p-0">{[...revisions].sort((a, b) => b.version - a.version).map(item => <li key={item.id}>
             <a aria-current={item.id === revision.id ? "page" : undefined} href={evaluationHref(projectId, item.evaluationId, item.id)}
-              className={cn("selected-edge flex flex-col rounded-md px-2 py-1.5 text-small outline-none hover:bg-selected focus-visible:shadow-[var(--focus-ring)]", item.id === revision.id ? "bg-accent font-medium text-accent-strong hover:bg-accent" : "text-text-secondary")}>
+              className={cn("selected-mark flex flex-col rounded-md px-2 py-1.5 text-small outline-none hover:bg-selected focus-visible:shadow-[var(--focus-ring)]", item.id === revision.id ? "bg-accent font-semibold text-foreground hover:bg-accent" : "text-text-secondary")}>
               <span>v{item.version}{item.id === latest?.id ? " · 最新" : ""}</span><span className={muted}>{date(item.createdAt)} · {actorText(item.actorId)}</span>
             </a></li>)}</ul>
         </PanelSection>
@@ -154,7 +154,7 @@ export function EvaluationDetail({ context, read, selectedRevision, hold }: {
 }
 
 function Glance({ title, text, onClick }: { title: string; text: ReactNode; onClick(): void }) {
-  return <Button variant="row" onClick={onClick} className="min-w-0 flex-col items-stretch gap-1 rounded-xl bg-raised px-4 py-3 shadow-sm hover:bg-selected">
+  return <Button variant="row" onClick={onClick} className="min-w-0 flex-col items-stretch gap-1 rounded-xl bg-raised px-4 py-3 border border-border hover:bg-selected">
     <strong className="text-small font-semibold text-foreground">{title}</strong><span className="break-words text-caption text-muted-foreground">{text}</span>
   </Button>;
 }

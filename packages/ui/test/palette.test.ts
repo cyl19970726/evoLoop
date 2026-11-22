@@ -4,9 +4,8 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-// DEC-049: light "xuan paper" and dark "pine soot". The values below are section 3 of the colour specification
-// (process Document 8a853985, revision 7986f123 = rev 2 of 2026-11-15: light warning #825805); tokens.css must match them exactly, and every text colour must reach 4.5:1
-// on every surface it is drawn on (WCAG AA, small text). Both checks read tokens.css itself, so a changed token fails here in CI.
+// The design language of 2026-11-22 (process Document 71eed733, revision 38872c80, section two: neutral grey with ink green). tokens.css must hold these values exactly,
+// and every text colour must reach 4.5:1 on every surface it is drawn on (WCAG AA, small text). Both checks read tokens.css itself, so a changed token fails here in CI.
 const tokensPath = join(dirname(fileURLToPath(import.meta.url)), "../src/tokens.css");
 const css = readFileSync(tokensPath, "utf8");
 const darkAt = css.indexOf(':root[data-theme="dark"]');
@@ -19,42 +18,44 @@ function valueOf(mode: "light" | "dark", name: string): string {
   return hex.length === 4 ? `#${[...hex.slice(1)].map(c => c + c).join("")}` : hex;
 }
 
-// Palette B (Task a523f45e, from the report of Task 294a4d38): the surfaces and lines pulled further apart, `text-muted`, light `warning` and dark `danger` adjusted to keep 4.5:1.
 const specification: Array<[string, string, string]> = [
-  ["surface-sunken", "#e4ded4", "#090807"],
-  ["background", "#faf8f3", "#171513"],
-  ["surface-raised", "#ffffff", "#2f2c28"],
-  ["surface-muted", "#eee9e0", "#232019"],
-  ["surface-field", "#e1dbd0", "#363330"],
-  ["surface-selected", "#dcd4c8", "#3c3833"],
-  ["text", "#1c1714", "#eae7e3"],
-  ["text-secondary", "#49423d", "#c0bbb6"],
-  ["text-muted", "#5b554f", "#b0aba5"],
-  ["border", "#d2cbc0", "#3d3a35"],
-  ["border-strong", "#bbb1a4", "#55514b"],
-  ["accent", "#2a52a8", "#90aef3"],
-  ["accent-strong", "#1b4090", "#b2c9fb"],
-  ["accent-soft", "#e5edfc", "#222d47"],
-  ["on-accent", "#ffffff", "#0f1216"],
+  ["surface-sunken", "#f4f4f3", "#1a1a1a"],
+  ["background", "#ffffff", "#212121"],
+  ["surface-raised", "#ffffff", "#282828"],
+  ["surface-muted", "#f7f7f6", "#252525"],
+  ["surface-field", "#f2f2f1", "#282828"],
+  ["surface-selected", "#ececea", "#333333"],
+  ["selected-on-shell", "#e4e4e2", "#333333"],
+  ["border", "#e6e6e4", "#343434"],
+  ["border-strong", "#d0d0cd", "#474747"],
+  ["text", "#171717", "#e8e8e8"],
+  ["text-secondary", "#525252", "#adadad"],
+  ["text-muted", "#666666", "#9c9c9c"],
+  ["accent", "#0b6b52", "#6fd3ae"],
+  ["accent-strong", "#095843", "#8fe0c2"],
+  ["accent-soft", "#ececea", "#333333"],
+  ["on-accent", "#ffffff", "#0c1a15"],
+  ["running", "#2456c8", "#8fb0ff"],
   ["warning", "#775000", "#e3b667"],
-  ["warning-soft", "#fceed1", "#362913"],
+  ["warning-soft", "#fceed1", "#2e2413"],
   ["danger", "#a3203a", "#f08e92"],
-  ["danger-soft", "#fde9e9", "#3f1e20"],
-  ["done", "#72487c", "#c99dd3"],
-  ["done-soft", "#f5eaf7", "#332337"],
-  ["brand", "#b1582b", "#e18c5f"],
-  ["on-brand", "#ffffff", "#15110d"],
-  // DEC-051: the secondary button (soft brand fill; values from the decision) and the solid hover/pressed fills of both buttons (implementer's choice, checked below).
-  ["brand-soft", "#f6e6dc", "#3a2518"],
-  ["on-brand-soft", "#8f431d", "#f0a77f"],
-  ["brand-hover", "#9c4a22", "#ea9a70"],
-  ["brand-pressed", "#8a3f1b", "#f0a984"],
-  ["brand-soft-hover", "#f0d9ca", "#46301f"],
-  ["brand-soft-pressed", "#e9ccb9", "#523a27"],
-  ["user-bubble", "#1c1714", "#393633"],
-  ["on-user-bubble", "#fcfbf8", "#eae7e3"],
-  ["count-bg", "#1c1714", "#eae7e3"],
-  ["count-fg", "#fcfbf8", "#161412"],
+  ["danger-soft", "#fde9e9", "#351b1d"],
+  ["done", "#525252", "#adadad"],
+  ["done-soft", "#f2f2f1", "#282828"],
+  ["brand", "#0f6b53", "#5cc9a3"],
+  ["on-brand", "#ffffff", "#0c1a15"],
+  ["brand-hover", "#0c5c47", "#72d3b1"],
+  ["brand-pressed", "#0a4d3c", "#88dcbf"],
+  ["brand-soft", "#ffffff", "#282828"],
+  ["on-brand-soft", "#171717", "#e8e8e8"],
+  ["brand-soft-hover", "#f2f2f1", "#333333"],
+  ["brand-soft-pressed", "#ececea", "#3d3d3d"],
+  ["logo", "#2a52a8", "#90aef3"],
+  ["on-logo", "#ffffff", "#0f1216"],
+  ["user-bubble", "#ececea", "#333333"],
+  ["on-user-bubble", "#171717", "#e8e8e8"],
+  ["count-bg", "#171717", "#e8e8e8"],
+  ["count-fg", "#ffffff", "#212121"],
 ];
 
 test("tokens.css holds the specified light and dark value of every colour token", () => {
@@ -81,20 +82,15 @@ export function contrast(a: string, b: string): number {
   return (hi + 0.05) / (lo + 0.05);
 }
 
-// Every text colour with every surface it is drawn on. Neutral text and role colours go on all six surfaces; role colours also on their own soft fill.
-const surfaces = ["surface-sunken", "background", "surface-raised", "surface-muted", "surface-field", "surface-selected"];
+// Every text colour with every surface it is drawn on. Neutral text and role colours go on all surfaces, the selected fills included.
+const surfaces = ["surface-sunken", "background", "surface-raised", "surface-muted", "surface-field", "surface-selected", "selected-on-shell"];
 const pairs: Array<[string, string]> = [];
 for (const text of ["text", "text-secondary", "text-muted"]) for (const surface of surfaces) pairs.push([text, surface]);
-// Role colours are drawn as text on every surface, including the field (inputs) and the selected row (rework of Task d101d50f: warning measured 4.21 and 3.96 there).
-for (const role of ["accent", "accent-strong", "warning", "danger", "done"]) for (const surface of surfaces) pairs.push([role, surface]);
-pairs.push(["accent", "accent-soft"], ["accent-strong", "accent-soft"], ["warning", "warning-soft"], ["danger", "danger-soft"], ["done", "done-soft"],
-  ["on-accent", "accent"], ["on-brand", "brand"], ["on-user-bubble", "user-bubble"], ["count-fg", "count-bg"],
-  ["text", "accent-soft"], ["text", "warning-soft"], ["text", "danger-soft"], ["text", "done-soft"], ["text-secondary", "warning-soft"], ["text-secondary", "danger-soft"],
-  ["text-muted", "surface-selected"]);
-// DEC-051: a selected row or tab is accent-soft with accent-strong text; text and every role colour must read on it (status colours on the new selected fill: ≥4.5).
-for (const text of ["accent-strong", "text", "text-secondary", "text-muted", "accent", "warning", "danger", "done"]) pairs.push([text, "accent-soft"]);
-// DEC-051: the primary button in its three states (white / near-black on brand) and the secondary button in its three states, in both modes.
-pairs.push(["on-brand", "brand-hover"], ["on-brand", "brand-pressed"], ["on-brand-soft", "brand-soft"], ["on-brand-soft", "brand-soft-hover"], ["on-brand-soft", "brand-soft-pressed"]);
+for (const role of ["accent", "accent-strong", "running", "warning", "danger", "done"]) for (const surface of surfaces) pairs.push([role, surface]);
+pairs.push(["warning", "warning-soft"], ["danger", "danger-soft"], ["done", "done-soft"], ["text", "warning-soft"], ["text", "danger-soft"], ["text-secondary", "warning-soft"], ["text-secondary", "danger-soft"],
+  ["on-accent", "accent"], ["on-brand", "brand"], ["on-brand", "brand-hover"], ["on-brand", "brand-pressed"], ["on-user-bubble", "user-bubble"], ["count-fg", "count-bg"], ["on-logo", "logo"],
+  ["on-brand-soft", "brand-soft"], ["on-brand-soft", "brand-soft-hover"], ["on-brand-soft", "brand-soft-pressed"],
+  ["text", "accent-soft"], ["text-secondary", "accent-soft"], ["text-muted", "accent-soft"], ["accent", "accent-soft"]);
 
 test("every text colour reaches 4.5:1 on its background, in both modes", () => {
   const low: string[] = [];
@@ -110,7 +106,7 @@ test("every text colour reaches 4.5:1 on its background, in both modes", () => {
   assert.deepEqual(low, []);
 });
 
-test("no green status colour: no role colour has a hue between 90 and 160 degrees", () => {
+test("green is for links, focus and the primary button only: running, done, warning and danger are not green, and done is a neutral grey", () => {
   const hue = (hex: string) => {
     const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255) as [number, number, number];
     const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
@@ -118,21 +114,32 @@ test("no green status colour: no role colour has a hue between 90 and 160 degree
     const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
     return (h * 60 + 360) % 360;
   };
-  for (const mode of ["light", "dark"] as const) for (const name of ["accent", "accent-strong", "warning", "danger", "done", "brand"]) {
-    const h = hue(valueOf(mode, name));
-    assert.ok(h === null || h < 90 || h > 160, `${mode} --${name} is green-ish (hue ${h?.toFixed(0)})`);
-  }
-});
-
-test("DEC-051: the brand colour is a button colour, not a state: no state, count or link colour equals a brand token", () => {
   for (const mode of ["light", "dark"] as const) {
-    const brandish = ["brand", "brand-soft", "brand-hover", "brand-pressed", "brand-soft-hover", "brand-soft-pressed"].map(name => valueOf(mode, name));
-    for (const name of ["accent", "accent-strong", "accent-soft", "warning", "warning-soft", "danger", "danger-soft", "done", "done-soft", "count-bg", "count-fg"])
-      assert.ok(!brandish.includes(valueOf(mode, name)), `${mode} --${name} must not equal a brand token`);
+    for (const name of ["running", "warning", "danger", "logo"]) {
+      const h = hue(valueOf(mode, name));
+      assert.ok(h === null || h < 90 || h > 160, `${mode} --${name} is green-ish (hue ${h?.toFixed(0)})`);
+    }
+    assert.equal(hue(valueOf(mode, "done")), null, `${mode} --done is a neutral grey`);
+    assert.notEqual(valueOf(mode, "running"), valueOf(mode, "accent"), `${mode} running blue is not the link green`);
+    for (const name of ["surface-sunken", "background", "surface-raised", "surface-selected", "border", "text"]) assert.equal(hue(valueOf(mode, name)), null, `${mode} --${name} is a neutral grey`);
   }
 });
 
-test("DEC-051: hover and pressed are solid fills, not opacity, on the primary and secondary button", () => {
+test("the shapes: two radii (6 for containers, 4 for controls), no shadow but on floating layers, no edge bar and no pill in the components", () => {
+  const read = (path: string) => readFileSync(join(dirname(fileURLToPath(import.meta.url)), path), "utf8");
+  const radii = Object.fromEntries(["inline", "control", "card", "panel", "pill"].map(name => [name, css.match(new RegExp(`--radius-${name}:\\s*(\\d+)px`))?.[1]]));
+  assert.deepEqual(radii, { inline: "4", control: "4", card: "6", panel: "6", pill: "4" });
+  assert.match(css, /--shadow-panel: 0 0 #0000/); assert.match(css, /--shadow-control: 0 0 #0000/);
+  const theme = read("../src/theme.css");
+  assert.doesNotMatch(theme, /inset 3px/, "the selected place has no edge bar"); assert.doesNotMatch(theme, /selected-edge/);
+  const button = read("../src/components/button.tsx");
+  assert.doesNotMatch(button, /rounded-full/, "buttons are not pills"); assert.doesNotMatch(button, /color-mix/, "a selected tab has no accent outline");
+  assert.match(button, /bg-brand text-on-brand/); assert.match(button, /secondary: "bg-brand-soft text-on-brand-soft shadow-\[inset_0_0_0_1px_var\(--border-strong\)\]/);
+  assert.doesNotMatch(read("../src/components/status.tsx"), /rounded-full px-2\.5/, "a status is not a capsule");
+  assert.match(theme, /@utility selected-mark[\s\S]*font-weight: 600/, "a selected row is a neutral fill with heavier text");
+});
+
+test("hover and pressed are solid fills, not opacity, on the primary and secondary button", () => {
   const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../src/components/button.tsx"), "utf8");
   const line = (variant: string) => source.split("\n").find(l => l.trim().startsWith(`${variant}:`)) ?? "";
   for (const variant of ["primary", "secondary"]) {
@@ -140,8 +147,6 @@ test("DEC-051: hover and pressed are solid fills, not opacity, on the primary an
     assert.match(line(variant), /active:bg-/, `${variant} has a solid pressed fill`);
     assert.doesNotMatch(line(variant), /opacity/, `${variant} does not use opacity for hover or pressed`);
   }
-  assert.match(line("primary"), /bg-brand text-on-brand/);
-  assert.match(line("secondary"), /bg-brand-soft text-on-brand-soft/);
 });
 
 test("the failure colour and the count dot are different colours, and the count dot is not the brand colour", () => {

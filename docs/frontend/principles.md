@@ -53,6 +53,39 @@ Task 承载工作承诺，Session 承载持续协作，Document 承载可核的�
 
 例子与完整场景见[首次旅程](../product/definition.md#从一个目标走到第一次有效交付)和[交付之后的接续](../product/functional-scenarios.md#交付之后谁接住未完成的工作)。
 
+## 设计语言
+
+2026-11-22 定稿的设计语言（Task 870a2e38-953d-467c-ad9f-4269be69bd93）：中性灰底，只有一种墨绿强调。**它取代 [DEC-051](../decisions.md#用户已确定的方向) 里“按钮用品牌陶土色、选中用浅蓝”一句**，以及 DEC-037/049 里与之冲突的陶土、墨蓝用法。数值只在 `packages/ui/src/tokens.css` 维护，`packages/ui/test/palette.test.ts` 逐项核对。
+
+七条规则：
+
+1. **少形状。** 圆角只有两档：容器 6px（`--radius-card`、`--radius-panel`），控件与行 4px（`--radius-control`、`--radius-inline`）；不用胶囊。头像、状态点和发送按钮保持圆形。
+2. **阴影只给浮层。** 弹出菜单、对话框、抽屉用 `--shadow-popover` / `--shadow-overlay`（1px 线加很轻的投影）；工作面板、右栏和概览卡片不用阴影，用 1px 线或分隔线。
+3. **选中是中性底加更重的字。** 导航行、列表行、页签和筛选项选中时用 `bg-accent`（即中性的 `--accent-soft`）、字色 `--text`、字重 600，统一由 `selected-mark` 提供；不画左侧竖条，不描蓝框。左右栏上的选中底再深一档（`--selected-on-shell`）。焦点环（`--focus-ring`，墨绿）在浅色与深色下都保持可见。
+4. **每屏一个实心主按钮。** 主按钮是墨绿实底（`--brand` / `--on-brand`）；次要按钮是描边（面板底加 `--border-strong` 细线）；发送按钮就是主按钮，保持圆形；不用陶土或桃色底。
+5. **状态用小点或图标加文字。** 色相与含义不变；“已完成”是中性灰（`--done`），不是绿色；进行中用蓝（`--running`），与链接、焦点的绿（`--accent`）分开。
+6. **外壳平。** 中间工作面板不是悬浮大圆角卡片，只与左栏之间有 1px 线；页签条没有底色轨道；右栏和概览卡片用边线而不是阴影。
+7. **Logo 保持在线蓝。** 用自己的变量 `--logo` / `--on-logo`，不跟随链接色。
+
+变量表（浅色 / 深色，其余未列的 token 见 [设计基础](foundations.md)）：
+
+| 变量 | 用途 | 浅色 | 深色 |
+| --- | --- | --- | --- |
+| `--surface-sunken` / `--background` | 外壳底 / 工作面板 | `#f4f4f3` / `#ffffff` | `#1a1a1a` / `#212121` |
+| `--surface-muted` / `--surface-field` | 次级块 / 输入底 | `#f7f7f6` / `#f2f2f1` | `#252525` / `#282828` |
+| `--accent-soft` / `--selected-on-shell` | 选中底（面板上 / 左右栏上） | `#ececea` / `#e4e4e2` | `#333333` / `#333333` |
+| `--text` / `--text-secondary` / `--text-muted` | 正文 / 次要 / 弱化 | `#171717` / `#525252` / `#666666` | `#e8e8e8` / `#adadad` / `#9c9c9c` |
+| `--border` / `--border-strong` | 分隔线 / 控件与浮层线 | `#e6e6e4` / `#d0d0cd` | `#343434` / `#474747` |
+| `--accent` / `--accent-strong` | 链接、焦点环（墨绿） | `#0b6b52` / `#095843` | `#6fd3ae` / `#8fe0c2` |
+| `--brand` / `--on-brand` | 主按钮底 / 字 | `#0f6b53` / `#ffffff` | `#5cc9a3` / `#0c1a15` |
+| `--running` | 进行中（蓝） | `#2456c8` | `#8fb0ff` |
+| `--done` | 已完成（中性灰） | `#525252` | `#adadad` |
+| `--warning` / `--danger` | 等待 / 受阻 | `#775000` / `#a3203a` | `#e3b667` / `#f08e92` |
+| `--logo` / `--on-logo` | Logo 蓝 | `#2a52a8` / `#ffffff` | `#90aef3` / `#0f1216` |
+| `--radius-card` / `--radius-control` | 容器 / 控件圆角 | 6px / 4px | 同左 |
+
+对比度：`palette.test.ts` 覆盖上表新变量，文字与底的最低值为 4.51:1（浅色 `--text-muted` 落在 `--selected-on-shell` 上），主按钮默认、悬停、按下三态都不低于 4.5:1。
+
 ## 界面用语
 
 界面文字只用中文（[DEC-037](../decisions.md#用户已确定的方向)）。保留原文的只有产品名 evoLoop、模型名、代码、命令、技能名和文件路径；中文与数字、英文之间留一个空格。文档和代码里继续用下表右列的英文名，界面上只出现左列。

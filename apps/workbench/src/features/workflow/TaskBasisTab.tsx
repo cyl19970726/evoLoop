@@ -146,7 +146,7 @@ function ImpactItem({ context, detail, impact, title, canReview, defaultOpen }: 
 function RevisionColumn({ label, read }: { label: string; read: { data: DocumentRevision | undefined; error: unknown; isPending: boolean } }) {
   const revision = read.data;
   const origin = useRevisionOrigin(revision?.projectId ?? "", { actorId: revision?.author, reason: revision?.reason });
-  return <section aria-label={label} className="flex min-w-0 flex-col gap-2 rounded-lg bg-muted p-4">
+  return <section aria-label={label} className="flex min-w-0 flex-col gap-2 border-t border-border px-0 py-4">
     <h3 className="text-label font-semibold text-foreground">{label}</h3>
     {!revision ? read.error ? <Notice tone="error">这一版暂不可读取：{errorText(read.error)}</Notice> : <LoadingState lines={5} label={`正在读取${label}`} />
       : <>

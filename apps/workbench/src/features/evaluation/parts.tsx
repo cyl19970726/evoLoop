@@ -5,7 +5,7 @@ import { cn } from "@evoloop/ui";
 import { fixedRefHref, fixedRefIdentity, fixedRefName, fixedTitleKey } from "./presentation";
 
 export const muted = "text-caption text-muted-foreground";
-export const card = "flex min-w-0 flex-col gap-3 rounded-xl bg-raised p-4 shadow-sm compact:p-5";
+export const card = "flex min-w-0 flex-col gap-3 rounded-xl bg-raised p-4 border border-border compact:p-5";
 export const linkClass = "text-primary underline-offset-2 hover:underline focus-visible:shadow-[var(--focus-ring)] outline-none rounded-sm";
 
 /** Label over value, stacked; values wrap instead of overflowing. */
