@@ -19,6 +19,7 @@ import { buildHubApp, logGatewayEvent } from "../../apps/hub/src/server.js";
 import { applyHubMigrations } from "../../apps/hub/src/migrations.js";
 import { HubService } from "../../apps/hub/src/service.js";
 import { HubStore } from "../../apps/hub/src/store.js";
+import { Gateway } from "../../apps/hub/src/gateway.js";
 import { MachineStore } from "../../apps/hub/src/machines.js";
 import type { HubConfig } from "../../apps/hub/src/config.js";
 import { buildServer } from "../../apps/coordinator/src/server.js";
@@ -240,8 +241,14 @@ test("two coordinators on one machine credential: reproduction, then explicit co
     refusedWhileAlive.start();
     await until("the live-looking silent link to cause a conflict", () => refusedWhileAlive.conflicts >= 1);
     await until("the silent link to be replaced", () => refusedWhileAlive.state === "online", 10_000);
-    assert.equal(eventsOf("replaced_stale").length, 1, "the takeover is recorded as replacing a stale connection");
-    assert.ok(hubLog.some(line => /replaced: the previous connection had gone quiet/.test(line)));
+    // Two correct ways for the silent link to go: the new process's retry reaches the Hub after the link passed the allowance (replaced_stale), or the Hub's own
+    // ping timer, which runs on the same allowance, ends it first (dropped, heartbeat_lost) and the retry finds nobody. Which one comes first depends on the phase of
+    // the Hub's ping timer against the connector's retry (100-300 ms) and on how late the runner delivers timers, so both are accepted here and the
+    // "a quiet link is replaced" path is held deterministically by its own subtest below. Either way the silent link is gone once, by one of the two.
+    const replacedStale = eventsOf("replaced_stale").length;
+    const lostBeat = eventsOf("dropped").filter(event => event.reason === "heartbeat_lost").length;
+    assert.equal(replacedStale + lostBeat, 1, `the silent link ended exactly once, by takeover or by the Hub's heartbeat check (replaced_stale ${replacedStale}, heartbeat_lost ${lostBeat}; events ${JSON.stringify(hubEvents.map(event => [event.type, event.reason]))})`);
+    if (replacedStale === 1) assert.ok(hubLog.some(line => /replaced: the previous connection had gone quiet/.test(line)));
     silent.close();
     await refusedWhileAlive.stop(); connectors.length = 0;
     await until("the machine to go offline", async () => !(await onlineNow()), 10_000);
@@ -256,6 +263,25 @@ test("two coordinators on one machine credential: reproduction, then explicit co
     assert.equal(eventsOf("reattached_same_process").length, 1);
     old.close(); again.close();
     await until("the machine to go offline", async () => !(await onlineNow()), 10_000);
+  });
+
+  // The takeover of a quiet link, without a timer race: the gateway's clock is the test's, and its own ping timer (one interval of an hour) never runs in this test.
+  await t.test("a different process takes over a link that has been quiet for more than three heartbeat intervals, and is refused while it is not", () => {
+    const interval = 60 * 60 * 1000;
+    let now = 1_000_000;
+    const events: Array<{ type: string; reason?: unknown }> = [];
+    const gateway = new Gateway({ heartbeatMs: interval, forwardTimeoutMs: 1000, maxResponseBytes: 1024, now: () => now, onEvent: event => { events.push(event); } });
+    try {
+      const sink = { write: () => true } as unknown as import("node:stream").Writable;
+      const quiet = gateway.attach("machine-x", sink, "instance-quiet");
+      now += interval * 3;
+      assert.throws(() => gateway.attach("machine-x", sink, "instance-other"), /Another process is already connected/, "exactly three intervals of silence is still alive");
+      now += 1;
+      const taken = gateway.attach("machine-x", sink, "instance-other");
+      assert.notEqual(taken.connectionId, quiet.connectionId);
+      assert.deepEqual(events.map(event => event.type), ["attached", "conflict", "replaced_stale"]);
+      assert.equal(gateway.online("machine-x"), true);
+    } finally { gateway.close(); }
   });
 
   // ---- 4. isolation: no machine directory named, no machine credentials ----
