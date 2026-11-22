@@ -984,7 +984,7 @@ test("revocation invalidates a held homepage, inspector and cache until an expli
       else if (url.pathname.endsWith("/timeline")) {
         latestReads++;
         const held = holdHomepage;
-        value = timelinePage(sessionKey, { entries: [timelineAssistant(held ? "stale-a" : "authorized", held ? "STALE_AUTHORIZED_A" : "CURRENT_AUTHORIZED_BODY"), timelineMessage("ordinary-own", "真正的本人普通消息"), timelineMessage("project-dispatch", "项目派发任务：保留固定来源", { turnId: "dispatch-turn", nativeItemId: "dispatch-item", nativeKind: "userMessage", origin: { kind: "run", id: "97000005-0000-4000-8000-000000000005", taskId, taskRevisionId: taskId, initiatingActorId: "reader" } }), protectedTool] });
+        value = timelinePage(sessionKey, { entries: [timelineAssistant(held ? "stale-a" : "authorized", held ? "STALE_AUTHORIZED_A" : "CURRENT_AUTHORIZED_BODY"), timelineMessage("ordinary-own", "真正的本人普通消息"), timelineMessage("project-dispatch", "项目派发任务：保留固定来源", { turnId: "dispatch-turn", nativeItemId: "dispatch-item", nativeKind: "userMessage", origin: { kind: "run", id: "97000005-0000-4000-8000-000000000005", taskId, taskRevisionId: taskId, initiatingActorId: "reader", dispatch: { source: "leader", actorId: "leader-1", viaController: true, scheduleId: null, scheduleTitle: null, reworkObservationId: null, reworkDeliveryId: null } } }), protectedTool] });
         if (held) { homepageHeld = true; await homepageGate; }
       } else if (url.pathname.endsWith("/recovery")) { status = 404; value = { message: "无恢复记录" }; }
       res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return;

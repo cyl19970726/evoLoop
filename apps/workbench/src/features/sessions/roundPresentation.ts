@@ -41,3 +41,16 @@ export function dispatchLabel(dispatch: RunDispatch | null | undefined, me: stri
 export function runSourceLabel(label: string, title: string | null): string {
   return `${label} · 任务「${title || "标题待核对"}」`;
 }
+
+/**
+ * Where a rework round's "查看退回意见" goes: the task's 交付 tab, at the return opinion the round records (`observation`), with the
+ * delivery it belongs to as the fallback when the opinion is not on the page. A round that names neither goes to the tab alone.
+ */
+export function reworkHref(taskHref: string, dispatch: RunDispatch): string {
+  const [path, query = ""] = taskHref.split("?");
+  const params = new URLSearchParams(query);
+  params.set("tab", "delivery");
+  if (dispatch.reworkDeliveryId) params.set("delivery", dispatch.reworkDeliveryId);
+  if (dispatch.reworkObservationId) params.set("observation", dispatch.reworkObservationId);
+  return `${path}?${params.toString()}`;
+}

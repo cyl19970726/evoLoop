@@ -5,7 +5,7 @@
 import React from "react";
 import { useQueries } from "@tanstack/react-query";
 import type { DocumentDetail, DocumentRevision, RuntimeRunRecord, TaskDetail } from "@evoloop/contracts";
-import { Button, StatusTag } from "@evoloop/ui";
+import { Button, StatusTag, cn } from "@evoloop/ui";
 import { api, errorText } from "../../shared/api";
 import { deliveryTarget, verifiedDocumentTitle, type DeliveryTarget } from "../../shared/deliveryPresentation";
 import { fixedContent, queryKeys, useProjectQuery } from "../../shared/query";
@@ -52,6 +52,9 @@ function useDeliveryTitles(projectId: string, deliveries: Delivery[]) {
 /** The delivery a link asked for (?delivery=ID), if any. */
 const locatedDelivery = (): string | null => new URLSearchParams(typeof window === "undefined" ? "" : window.location.search).get("delivery");
 
+/** The observation a link asked for (?observation=ID), if any: the return opinion a rework round points to. */
+const locatedObservation = (): string | null => new URLSearchParams(typeof window === "undefined" ? "" : window.location.search).get("observation");
+
 export function TaskDeliveryTab({ projectId, detail, active, actionsHref, actorId, convention }: {
   projectId: string; detail: TaskDetail; active: boolean; actionsHref: string; actorId?: string;
   /** The work index's acceptance convention for this Task, when read: gives the precondition line. */
@@ -62,14 +65,18 @@ export function TaskDeliveryTab({ projectId, detail, active, actionsHref, actorI
   const titles = useDeliveryTitles(projectId, deliveries);
   // A link from the dynamic view (?tab=delivery&delivery=ID) lands on that delivery: it is scrolled into view and marked, only when this tab is on screen.
   const located = React.useMemo(locatedDelivery, []);
+  const locatedOpinion = React.useMemo(locatedObservation, []);
   React.useEffect(() => {
-    if (!active || !located) return;
+    if (!active || !(located || locatedOpinion)) return;
     const frame = window.requestAnimationFrame(() => {
+      // The opinion itself when the link names one and it is on this page, else the delivery.
+      const opinion = locatedOpinion ? [...document.querySelectorAll<HTMLElement>("[data-observation]")].find(item => item.dataset.observation === locatedOpinion) : undefined;
+      if (opinion) { opinion.scrollIntoView({ block: "center" }); return; }
       const element = [...document.querySelectorAll<HTMLElement>("[data-delivery]")].find(item => item.dataset.delivery === located);
       element?.scrollIntoView({ block: "start" });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [active, located, deliveries.length]);
+  }, [active, located, locatedOpinion, deliveries.length, detail.observations?.length]);
   // The declared source runs are checked only while this tab is on screen: the latest five by themselves, older
   // ones on request.
   const [requested, setRequested] = React.useState<string[]>([]);
@@ -199,7 +206,8 @@ function DeliveryRecord({ projectId, detail, delivery, latest, title, run, activ
 }
 
 export function ObservationRecord({ observation }: { observation: Observation }) {
-  return <div className="flex flex-col gap-1.5 border-t border-border px-0 py-3" data-observation={observation.id}>
+  const located = locatedObservation() === observation.id;
+  return <div className={cn("flex flex-col gap-1.5 border-t border-border py-3", located ? "-mx-2 rounded-sm bg-selected px-2" : "px-0")} data-observation={observation.id} data-observation-located={located ? "" : undefined} {...(located ? { "aria-current": "true" } : {})}>
     <p className="text-label font-medium text-foreground">{actorText(observation.observer)} · {observerKindLabel[observation.observerKind]} · {observationResultLabel[observation.result]}</p>
     <Fine>观察登记于 {date(observation.createdAt)} · 登记者 {actorText(observation.actorId)}</Fine>
     <EvidenceText label="使用证据" value={observation.evidence} />

@@ -82,7 +82,7 @@ export function snapshot(name) {
     metadata,
     nativeObservation: name === "dev" ? { projectId, sessionId: agents.dev.sessionId, threadId: "thread-dev", version: 4, observedAt: ago(1),
       lastEventAt: ago(1), freshness: "live", staleReason: null, status: "active",
-      currentTurn: { id: "turn-3", status: "inProgress", source: { kind: "run", runId: runIdOf(tasks.t2) } },
+      currentTurn: { id: "turn-3", status: "inProgress", source: { kind: "run", runId: runIdOf(tasks.t2), taskId: tasks.t2.id, taskRevisionId: tasks.t2.id, operationId: id(902), actorId: "leader-codex-agent" } },
       items: [{ id: "tool-a", kind: "commandExecution", name: "运行单元测试", status: "completed", summary: "48 项通过", truncated: false },
         { id: "tool-b", kind: "commandExecution", name: "构建工作台", status: "inProgress", summary: "正在构建", truncated: false }],
       plan: null, diff: null, usage: null } : null,

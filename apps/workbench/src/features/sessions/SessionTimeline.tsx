@@ -32,7 +32,7 @@ import { buildRounds, lastReplyId, roundEntries, timelineRows, type Round } from
 import { useMessageFacts } from "./useMessageFacts";
 import { CoordinationGroup, CoordinationLine } from "./CoordinationLine";
 import { RoundTimes } from "./RoundTimes";
-import { runSourceLabel, sentAndStarted, type SentStarted } from "./roundPresentation";
+import { reworkHref, runSourceLabel, sentAndStarted, type SentStarted } from "./roundPresentation";
 import { replyingPhrase } from "./sessionStatusPresentation";
 import { api } from "../../shared/api";
 import {
@@ -500,7 +500,7 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, titleO
     const head = source.kind === "run" && (input?.origin?.taskId ?? source.taskId) !== null
       ? <RunStrip key={`source:${round.key}`} id={input?.id ?? round.key} turnId={round.turnId} label={runSourceLabel(source.label, titleOf(source.taskId ?? input!.origin!.taskId!))}
         at={round.startedAt ?? round.at} href={taskLink(source.taskId ?? input!.origin!.taskId!, source.runId)}
-        reworkHref={source.dispatch?.source === "rework" ? `${taskHref(source.taskId ?? input!.origin!.taskId!)}${taskHref(source.taskId ?? input!.origin!.taskId!).includes("?") ? "&" : "?"}tab=delivery` : null} />
+        reworkHref={source.dispatch?.source === "rework" ? reworkHref(taskHref(source.taskId ?? input!.origin!.taskId!), source.dispatch) : null} />
       : source.kind === "message" && source.from === "leader" && input
         ? <CoordinationLine key={`source:${round.key}`} round={round} projectId={context.projectId} titleOf={titleOf} taskHref={taskHref} onMessage={messageId => inspect({ messageId })} />
         : input ? entryView(round, input, `source:${round.key}`) : null;

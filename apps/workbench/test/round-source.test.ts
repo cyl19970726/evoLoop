@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { RunDispatch } from "@evoloop/contracts/session-timeline";
-import { dispatchLabel, runSourceLabel } from "../src/features/sessions/roundPresentation.ts";
+import { dispatchLabel, reworkHref, runSourceLabel } from "../src/features/sessions/roundPresentation.ts";
 
 const base: RunDispatch = { source: "leader", actorId: "leader-codex-agent", viaController: true, scheduleId: null, scheduleTitle: null, reworkObservationId: null, reworkDeliveryId: null };
 const me = "zuhriddin";
@@ -27,4 +27,11 @@ test("a proxy is never written as the Leader, and a source nobody read is not gu
 test("the strip says the label first, then the Task", () => {
   assert.equal(runSourceLabel("日程触发 · 每日评估", "整理接口"), "日程触发 · 每日评估 · 任务「整理接口」");
   assert.equal(runSourceLabel("来源待核对", null), "来源待核对 · 任务「标题待核对」");
+});
+
+test("the rework link names the delivery and the return opinion, and keeps an existing query", () => {
+  const dispatch = { source: "rework", actorId: null, viaController: false, scheduleId: null, scheduleTitle: null, reworkObservationId: "obs-1", reworkDeliveryId: "del-1" } as RunDispatch;
+  assert.equal(reworkHref("/p/x/tasks/t1", dispatch), "/p/x/tasks/t1?tab=delivery&delivery=del-1&observation=obs-1");
+  assert.equal(reworkHref("/p/x/tasks/t1?a=1", dispatch), "/p/x/tasks/t1?a=1&tab=delivery&delivery=del-1&observation=obs-1");
+  assert.equal(reworkHref("/p/x/tasks/t1", { ...dispatch, reworkObservationId: null }), "/p/x/tasks/t1?tab=delivery&delivery=del-1");
 });
