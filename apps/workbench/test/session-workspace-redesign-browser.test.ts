@@ -277,7 +277,7 @@ test("Sessions is the sole directory and renders conversation, source, reply and
       value: async value => { window.fixtureClipboardWrites.push(value); return writeText(value); } });
     document.addEventListener("copy", () => { window.fixtureCopyEvents += 1; });
   })()`);
-  await page.getByRole("button", { name: "会话详情" }).click();
+  { const details = page.getByRole("button", { name: "会话详情" }); if (await details.getAttribute("aria-expanded") !== "true") await details.click(); }   // one switch for the right column: press it only when closed
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), clipboardSentinel,
     "opening Session details leaves the system clipboard unchanged");
   assert.deepEqual(await page.evaluate(() => (window as Window & { fixtureClipboardWrites: string[] }).fixtureClipboardWrites), [],
@@ -286,6 +286,15 @@ test("Sessions is the sole directory and renders conversation, source, reply and
     "opening Session details does not fire a copy event");
   const informationPanel = page.locator(".session-information");
   assert.equal(await informationPanel.evaluate(element => (element as HTMLDetailsElement).open), true);
+  // 会话详情 is the one switch for the right column: its state is what is on screen, and pressing it changes the screen.
+  const detailsSwitch = page.getByRole("button", { name: "会话详情" });
+  assert.equal(await detailsSwitch.getAttribute("aria-expanded"), "true", "open on screen reads as expanded");
+  await detailsSwitch.click();
+  await informationPanel.waitFor({ state: "hidden" });
+  assert.equal(await detailsSwitch.getAttribute("aria-expanded"), "false", "closed on screen reads as collapsed");
+  await detailsSwitch.click();
+  await informationPanel.waitFor({ state: "visible" });
+  assert.equal(await detailsSwitch.getAttribute("aria-expanded"), "true");
   assert.equal(await informationPanel.locator(".session-project-activity").count(), 1,
     "project audit remains reachable inside Session details");
   assert.equal(await page.locator(".unified-session-timeline:visible").count(), 1, "details open in the right column beside the conversation, which stays in place");
@@ -297,7 +306,7 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   assert.equal(await deepLinkPage.locator(".session-information").evaluate(element => (element as HTMLDetailsElement).open), true,
     "an audit deep link restores the Session details panel");
   await deepLinkPage.close();
-  await page.getByRole("button", { name: "会话详情" }).click();
+  { const details = page.getByRole("button", { name: "会话详情" }); if (await details.getAttribute("aria-expanded") !== "true") await details.click(); }   // one switch for the right column: press it only when closed
   await page.getByRole("combobox", { name: "消息" }).fill("键盘发送");
   await page.getByRole("combobox", { name: "消息" }).press("Control+Enter");
   await page.locator("[data-receipt-phase]").waitFor();   // the one receipt line; the applied outcome is no longer a second line

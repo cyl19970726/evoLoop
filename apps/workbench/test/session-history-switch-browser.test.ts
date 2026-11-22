@@ -78,7 +78,7 @@ test("late history from session A cannot enter session B and B can load while A 
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "会话甲" }).waitFor();
-  await page.getByRole("button", { name: "会话详情" }).click();
+  { const details = page.getByRole("button", { name: "会话详情" }); if (await details.getAttribute("aria-expanded") !== "true") await details.click(); }   // one switch for the right column: press it only when closed
   await page.locator(".session-project-activity > summary").click();
   await page.getByRole("button", { name: "读取活动历史" }).click();
   for (let i = 0; i < 30 && await (await fetch(`${base}/__fixture/held`)).text() !== "true"; i++)
@@ -86,7 +86,7 @@ test("late history from session A cannot enter session B and B can load while A 
   assert.equal(await (await fetch(`${base}/__fixture/held`)).text(), "true");
   await page.evaluate(([project, key]) => { window.location.hash = `/p/${project}/runtime?session=${encodeURIComponent(key)}&filter=all`; }, [projectId, sessionB]);
   await page.getByRole("heading", { name: "会话乙" }).waitFor({ timeout: 3000 });
-  await page.getByRole("button", { name: "会话详情" }).click();
+  { const details = page.getByRole("button", { name: "会话详情" }); if (await details.getAttribute("aria-expanded") !== "true") await details.click(); }   // one switch for the right column: press it only when closed
   const activityB = page.locator(".session-project-activity:visible");
   if (await activityB.getAttribute("open") === null) await activityB.locator("> summary").click();
   const loadB = page.getByRole("button", { name: "读取活动历史" });

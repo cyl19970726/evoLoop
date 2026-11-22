@@ -103,7 +103,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
     const result = await sessionClient("", projectId).snapshot(sessionKey, signal);
     if (result.session.key !== sessionKey) throw new Error("会话响应与所选智能体不符");
     return result;
-  }, { enabled: active, refetchInterval: active && owned ? 5000 : false, retry: false });
+  }, { enabled: active, refetchInterval: active && owned ? 2000 : false, retry: false });
   const snapshot = snapshotRead.data?.session.key === sessionKey ? snapshotRead.data : undefined;
   const snapshotOk = !!snapshot && !snapshotRead.isError;
   const runtimeStatus = useProjectQuery(projectId, ["runtime", "status"], () => runtimeClient("", projectId).status(), { enabled: active && owned, retry: false });
@@ -557,7 +557,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
       </div>
       <div className="session-workspace-actions flex shrink-0 items-center gap-0.5">
         {headerButton("重新读取", <RefreshCw aria-hidden="true" className={snapshotRead.isFetching ? "animate-spin motion-reduce:animate-none" : undefined} />, reread, { disabled: snapshotRead.isFetching && !snapshotRead.isRefetching })}
-        {headerButton("会话详情", <Info aria-hidden="true" />, () => showInformation(!informationOpen), { "aria-expanded": informationOpen, "aria-controls": "session-information-panel" })}
+        {headerButton("会话详情", <Info aria-hidden="true" />, () => { if (panel?.open && informationOpen) { panel.setOpen(false); showInformation(false); } else showInformation(true); }, { "aria-expanded": !!panel?.open && informationOpen, "aria-controls": "session-information-panel" })}
         {headerButton(session.kind === "owned" ? "关闭受管智能体" : "归档与归类", session.kind === "owned" ? <X aria-hidden="true" /> : <FileText aria-hidden="true" />,
           () => { panel?.setOpen(true); setCloseOpen(value => !value); }, { "aria-expanded": closeOpen, "aria-controls": "session-close-panel" })}
       </div>
