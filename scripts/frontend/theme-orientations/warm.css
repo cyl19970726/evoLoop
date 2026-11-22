@@ -2,26 +2,27 @@
    fewer accents fighting on one screen, tighter corners, depth from lightness steps rather than shadow, decoration turned down. Buttons (DEC-051) and the meaning of
    the status colours are untouched. Draft: a sheet laid over the built workbench by theme-compare.mjs; nothing here is imported by the app. */
 :root {
-  /* surfaces: less yellow in the greys, steps stay clearly apart */
-  --surface-sunken: #e3ddd3;
-  --background: #faf8f3;
-  --surface-muted: #eee9e0;
-  --surface-field: #dfd9ce;
-  --surface-selected: #d9d1c4;
-  --border: #cfc7ba;
-  --border-strong: #b5ab9d;
+  /* surfaces: the page, the soft block and the sunken sidebar move further apart from the white card (depth from lightness, not from shadow) */
+  --surface-sunken: #d6cdbd;
+  --background: #f1ede4;
+  --surface-muted: #e0d8c9;
+  --surface-field: #d9d1c3;
+  --surface-selected: #d7cfc0;
+  --border: #c3baa9;
+  --border-strong: #a89e8e;
   --text: #1b1713;
   --text-secondary: #473f39;
   --text-muted: #5a534c;
   /* one accent that is clickable; the "finished" colour loses most of its chroma so it stops being a fourth hue on the screen (its meaning stays: finished) */
   --accent: #2a52a8;
+  --accent-soft: #d9e4fb;
   --done: #5b4a66;
   --done-soft: #f1edf3;
-  /* corners: one step smaller everywhere, the pill (buttons, chips, composer) keeps its shape */
-  --radius-inline: 4px;
-  --radius-control: 8px;
-  --radius-card: 10px;
-  --radius-panel: 14px;
+  /* corners: about half as round everywhere (live 6/10/14/18), the pill (buttons, chips, composer) keeps its shape */
+  --radius-inline: 3px;
+  --radius-control: 6px;
+  --radius-card: 8px;
+  --radius-panel: 10px;
   /* depth by lightness: a hairline and a soft lift, no big drop shadow */
   --shadow-panel: 0 0 0 1px rgb(28 23 20 / 5%), 0 4px 14px rgb(28 23 20 / 5%);
   --shadow-control: 0 1px 2px rgb(28 23 20 / 6%);

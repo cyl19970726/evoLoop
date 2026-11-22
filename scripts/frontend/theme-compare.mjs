@@ -25,7 +25,7 @@ const { scenes } = await import("./pages.mjs");
 
 const variants = ["current", "warm", "cool"];
 const sheets = Object.fromEntries(["warm", "cool"].map(name => [name, readFileSync(join(repo, `scripts/frontend/theme-orientations/${name}.css`), "utf8")]));
-const pages = [{ id: "overview", title: "总览", scene: "overview" }, { id: "task", title: "任务详情", scene: "task" }, { id: "agent", title: "智能体对话", scene: "agent" }]
+const pages = [{ id: "overview", title: "总览", scene: "overview", look: "看卡片和底色的分界（暖调下卡片更明显地浮在底色上）、卡片和输入框的圆角（暖调约小一半，冷调更小）、右栏文字的颜色" }, { id: "task", title: "任务详情", scene: "task", look: "看页签条和选中页签的分界、状态胶囊（颜色含义不变）、左栏列表的选中行；冷调下选中和链接都是同一个蓝" }, { id: "agent", title: "智能体对话", scene: "agent", look: "看头像（暖调降低饱和，冷调变灰）、气泡和消息的圆角、右栏卡片与底色的分界；按钮仍是品牌橙" }]
   .map(page => ({ ...page, ...scenes.find(scene => scene.name === page.scene) }));
 const shots = [
   ...["light", "dark"].flatMap(mode => pages.map(page => ({ page, mode, width: 1440, height: 900 }))),
@@ -50,15 +50,21 @@ for (const { page, mode, width, height } of shots) {
     const file = `img/${page.id}-${width}-${mode}-${variant}.png`;
     const buffer = await tab.screenshot({ path: join(out, file) });
     manifest.push({ page: page.id, title: page.title, width, height, mode, variant, file, sha256: createHash("sha256").update(buffer).digest("hex") });
+    if (page.id === "overview" && width === 1440) { // a zoomed corner of the first card, so the corner radius and the card/background step can be read at a glance
+      const crop = `img/corner-${mode}-${variant}.png`;
+      await tab.screenshot({ path: join(out, crop), clip: { x: 356, y: 140, width: 110, height: 48 } });
+      manifest.push({ page: "corner", title: "放大：卡片的一角", width, height: 48, mode, variant, file: crop, sha256: createHash("sha256").update(readFileSync(join(out, crop))).digest("hex") });
+    }
   }
   await context.close();
 }
 await browser.close(); fixture.close();
 writeFileSync(join(out, "manifest.json"), JSON.stringify(manifest, null, 2));
 const label = { current: "现在", warm: "暖调收紧", cool: "冷调中性" };
+const corner = (mode) => `<section><h2>放大：总览里第一张卡片的左上角 · ${mode === "light" ? "浅色" : "深色"}</h2><p class="look">看哪里：卡片的圆角（线上 14 像素；暖调 8；冷调 6）和卡片与底色的分界。</p><div class="row">${variants.map(v => { const c = manifest.find(m => m.page === "corner" && m.mode === mode && m.variant === v); return `<figure><figcaption>${label[v]} <code>${c.sha256.slice(0, 12)}</code></figcaption><img src="${c.file}" width="440" style="image-rendering:pixelated"></figure>`; }).join("")}</div></section>`;
 const rows = shots.map(({ page, mode, width }) => {
   const cells = variants.map(v => manifest.find(m => m.page === page.id && m.width === width && m.mode === mode && m.variant === v));
-  return `<section><h2>${page.title} · ${width} 宽 · ${mode === "light" ? "浅色" : "深色"}</h2><div class="row">${cells.map(c => `<figure><figcaption>${label[c.variant]} <code>${c.sha256.slice(0, 12)}</code></figcaption><a href="${c.file}"><img loading="lazy" src="${c.file}" width="${width === 1440 ? 560 : 240}"></a></figure>`).join("")}</div></section>`;
+  return `<section><h2>${page.title} · ${width} 宽 · ${mode === "light" ? "浅色" : "深色"}</h2><p class="look">看哪里：${page.look}</p><div class="row">${cells.map(c => `<figure><figcaption>${label[c.variant]} <code>${c.sha256.slice(0, 12)}</code></figcaption><a href="${c.file}"><img loading="lazy" src="${c.file}" width="${width === 1440 ? 560 : 240}"></a></figure>`).join("")}</div></section>`;
 });
-writeFileSync(join(out, "index.html"), `<!doctype html><meta charset="utf-8"><title>整体取向对照：现在 / 暖调收紧 / 冷调中性</title><style>body{font:14px/1.5 -apple-system,"PingFang SC",sans-serif;margin:24px;background:#f4f4f2;color:#1c1c1c}h1{font-size:20px}h2{font-size:15px;margin:28px 0 8px}.row{display:flex;gap:16px;align-items:flex-start;overflow-x:auto}figure{margin:0}figcaption{margin-bottom:4px;font-weight:600}img{border:1px solid #cfcfcf;border-radius:4px;display:block}code{color:#777;font-size:11px;font-weight:400}</style><h1>整体取向对照：现在 / 暖调收紧 / 冷调中性</h1><p>同一份数据、同名文件逐张对照；每张图旁是 SHA-256 前 12 位，完整值在 manifest.json。点图看原图。</p>${rows.join("\n")}`);
+writeFileSync(join(out, "index.html"), `<!doctype html><meta charset="utf-8"><title>整体取向对照：现在 / 暖调收紧 / 冷调中性</title><style>body{font:14px/1.5 -apple-system,"PingFang SC",sans-serif;margin:24px;background:#f4f4f2;color:#1c1c1c}h1{font-size:20px}h2{font-size:15px;margin:28px 0 8px}.row{display:flex;gap:16px;align-items:flex-start;overflow-x:auto}figure{margin:0}figcaption{margin-bottom:4px;font-weight:600}img{border:1px solid #cfcfcf;border-radius:4px;display:block}p.look{margin:0 0 8px;color:#444}code{color:#777;font-size:11px;font-weight:400}</style><h1>整体取向对照：现在 / 暖调收紧 / 冷调中性</h1><p>同一份数据、同名文件逐张对照；每张图旁是 SHA-256 前 12 位，完整值在 manifest.json。点图看原图。</p>${corner("light")}${corner("dark")}${rows.join("\n")}`);
 console.log(`${manifest.length} pictures → ${out}/index.html`);
