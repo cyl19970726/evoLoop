@@ -16,7 +16,7 @@ class GlanceBoundary extends Component<{ children: ReactNode }, { failed: boolea
   state = { failed: false };
   static getDerivedStateFromError() { return { failed: true }; }
   componentDidCatch(error: unknown) { console.error("调度动态小卡片没能显示", error); }
-  render() { return this.state.failed ? <p role="status" className="rounded-xl bg-raised px-4 py-3 text-small text-warning shadow-sm">调度动态小卡片没能显示；总览的其余内容不受影响。</p> : this.props.children; }
+  render() { return this.state.failed ? <p role="status" className="rounded-xl bg-raised px-4 py-3 text-small text-warning border border-border">调度动态小卡片没能显示；总览的其余内容不受影响。</p> : this.props.children; }
 }
 
 export function FlowGlance(props: { token: string; projectId: string; active: boolean }) {
@@ -32,7 +32,7 @@ function FlowGlanceCard({ token, projectId, active }: { token: string; projectId
   }, { enabled: active, refetchInterval: 30_000 });
   const stuck = read.data ? stuckSpots(read.data.board) : [];
   const time = (at: string) => new Date(at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
-  return <section aria-label="调度动态" className="overview-flow flex min-w-0 flex-col gap-2 rounded-xl bg-raised px-4 py-3 shadow-sm compact:px-5">
+  return <section aria-label="调度动态" className="overview-flow flex min-w-0 flex-col gap-2 rounded-xl bg-raised px-4 py-3 border border-border compact:px-5">
     <div className="flex items-center justify-between gap-2">
       <h2 className="text-label font-semibold text-foreground">调度动态</h2>
       <span className="flex items-center gap-2">

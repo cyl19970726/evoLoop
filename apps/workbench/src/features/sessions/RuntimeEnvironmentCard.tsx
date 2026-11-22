@@ -13,8 +13,8 @@ import { environmentRows, runtimeEnvironment, type EnvironmentValue } from "./en
 import { permissionLabel, type RecoveryRead } from "./recoveryPresentation";
 import { useModelControl, type ModelControl } from "./SessionModelControl";
 
-const card = "flex min-w-0 flex-col gap-1.5 rounded-lg bg-muted px-3 py-2.5";
-const chip = "inline-flex max-w-full items-center rounded-full bg-raised px-2 py-0.5 text-caption [overflow-wrap:anywhere]";
+const card = "flex min-w-0 flex-col gap-1.5 border-t border-border px-0 py-2.5";
+const chip = "inline-flex max-w-full items-center py-0.5 text-caption text-text-secondary [overflow-wrap:anywhere]";
 
 interface Props {
   context: MutationContext;

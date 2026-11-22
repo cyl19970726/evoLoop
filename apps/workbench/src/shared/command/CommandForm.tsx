@@ -195,7 +195,7 @@ export function CommandFrame({ context, command, label, submitLabel, dirty, onSu
     onKeyDown={submitOnModEnter ? event => {
       if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !command.busy) { event.preventDefault(); event.currentTarget.requestSubmit(); }
     } : undefined}
-    className={cn("flex min-w-0 flex-col gap-3", surface === "muted" && "rounded-lg bg-muted p-4", className)}>
+    className={cn("flex min-w-0 flex-col gap-3", surface === "muted" && "border-t border-border px-0 py-4", className)}>
     <FormPendingContext.Provider value={reportReading}>
       {layout === "inline"
         ? <><div className="flex min-w-0 items-end gap-2"><div className="flex min-w-0 flex-1 flex-col gap-3">{children}</div>{submitButton}</div>{notices}</>

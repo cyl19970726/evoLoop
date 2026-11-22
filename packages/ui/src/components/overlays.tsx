@@ -17,7 +17,7 @@ export const TabsContent = React.forwardRef<React.ComponentRef<typeof TabsPrimit
 TabsContent.displayName = "TabsContent";
 
 export const TabsList = React.forwardRef<React.ComponentRef<typeof TabsPrimitive.List>, React.ComponentPropsWithoutRef<typeof TabsPrimitive.List>>(({ className, ...props }, ref) => (
-  <TabsPrimitive.List ref={ref} className={cn("inline-flex items-center gap-0.5 rounded-full bg-tab-track p-1", className)} {...props} />
+  <TabsPrimitive.List ref={ref} className={cn("inline-flex items-center gap-0.5 rounded-md bg-tab-track p-0", className)} {...props} />
 ));
 TabsList.displayName = "TabsList";
 
@@ -25,7 +25,7 @@ export const TabsTrigger = React.forwardRef<React.ComponentRef<typeof TabsPrimit
   <TabsPrimitive.Trigger
     ref={ref}
     className={cn(
-      "h-7 cursor-pointer whitespace-nowrap rounded-full border-0 bg-transparent px-3 text-label text-muted-foreground outline-none transition-[background-color,color,box-shadow] duration-150 focus-visible:outline-solid focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary data-[state=active]:bg-accent data-[state=active]:font-medium data-[state=active]:text-accent-strong data-[state=active]:shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--accent)_55%,transparent)]",
+      "selected-mark h-7 cursor-pointer whitespace-nowrap rounded-md border-0 bg-transparent px-3 text-label text-muted-foreground outline-none transition-[background-color,color,box-shadow] duration-150 focus-visible:outline-solid focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary",
       className,
     )}
     {...props}
@@ -103,7 +103,7 @@ export const DialogContent = React.forwardRef<React.ComponentRef<typeof DialogPr
       {...props}
     >
       {children}
-      <DialogPrimitive.Close aria-label="关闭" className="absolute right-4 top-4 inline-flex size-8 cursor-pointer items-center justify-center rounded-full border-0 bg-transparent text-text-secondary outline-none hover:bg-field focus-visible:shadow-[var(--focus-ring)]">
+      <DialogPrimitive.Close aria-label="关闭" className="absolute right-4 top-4 inline-flex size-8 cursor-pointer items-center justify-center rounded-md border-0 bg-transparent text-text-secondary outline-none hover:bg-field focus-visible:shadow-[var(--focus-ring)]">
         <X aria-hidden="true" className="size-4" />
       </DialogPrimitive.Close>
     </DialogPrimitive.Content>
@@ -200,7 +200,7 @@ export const SheetContent = React.forwardRef<React.ComponentRef<typeof DialogPri
   <DialogPrimitive.Portal>
     <DialogPrimitive.Overlay className={overlayClass} />
     <DialogPrimitive.Content ref={ref} data-ui="" className={cn("fixed z-50 flex flex-col gap-3 overflow-y-auto bg-raised p-5 text-foreground shadow-[var(--shadow-overlay)] outline-none data-[state=open]:animate-in data-[state=open]:duration-[250ms]", sheetSides[side], className)} {...props}>
-      {side === "bottom" && <span aria-hidden="true" className="mx-auto h-[5px] w-10 shrink-0 rounded-full bg-field" />}
+      {side === "bottom" && <span aria-hidden="true" className="mx-auto h-[5px] w-10 shrink-0 rounded-sm bg-field" />}
       {children}
     </DialogPrimitive.Content>
   </DialogPrimitive.Portal>

@@ -171,8 +171,8 @@ export function LiveStatusLine({ avatar, text, elapsed, children, className }: L
     <div role="status" aria-live="polite" className={cn("flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-label text-text-secondary", className)}>
       {avatar}
       <span className="relative flex size-2 shrink-0" aria-hidden="true">
-        <span className="absolute inline-flex size-full animate-ping rounded-full bg-primary opacity-60 motion-reduce:animate-none" />
-        <span className="relative inline-flex size-2 rounded-full bg-primary" />
+        <span className="absolute inline-flex size-full animate-ping rounded-full bg-running opacity-60 motion-reduce:animate-none" />
+        <span className="relative inline-flex size-2 rounded-full bg-running" />
       </span>
       <span className="min-w-0 [overflow-wrap:anywhere]">{text}</span>
       {elapsed && <span aria-hidden="true" className="text-muted-foreground tabular-nums">· {elapsed}</span>}
@@ -213,7 +213,7 @@ export function QuestionCard({ question, options, note, answer, onSubmit, classN
   const otherKey = "__other";
   const value = choice === otherKey ? other.trim() : options.find(option => option.key === choice)?.label ?? "";
   return (
-    <section aria-labelledby={`${groupId}-q`} className={cn("flex flex-col gap-2 rounded-xl bg-raised p-4 shadow-md", className)}>
+    <section aria-labelledby={`${groupId}-q`} className={cn("flex flex-col gap-2 rounded-xl border border-border bg-raised p-4", className)}>
       <p id={`${groupId}-q`} className="m-0 px-0.5 pb-1 font-semibold text-foreground">{question}</p>
       <div role="radiogroup" aria-labelledby={`${groupId}-q`} className="flex flex-col gap-1.5">
         {[...options, { key: otherKey, label: "其他" }].map((option, index) => {
@@ -289,7 +289,7 @@ export function TodoList({ items, note, className }: { items: TodoItem[]; note?:
     </ol>
   );
   return (
-    <section aria-label="待办清单" className={cn("rounded-lg bg-muted px-4 py-3 text-label", className)}>
+    <section aria-label="待办清单" className={cn("border-t border-border px-0 py-3 text-label", className)}>
       {note && <p className="m-0 mb-2 text-caption text-muted-foreground">{note}</p>}
       {done === items.length && items.length > 0
         ? <CollapsibleRow summary={`待办 ${done} / ${items.length} 已完成`}>{list}</CollapsibleRow>
@@ -328,7 +328,7 @@ export function QueuedMessages({ items, note = "这一轮结束后按顺序送�
   const folded = items.length > visibleCount;
   const shown = folded && !open ? items.slice(0, visibleCount) : items;
   return (
-    <section aria-label="排队消息" data-queued-count={items.length} className={cn("flex shrink-0 flex-col gap-2 rounded-lg bg-muted px-3.5 py-3", className)}>
+    <section aria-label="排队消息" data-queued-count={items.length} className={cn("flex shrink-0 flex-col gap-2 border-t border-border px-0 py-3", className)}>
       <span className="text-caption text-muted-foreground">排队中 {items.length} 条 · {note}</span>
       <ol data-queued-list="" className="m-0 flex max-h-[min(28dvh,13rem)] min-h-0 list-none flex-col gap-1.5 overflow-y-auto p-0">
         {shown.map((item, index) => (

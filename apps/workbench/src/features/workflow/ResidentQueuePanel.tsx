@@ -150,7 +150,7 @@ function QueueCard({ context, queue, task, sessionId, runs, sessions, round }: {
   const canReview = hasPermission(context.principal, context.projectId, "management");
   const reading = detail.isFetching || attemptRead.isFetching;
   const readable = !!detail.data && !detail.error && !attemptRead.error;
-  return <details open={open} onToggle={event => { setOpen(event.currentTarget.open); if (event.currentTarget.open) setOpened(true); }} data-queue={queue.id} className="group rounded-lg bg-muted px-4 py-3">
+  return <details open={open} onToggle={event => { setOpen(event.currentTarget.open); if (event.currentTarget.open) setOpened(true); }} data-queue={queue.id} className="group border-t border-border px-0 py-3">
     <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2 outline-none focus-visible:shadow-[var(--focus-ring)] [&::-webkit-details-marker]:hidden">
       <span className="text-label font-medium text-foreground">队列 · 第 {queue.version} 版</span>
       <StatusTag tone={queue.adoptedVersion === null ? "waiting" : queue.adoptedVersion === queue.version ? "done" : "waiting"}
@@ -217,7 +217,7 @@ function AgentQueue({ context, queue, agentId, entries, session, runs, attempts,
       const entryHref = `${href(projectId, "task", entry.taskId)}?tab=runtime${last ? `&run=${key(last.runId)}` : ""}`;
       const dependencies = entry.dependsOn.map(id => queue.entries.find(item => item.id === id)).filter((item): item is ResidentQueueEntry => !!item);
       return <li key={entry.id} data-queue-entry={entry.id} data-current-task={task?.id === entry.taskId ? "" : undefined}
-        className={`flex min-w-0 flex-col gap-1 rounded-md bg-raised px-3 py-2.5 ${task?.id === entry.taskId ? "shadow-[inset_3px_0_0_var(--accent)]" : ""}`}>
+        className={`flex min-w-0 flex-col gap-1 rounded-md bg-raised px-3 py-2.5 ${task?.id === entry.taskId ? "bg-accent font-semibold" : ""}`}>
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-label font-medium text-foreground">第 {entry.position + 1} 项</span>
           <StatusTag tone={standing.tone} label={standing.label} />

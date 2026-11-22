@@ -5,16 +5,18 @@ import { cn } from "../lib/cn";
 /** The status table in docs/frontend/foundations.md. Business states map onto these tones in the workbench's shared layer. */
 export type StatusTone = "progress" | "done" | "waiting" | "blocked" | "idle" | "unknown" | "history";
 
-const tones: Record<StatusTone, { className: string; Icon?: LucideIcon; spin?: boolean }> = {
-  progress: { className: "bg-accent text-primary", Icon: LoaderCircle, spin: true },
-  done: { className: "bg-done-soft text-done", Icon: Check },
-  waiting: { className: "bg-warning-soft text-warning", Icon: Clock },
-  blocked: { className: "bg-danger-soft text-destructive", Icon: TriangleAlert },
-  // 待办: a hollow tag, a neutral edge and no fill (DEC-049), so it is not mistaken for 完成.
-  idle: { className: "bg-transparent text-text-secondary shadow-[inset_0_0_0_1px_var(--border-strong)]" },
-  // 未知: a dashed edge (DEC-049). The outline is drawn inside the tag, so the tag keeps the size of the others.
-  unknown: { className: "bg-transparent text-muted-foreground outline-dashed outline-1 -outline-offset-1 outline-(--border-strong)", Icon: CircleHelp },
-  history: { className: "bg-transparent text-muted-foreground" },
+// A status is a small icon (or a dot) in the status hue followed by plain text: no filled capsule. Colour never carries the meaning alone.
+// Running keeps its own blue (--running), apart from the green of links; done is neutral grey.
+const tones: Record<StatusTone, { iconClass: string; Icon?: LucideIcon; spin?: boolean; hollow?: boolean }> = {
+  progress: { iconClass: "text-running", Icon: LoaderCircle, spin: true },
+  done: { iconClass: "text-done", Icon: Check },
+  waiting: { iconClass: "text-warning", Icon: Clock },
+  blocked: { iconClass: "text-destructive", Icon: TriangleAlert },
+  // 待办: a hollow dot, so it is not mistaken for 完成.
+  idle: { iconClass: "text-text-secondary", hollow: true },
+  // 未知: a question mark.
+  unknown: { iconClass: "text-muted-foreground", Icon: CircleHelp },
+  history: { iconClass: "text-muted-foreground", hollow: true },
 };
 
 export interface StatusTagProps extends React.HTMLAttributes<HTMLSpanElement> {
@@ -26,10 +28,11 @@ export interface StatusTagProps extends React.HTMLAttributes<HTMLSpanElement> {
 }
 
 export function StatusTag({ tone, label, detail, className, ...props }: StatusTagProps) {
-  const { className: toneClass, Icon, spin } = tones[tone];
+  const { iconClass, Icon, spin, hollow } = tones[tone];
   return (
-    <span className={cn("inline-flex max-w-full items-center gap-1 rounded-full px-2.5 py-0.5 text-caption font-medium leading-(--leading-body)", toneClass, className)} data-tone={tone} {...props}>
-      {Icon && <Icon aria-hidden="true" className={cn("size-3 shrink-0", spin && "animate-spin motion-reduce:animate-none")} />}
+    <span className={cn("inline-flex max-w-full items-center gap-1 py-0.5 text-caption font-medium leading-(--leading-body) text-text-secondary", className)} data-tone={tone} {...props}>
+      {Icon && <Icon aria-hidden="true" className={cn("size-3 shrink-0", iconClass, spin && "animate-spin motion-reduce:animate-none")} />}
+      {hollow && <span aria-hidden="true" className={cn("size-1.5 shrink-0 rounded-full border border-current", iconClass)} />}
       <span className="truncate">{detail ? `${label} · ${detail}` : label}</span>
     </span>
   );
@@ -37,7 +40,7 @@ export function StatusTag({ tone, label, detail, className, ...props }: StatusTa
 
 /** Counts, kinds and short marks. Neutral only: a badge never states a status. */
 export function Badge({ className, ...props }: React.HTMLAttributes<HTMLSpanElement>) {
-  return <span className={cn("inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-field px-2 text-caption leading-(--leading-body) text-text-secondary tabular-nums", className)} {...props} />;
+  return <span className={cn("inline-flex items-center justify-center text-caption leading-(--leading-body) text-text-secondary tabular-nums", className)} {...props} />;
 }
 
 const dot = "inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-caption font-semibold leading-(--leading-tight) tabular-nums";
@@ -56,7 +59,7 @@ export function CountDot({ count, className }: { count: number | null; className
 export type NoticeTone = "info" | "waiting" | "error";
 
 const noticeTones: Record<NoticeTone, string> = {
-  info: "bg-muted text-foreground shadow-[inset_3px_0_0_var(--accent)]",
+  info: "bg-muted text-foreground",
   waiting: "bg-warning-soft text-foreground",
   error: "bg-danger-soft text-foreground",
 };

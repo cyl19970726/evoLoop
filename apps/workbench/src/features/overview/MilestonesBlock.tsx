@@ -7,10 +7,11 @@ import { href } from "../../shared/ui/shared";
 import { NOT_REGISTERED, milestoneRows, versionView } from "./milestonesPresentation";
 import { readOverviewParam, writeOverviewParam } from "./overviewAddress";
 
-const card = "flex min-w-0 flex-col gap-1.5 rounded-xl bg-raised px-4 py-2.5 shadow-sm compact:px-5";
+const card = "flex min-w-0 flex-col gap-1.5 rounded-xl bg-raised px-4 py-2.5 border border-border compact:px-5";
 const muted = "text-caption text-muted-foreground";
 const heading = "text-label font-semibold text-foreground";
-const toneClass = { done: "bg-done-soft text-done", progress: "bg-accent text-primary", partial: "bg-warning-soft text-warning", idle: "bg-field text-text-secondary", none: "border border-dashed border-border text-text-secondary" } as const;
+// A phase status is plain text in the status hue (no capsule); an unregistered phase is muted.
+const toneClass = { done: "text-done", progress: "text-running", partial: "text-warning", idle: "text-text-secondary", none: "text-muted-foreground" } as const;
 
 export function MilestonesBlock({ projectId, active }: { projectId: string; active: boolean }) {
   const version = useProjectQuery(projectId, ["overview", "version"], signal => api().version(signal, projectId), { enabled: active, retry: false });
@@ -43,13 +44,13 @@ export function MilestonesBlock({ projectId, active }: { projectId: string; acti
             <span>阶段</span><span>要交付什么</span><span>退出证据</span><span>状态</span><span>节点日期</span></div>
           <ol className="m-0 flex list-none flex-col p-0">
             {rows.map(row => <li key={row.id} data-phase={row.id} data-current={row.current ? "true" : undefined} aria-current={row.current ? "step" : undefined}
-              className={`grid grid-cols-[minmax(0,1fr)_auto] items-center @sm:grid-cols-[minmax(0,1fr)_auto_7.5rem] gap-x-2 border-t border-border px-2 py-1 first:border-t-0 @3xl:grid-cols-[9rem_minmax(0,1.2fr)_minmax(0,1.5fr)_6rem_7rem] @3xl:gap-x-3 ${row.current ? "bg-accent shadow-[inset_3px_0_0_var(--accent)]" : ""}`}>
+              className={`grid grid-cols-[minmax(0,1fr)_auto] items-center @sm:grid-cols-[minmax(0,1fr)_auto_7.5rem] gap-x-2 border-t border-border px-2 py-1 first:border-t-0 @3xl:grid-cols-[9rem_minmax(0,1.2fr)_minmax(0,1.5fr)_6rem_7rem] @3xl:gap-x-3 ${row.current ? "bg-accent font-semibold" : ""}`}>
               <span className="col-start-1 row-start-1 min-w-0 text-small font-medium @3xl:col-start-1 @3xl:row-start-1">
                 {row.stageId ? <a className="text-primary hover:underline" href={`${href(projectId, "journey")}?stage=${row.stageId}`}>{row.id} {row.title}</a> : <span>{row.id} {row.title}</span>}
                 {row.current && <span className="ml-1 text-caption font-semibold text-primary">当前</span>}</span>
               <span className={`${row.current ? "hidden @sm:block " : "hidden @3xl:block "}col-start-1 row-start-2 line-clamp-1 text-caption text-text-secondary @3xl:col-start-2 @3xl:row-start-1 @3xl:line-clamp-2 @3xl:text-small`}><span className="@3xl:hidden">交付：</span>{row.deliver}</span>
               <span className={`${row.current ? "hidden @sm:block " : "hidden @3xl:block "}col-span-2 @sm:col-span-3 col-start-1 row-start-3 line-clamp-1 text-caption text-text-secondary @3xl:col-span-1 @3xl:col-start-3 @3xl:row-start-1 @3xl:line-clamp-2 @3xl:text-small`}><span className="@3xl:hidden">退出证据：</span>{row.exit}</span>
-              <span className="col-start-2 row-start-1 justify-self-end @3xl:col-start-4 @3xl:row-start-1 @3xl:justify-self-start"><span className={`inline-block whitespace-nowrap rounded-full px-2 text-caption ${toneClass[row.tone]}`}>{row.status}</span></span>
+              <span className="col-start-2 row-start-1 justify-self-end @3xl:col-start-4 @3xl:row-start-1 @3xl:justify-self-start"><span className={`inline-block whitespace-nowrap text-caption font-medium ${toneClass[row.tone]}`}>{row.status}</span></span>
               <span className="hidden @sm:block @sm:col-start-3 @sm:row-start-1 col-start-2 row-start-2 justify-self-end whitespace-nowrap text-caption text-text-secondary @3xl:col-start-5 @3xl:row-start-1 @3xl:justify-self-start @3xl:text-small">{row.date === NOT_REGISTERED ? NOT_REGISTERED : row.date}</span>
             </li>)}
           </ol></details>}

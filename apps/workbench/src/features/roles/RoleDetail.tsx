@@ -72,7 +72,7 @@ export function RoleDetail({ context, role, refresh, checking, roleTitle }: {
     </PageSection>
     <SectionBoundary label="承载与业务领域"><RolePresence context={context} role={role} /></SectionBoundary>
     <PageSection title="下一步" description={forms.length ? "只列出当前状态允许的操作；提交时服务端会按版本再次核对。" : "这项职责已结束，只保留历史。"}>
-      {forms.map(({ form, note }) => <details key={form.title} className="min-w-0 rounded-xl bg-raised px-4 py-3 shadow-sm">
+      {forms.map(({ form, note }) => <details key={form.title} className="min-w-0 rounded-xl bg-raised px-4 py-3 border border-border">
         <summary className="cursor-pointer text-small font-medium text-foreground">{form.title}</summary>
         {note && <p className={`${mutedText} mt-2`}>{note}</p>}
         <ActionForm context={roleContext} embedded requiredPermissions={[form.permission]} decision={form.decision}

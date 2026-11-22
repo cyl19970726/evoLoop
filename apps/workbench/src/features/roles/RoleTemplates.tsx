@@ -28,7 +28,7 @@ export function RoleTemplates({ projectId }: { projectId: string }) {
     {summary && <>
       <p className={mutedText} role="status">{fresh ? "观察于" : read.isFetching ? "正在核对，下列仍是上次观察，观察于" : "上次观察于"} {stamp(read.dataUpdatedAt)}；
         {summary.nextCursor ? "职责列表尚有未读页，缺项显示未知。" : "已读本次模板投影。"}</p>
-      <ul aria-label="基础职责模板" className="flex flex-col overflow-hidden rounded-xl bg-raised shadow-sm">
+      <ul aria-label="基础职责模板" className="flex flex-col overflow-hidden rounded-xl bg-raised border border-border">
         {summary.rows.map(row => <li key={row.key} className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border px-4 py-2.5 first:border-t-0">
           <span className="min-w-24 text-small font-medium text-foreground">{row.title}</span>
           <span className={mutedText}>{row.roleClass === "system" ? "系统职责" : "业务职责"}</span>

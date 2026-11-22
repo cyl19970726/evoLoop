@@ -1,56 +1,60 @@
 /* evoLoop design tokens: the only place where colour, type, spacing, radius, shadow and motion values are defined.
-   Usage rules live in docs/frontend/foundations.md. Light ("xuan paper", DEC-049) is the default; dark ("pine soot") applies
-   under [data-theme="dark"]. No page hard-codes colours since the old global sheets were removed (#229 PR10). */
+   Usage rules live in docs/frontend/foundations.md. Neutral grey with one ink-green accent (the design language of 2026-11-22, docs/frontend/principles.md#设计语言):
+   light is the default; dark applies under [data-theme="dark"]. No page hard-codes colours since the old global sheets were removed (#229 PR10). */
 :root {
   color-scheme: light;
 
   /* Colour: surfaces, from back to front */
-  --surface-sunken: #e4ded4;   /* app background behind the rails */
-  --background: #faf8f3;       /* the raised work panel: content and right panel */
-  --surface-raised: #ffffff;      /* cards that float on the panel, popovers, composer */
-  --surface-muted: #eee9e0;    /* soft blocks inside the panel: facts, tool steps, todo list */
-  --surface-field: #e1dbd0;    /* inputs and chips (buttons are brand, DEC-051) */
-  --surface-selected: #dcd4c8; /* hovered row in the rails and lists (a selected row is accent-soft, DEC-051) */
-  --tab-track: var(--surface-selected); /* the fill behind a tab strip: darker than the selected tab, so the tab reads against it */
+  --surface-sunken: #f4f4f3;
+  --background: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-muted: #f7f7f6;
+  --surface-field: #f2f2f1;
+  --surface-selected: #ececea;
+  --tab-track: transparent;
 
   /* Colour: text */
-  --text: #1c1714;
-  --text-secondary: #49423d;
-  --text-muted: #5b554f;
+  --text: #171717;
+  --text-secondary: #525252;
+  --text-muted: #666666;
   --on-accent: #ffffff;
+  --selected-on-shell: #e4e4e2; /* a selected row on the shell (the rails) is one step darker than on the panel */
+  --logo: #2a52a8; /* the mark keeps its blue; it does not follow the link colour */
+  --on-logo: #ffffff;
 
   /* Colour: lines */
-  --border: #d2cbc0;
-  --border-strong: #bbb1a4;
+  --border: #e6e6e4;
+  --border-strong: #d0d0cd;
 
-  /* Colour: roles (no green) */
-  --accent: #2a52a8;
-  --accent-strong: #1b4090;
-  --accent-soft: #e5edfc;
+  /* Colour: roles. Green is the link, the focus ring and the one primary button; in-progress has its own blue (--running); done is neutral grey, never green. */
+  --accent: #0b6b52;
+  --accent-strong: #095843;
+  --accent-soft: #ececea;
+  --running: #2456c8; /* in progress: its own blue, apart from the green link and focus colour */
   --warning: #775000;
   --warning-soft: #fceed1;
   --danger: #a3203a;
   --danger-soft: #fde9e9;
-  --done: #72487c;             /* a finished state: a muted violet, apart from the running blue and the warm failure red */
-  --done-soft: #f5eaf7;
-  --brand: #b1582b;
+  --done: #525252;
+  --done-soft: #f2f2f1;
+  --brand: #0f6b53;
   --on-brand: #ffffff;
-  /* Buttons (DEC-051): the primary button is brand on on-brand; the secondary is the soft brand fill. Hover and pressed are solid colours, never opacity
+  /* Buttons: the primary button is brand (ink green) on on-brand; the secondary is a panel-coloured button with a strong hairline (docs/frontend/principles.md). Hover and pressed are solid colours, never opacity
      (white on brand at 90% opacity is about 4.1:1); every state of every button reaches 4.5:1 (palette.test.ts). */
-  --brand-hover: #9c4a22;
-  --brand-pressed: #8a3f1b;
-  --brand-soft: #f6e6dc;
-  --on-brand-soft: #8f431d;
-  --brand-soft-hover: #f0d9ca;
-  --brand-soft-pressed: #e9ccb9;
+  --brand-hover: #0c5c47;
+  --brand-pressed: #0a4d3c;
+  --brand-soft: #ffffff;
+  --on-brand-soft: #171717;
+  --brand-soft-hover: #f2f2f1;
+  --brand-soft-pressed: #ececea;
 
   /* Colour: conversation */
-  --user-bubble: #1c1714;
-  --on-user-bubble: #fcfbf8;
+  --user-bubble: #ececea;
+  --on-user-bubble: #171717;
 
   /* Colour: counts (ink, so a count never reads as an error; brand is for buttons, the logo and the account avatar, never for a state or a count) */
-  --count-bg: #1c1714;
-  --count-fg: #fcfbf8;
+  --count-bg: #171717;
+  --count-fg: #ffffff;
 
   /* Type */
   --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -84,17 +88,17 @@
   --reading-width: 680px;
 
   /* Radius */
-  --radius-inline: 6px;   /* inline code, tiny marks */
-  --radius-control: 10px; /* list rows, inputs, menu items */
-  --radius-card: 14px;    /* fact cards, soft blocks, popovers */
-  --radius-panel: 18px;   /* the work panel, question cards */
-  --radius-pill: 999px;   /* buttons, chips, the composer */
+  --radius-inline: 4px;   /* inline code, tiny marks */
+  --radius-control: 4px;  /* controls and rows: buttons, list rows, inputs, menu items */
+  --radius-card: 6px;     /* containers: cards, popovers, the composer */
+  --radius-panel: 6px;    /* two sizes only: 6 for containers, 4 for controls; circles are for avatars, status dots and the send button */
+  --radius-pill: 4px;     /* no pills any more; the name stays so old references keep working */
 
-  /* Elevation: the work panel and floating layers have shadows; regions inside the panel do not */
-  --shadow-panel: 0 1px 2px rgb(28 23 20 / 6%), 0 10px 32px rgb(28 23 20 / 9%);
-  --shadow-control: 0 1px 2px rgb(28 23 20 / 7%), 0 2px 8px rgb(28 23 20 / 5%);
-  --shadow-popover: 0 2px 6px rgb(31 29 26 / 6%), 0 12px 32px rgb(31 29 26 / 12%);
-  --shadow-overlay: 0 18px 50px rgb(31 29 26 / 18%);
+  /* Elevation: only floating layers (popovers, dialogs, sheets) have a shadow: a 1px line and a very light drop. The work panel and cards have none. */
+  --shadow-panel: 0 0 #0000;
+  --shadow-control: 0 0 #0000;
+  --shadow-popover: 0 0 0 1px var(--border-strong), 0 6px 16px rgb(0 0 0 / 8%);
+  --shadow-overlay: 0 0 0 1px var(--border-strong), 0 12px 32px rgb(0 0 0 / 12%);
   /* Drawn inside the element: an opaque accent edge with a surface-coloured band within it, plain on any surface
      (WCAG 2.4.7) and never clipped by a scroll container the element sits in. */
   --focus-ring: inset 0 0 0 2px var(--accent), inset 0 0 0 4px var(--background);
@@ -110,50 +114,54 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --surface-sunken: #090807;
-  --background: #171513;
-  --surface-raised: #2f2c28;
-  --surface-muted: #232019;
-  --surface-field: #363330;
-  --surface-selected: #3c3833;
-  --tab-track: var(--surface-sunken);
+  --surface-sunken: #1a1a1a;
+  --background: #212121;
+  --surface-raised: #282828;
+  --surface-muted: #252525;
+  --surface-field: #282828;
+  --surface-selected: #333333;
+  --tab-track: transparent;
 
-  --text: #eae7e3;
-  --text-secondary: #c0bbb6;
-  --text-muted: #b0aba5;
-  --on-accent: #0f1216;
+  --text: #e8e8e8;
+  --text-secondary: #adadad;
+  --text-muted: #9c9c9c;
+  --on-accent: #0c1a15;
+  --selected-on-shell: #333333;
+  --logo: #90aef3;
+  --on-logo: #0f1216;
 
-  --border: #3d3a35;
-  --border-strong: #55514b;
+  --border: #343434;
+  --border-strong: #474747;
 
-  --accent: #90aef3;
-  --accent-strong: #b2c9fb;
-  --accent-soft: #222d47;
+  --accent: #6fd3ae;
+  --accent-strong: #8fe0c2;
+  --accent-soft: #333333;
+  --running: #8fb0ff;
   --warning: #e3b667;
-  --warning-soft: #362913;
+  --warning-soft: #2e2413;
   --danger: #f08e92;
-  --danger-soft: #3f1e20;
-  --done: #c99dd3;
-  --done-soft: #332337;
-  --brand: #e18c5f;
-  --on-brand: #15110d;
-  --brand-hover: #ea9a70;
-  --brand-pressed: #f0a984;
-  --brand-soft: #3a2518;
-  --on-brand-soft: #f0a77f;
-  --brand-soft-hover: #46301f;
-  --brand-soft-pressed: #523a27;
+  --danger-soft: #351b1d;
+  --done: #adadad;
+  --done-soft: #282828;
+  --brand: #5cc9a3;
+  --on-brand: #0c1a15;
+  --brand-hover: #72d3b1;
+  --brand-pressed: #88dcbf;
+  --brand-soft: #282828;
+  --on-brand-soft: #e8e8e8;
+  --brand-soft-hover: #333333;
+  --brand-soft-pressed: #3d3d3d;
 
-  --user-bubble: #393633;
-  --on-user-bubble: #eae7e3;
+  --user-bubble: #333333;
+  --on-user-bubble: #e8e8e8;
 
-  --count-bg: #eae7e3;
-  --count-fg: #161412;
+  --count-bg: #e8e8e8;
+  --count-fg: #212121;
 
-  --shadow-panel: 0 0 0 1px rgb(255 248 240 / 5%), 0 1px 2px rgb(0 0 0 / 40%), 0 12px 32px rgb(0 0 0 / 50%);
-  --shadow-control: 0 0 0 1px rgb(255 248 240 / 5%), 0 2px 8px rgb(0 0 0 / 35%);
-  --shadow-popover: 0 2px 6px rgb(0 0 0 / 30%), 0 12px 32px rgb(0 0 0 / 40%);
-  --shadow-overlay: 0 18px 50px rgb(0 0 0 / 50%);
+  --shadow-panel: 0 0 #0000;
+  --shadow-control: 0 0 #0000;
+  --shadow-popover: 0 0 0 1px var(--border-strong), 0 6px 16px rgb(0 0 0 / 35%);
+  --shadow-overlay: 0 0 0 1px var(--border-strong), 0 12px 32px rgb(0 0 0 / 50%);
   --focus-ring: inset 0 0 0 2px var(--accent), inset 0 0 0 4px var(--background);
   --scrim: rgb(0 0 0 / 45%);
 }

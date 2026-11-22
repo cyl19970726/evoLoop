@@ -19,7 +19,7 @@ export function AllocationBacklinks({ context, filter, refresh }: { context: Mut
   const { names, reading } = useAllocationNameState(context.token, context.projectId, traces.items, noKnownNames, !traces.loading && !traces.error,
     `${traces.key}\0${refresh}\0${traces.readAgain}`);
   const groups = groupAllocationBacklinks(traces.items);
-  return <section ref={root} data-ui="" aria-label="正式分工讨论来源" className="my-4 flex flex-col gap-2 rounded-lg bg-muted p-4">
+  return <section ref={root} data-ui="" aria-label="正式分工讨论来源" className="my-4 flex flex-col gap-2 border-t border-border px-0 py-4">
     <h3 className="text-label font-semibold text-foreground">正式分工讨论来源</h3>
     <p className={muted}>只按正式链接和同一修订的接受记录反查；同一职责下的其他智能体不会自动算进来。</p>
     <RelationReadState noun="来源" traces={traces} />

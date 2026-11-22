@@ -47,7 +47,7 @@ export function OrganizationReviewList({ context, refresh }: { context: Mutation
   const muted = "text-caption text-muted-foreground";
   return <section className="organization-reviews flex flex-col gap-3" aria-label="组织复盘文档" aria-busy={loading}>
     <div className="flex flex-wrap items-center gap-2">
-      <label className="flex h-9 min-w-[220px] flex-1 items-center gap-2 rounded-full bg-field px-3 text-muted-foreground">
+      <label className="flex h-9 min-w-[220px] flex-1 items-center gap-2 rounded-md bg-field px-3 text-muted-foreground">
         <Search size={14} aria-hidden="true" />
         <input aria-label="搜索复盘文档" placeholder="搜索复盘标题" value={query} onChange={event => setQuery(event.target.value)} className="w-full bg-transparent text-small text-foreground outline-none" />
       </label>
@@ -59,7 +59,7 @@ export function OrganizationReviewList({ context, refresh }: { context: Mutation
     {!loading && !error && !visible.length && (items.length
       ? <p className="text-small text-text-secondary">没有匹配的复盘文档。</p>
       : <EmptyState title="还没有组织复盘" reason="组织复盘保存为文档后会列在这里。报告已保存不等于建议已采纳。" />)}
-    {visible.length > 0 && <ul aria-label="复盘文档" className="flex flex-col overflow-hidden rounded-xl bg-raised shadow-sm">{visible.map(item => <li key={item.id} className="border-t border-border first:border-t-0">
+    {visible.length > 0 && <ul aria-label="复盘文档" className="flex flex-col overflow-hidden rounded-xl bg-raised border border-border">{visible.map(item => <li key={item.id} className="border-t border-border first:border-t-0">
       <a href={href(projectId, "document", item.id, item.currentRevisionId)} className="flex flex-col gap-0.5 px-4 py-3 outline-none hover:bg-selected focus-visible:shadow-[var(--focus-ring)]">
         <span className="text-small font-medium text-foreground">{item.title}</span>
         <span className={muted}>{statusLabel[item.status]}
