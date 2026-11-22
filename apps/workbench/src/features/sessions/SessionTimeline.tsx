@@ -168,7 +168,7 @@ function ReplyRecord({ id, reply, title, sessionKey, roleSeed, lastReply, projec
 }
 
 function RunStrip({ id, turnId, label, at, href }: { id: string; turnId: string | null; label: string; at: string | null; href: string | null }) {
-  return <article className="workspace-system-strip flex flex-wrap items-center gap-x-2 gap-y-1 self-center rounded-full bg-muted px-3 py-1.5 text-caption text-text-secondary" data-workspace-entry={id} data-round-source="" data-turn-id={turnId ?? undefined}>
+  return <article className="workspace-system-strip flex flex-wrap items-center gap-x-2 gap-y-1 self-center rounded-md bg-muted px-3 py-1.5 text-caption text-text-secondary" data-workspace-entry={id} data-round-source="" data-turn-id={turnId ?? undefined}>
     <FileText size={14} aria-hidden="true" /><strong className="font-medium text-foreground">{label}</strong>
     {at && <time dateTime={at}>{date(at)}</time>}
     {href && <a className="text-primary hover:underline" href={href}>查看任务与指令</a>}
@@ -216,7 +216,7 @@ function TimelineEntry({ item, context, title, sessionKey, target, identity, tas
   const runHref = item.origin?.kind === "run" && item.origin.taskId ? `${taskHref(item.origin.taskId)}${taskHref(item.origin.taskId).includes("?") ? "&" : "?"}run=${encodeURIComponent(item.origin.id)}` : null;
   const failedInput = item.kind === "message" && item.role === "input" && ["failed", "unknown", "interrupted"].includes(item.state);
   const stateTag = item.kind === "message" && item.role === "input" && ["pending", "running", "failed", "unknown", "interrupted", "declined"].includes(item.state)
-    ? <span className={cn("workspace-input-state rounded-full px-2 py-px text-caption", failedInput ? "bg-danger-soft text-destructive" : "bg-field text-text-secondary")}>{item.state === "pending" ? (item.kind === "message" && grantBlockText(item.blockedReason) !== null ? "受阻：缺少消息授权" : "排队中") : item.state === "running" && mine ? replyingPhrase("me") : item.state === "declined" ? "已撤回" : entryStateLabel[item.state]}</span> : null;
+    ? <span className={cn("workspace-input-state text-caption", failedInput ? "font-medium text-destructive" : "text-text-secondary")}>{item.state === "pending" ? (item.kind === "message" && grantBlockText(item.blockedReason) !== null ? "受阻：缺少消息授权" : "排队中") : item.state === "running" && mine ? replyingPhrase("me") : item.state === "declined" ? "已撤回" : entryStateLabel[item.state]}</span> : null;
   const actions = <>
     {cutShort && <span className="text-text-secondary" data-reply-cut="">已显示前 {body.length.toLocaleString("zh-CN")} 字，后面还有内容</span>}
     {assistant && expandedBody && <span className="text-text-secondary" data-reply-full="">已读取完整回复，共 {expandedBody.body.length.toLocaleString("zh-CN")} 字</span>}

@@ -18,13 +18,13 @@ import { ContextPanelContent, useContextPanel } from "../../shared/ui/ContextPan
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { href } from "../../shared/ui/shared";
 import { CommandFrame, useCommand } from "../../shared/command";
-import { journeyKey, readOwnerRoles, readPublishedDocuments, useGoals, useStages } from "./journeyRead";
-import { draftFieldLabels, draftTouched, emptyTaskDraft, maxLinkedDocuments, taskCreateCommand, taskDraftProblems, taskKinds, zonedInstant, type DraftProblems, type TaskDraft } from "./taskCreate";
+import { journeyKey, readOwnerRoles, readPublishedDocuments, useGoals, useStageProjection, useStages } from "./journeyRead";
+import { draftFieldLabels, draftTouched, emptyTaskDraft, inStage, maxLinkedDocuments, NO_STAGE, stageLabel, taskCreateCommand, taskDraftProblems, taskKinds, zonedInstant, type DraftProblems, type TaskDraft } from "./taskCreate";
 import { formatScheduled } from "./taskTimingPresentation";
 import { timezoneOptions } from "../../shared/zonedTime";
 
 const muted = "text-caption text-muted-foreground";
-const section = "flex flex-col gap-4 rounded-xl bg-raised p-4 shadow-sm compact:p-5";
+const section = "flex flex-col gap-4 rounded-xl bg-raised p-4 border border-border compact:p-5";
 
 /** `?stage=` of the current address, when it is this page's. */
 function stageFromAddress(pathname: string): string {
@@ -68,6 +68,7 @@ export function CreateTaskView({ context, active, pathname, back, embedded = fal
     setDraft(current => draftTouched(current, fresh) || !stageId || current.stageId === stageId ? current : { ...current, stageId });
   }), [pathname, fresh]);
   const stagesRead = useStages(projectId);
+  const projection = useStageProjection(projectId);
   const goalsRead = useGoals(projectId);
   const rolesRead = useProjectQuery(projectId, ["roles", "task-owner-choices"], () => readOwnerRoles(projectId), { enabled: canWrite && active });
   const documentsRead = useProjectQuery(projectId, [journeyKey, "published-documents"], () => readPublishedDocuments(projectId), { enabled: canWrite && active });
@@ -75,7 +76,7 @@ export function CreateTaskView({ context, active, pathname, back, embedded = fal
   const chosenStage = stagesRead.data?.find(stage => stage.id === draft.stageId);
   const chosenGoal = chosenStage ? goalsRead.data?.items.find(goal => goal.id === chosenStage.goalId) : undefined;
   const problems = taskDraftProblems(draft, { canReview });
-  if (draft.stageId && stagesRead.data && !chosenStage) problems.stageId = "所选阶段不在已读的阶段中；请重新选择。";
+  if (inStage(draft) && stagesRead.data && !chosenStage) problems.stageId = "所选阶段不在已读的阶段中；请重新选择。";
   else if (chosenStage && chosenStage.state !== "active") problems.stageId = "所选阶段已不在推进中，不能再建所属任务。";
   const shown: DraftProblems = showProblems ? problems : {};
   const edit = (patch: Partial<TaskDraft>) => setDraft(current => ({ ...current, ...patch }));
@@ -147,11 +148,11 @@ export function CreateTaskView({ context, active, pathname, back, embedded = fal
         onChange={event => edit({ completionBoundary: event.target.value as TaskDraft["completionBoundary"] })}>
         <option value="delivered">交付并被使用即可关闭（delivered）</option><option value="merged">交付的 PR 已合并进主干才可关闭（merged）</option>
       </Select>}</Field>}
-      {draft.closeRule === "use" && <Field label={draft.stageId || draft.acceptanceMode === "human_required" ? "实际使用成果的身份" : "实际使用成果的身份（可选）"} {...field("consumer")}
+      {draft.closeRule === "use" && <Field label={inStage(draft) || draft.acceptanceMode === "human_required" ? "实际使用成果的身份" : "实际使用成果的身份（可选）"} {...field("consumer")}
         hint={draft.acceptanceMode === "human_required" ? "选验收的人本人；关闭时要有他对本次交付的使用记录。只列出能写入的人。"
           : "选会实际使用成果的智能体；不选时可以稍后由 Leader 确定独立验收。只列出能写入的智能体。"}>
         {control => <MemberChoice projectId={context.projectId} control={control} value={draft.consumer} onChange={consumer => edit({ consumer })}
-          need="write" kind={acceptanceMemberKind(draft.acceptanceMode)} optional={!(draft.stageId || draft.acceptanceMode === "human_required")} />}</Field>}
+          need="write" kind={acceptanceMemberKind(draft.acceptanceMode)} optional={!(inStage(draft) || draft.acceptanceMode === "human_required")} />}</Field>}
     </section>
     <section aria-label="责任与归属" className={section}>
       <h2 className="text-label font-semibold text-foreground">责任与归属</h2>
@@ -164,18 +165,21 @@ export function CreateTaskView({ context, active, pathname, back, embedded = fal
         职责没有完整读回：{errorText(rolesRead.error)}。请先重新读取，避免把任务交给错误的职责。</Notice>}
       {rolesRead.isSuccess && !roles.length && <p className="text-small text-text-secondary">项目里还没有在用或试行的职责，暂时不能新建任务。请先在团队里建立职责。</p>}
       <div className="grid grid-cols-1 gap-4 compact:grid-cols-2">
-        <Field label="所属阶段（可选）" {...field("stageId")} hint={stagesRead.isPending ? "正在读取推进中的阶段…" : stagesRead.error ? "阶段暂不可读取，只能建不属于阶段的任务。" : undefined}>
+        <Field label="所属阶段" {...field("stageId")} hint={stagesRead.isPending ? "正在读取推进中的阶段…" : stagesRead.error ? "阶段暂不可读取，只能选“不属于阶段”。" : undefined}>
           {control => <Select {...control} className="w-full" value={draft.stageId} onChange={event => chooseStage(event.target.value)}>
-            <option value="">不属于阶段</option>
-            {stages.map(stage => <option key={stage.id} value={stage.id}>{stage.deliverable}</option>)}
-            {draft.stageId && !stages.some(stage => stage.id === draft.stageId) && <option value={draft.stageId}>{chosenStage ? `${chosenStage.deliverable}（不在推进中）` : "所选阶段（未读到）"}</option>}
+            <option value="">请选择</option>
+            {stages.map(stage => <option key={stage.id} value={stage.id}>{stageLabel(stage, projection.data)}</option>)}
+            <option value={NO_STAGE}>不属于阶段</option>
+            {inStage(draft) && !stages.some(stage => stage.id === draft.stageId) && <option value={draft.stageId}>{chosenStage ? `${stageLabel(chosenStage, projection.data)}（不在推进中）` : "所选阶段（未读到）"}</option>}
           </Select>}</Field>
         <Field label={draft.closeRule === "decision" ? "任务类型" : "任务类型（可选）"} {...field("kind")}>{control => <Select {...control} className="w-full" value={draft.kind}
           onChange={event => edit({ kind: event.target.value as TaskDraft["kind"] })}>
           <option value="">未指定</option>{Object.entries(taskKinds).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </Select>}</Field>
       </div>
-      {draft.stageId && <>
+      {draft.stageId === NO_STAGE && <Field label="不属于阶段的理由" hint="写明为什么这项任务不属于任何阶段，例如日常例行、一次性杂务。" {...field("noStageReason")}>
+        {control => <Textarea {...control} rows={2} value={draft.noStageReason} onChange={event => edit({ noStageReason: event.target.value })} />}</Field>}
+      {inStage(draft) && <>
         <Field label="来源或反馈证据" hint="属于阶段的任务要写明为什么现在做。" {...field("evidence")}>
           {control => <Textarea {...control} rows={3} value={draft.evidence} onChange={event => edit({ evidence: event.target.value })} />}</Field>
         <Field label="停止条件" hint="在什么情况下停止或改做别的。" {...field("stopCondition")}>
@@ -204,7 +208,7 @@ export function CreateTaskView({ context, active, pathname, back, embedded = fal
       <summary className="cursor-pointer text-label font-semibold text-foreground">更多设置</summary>
       <div className="mt-4 flex flex-col gap-4">
         <DocumentChoices read={documentsRead} chosen={draft.documentIds} error={shown.documentIds} onChange={documentIds => edit({ documentIds })} />
-        {!draft.stageId && <>
+        {!inStage(draft) && <>
           <Field label="来源或反馈证据（可选）">{control => <Textarea {...control} rows={2} value={draft.evidence} onChange={event => edit({ evidence: event.target.value })} />}</Field>
           <Field label="停止条件（可选）">{control => <Textarea {...control} rows={2} value={draft.stopCondition} onChange={event => edit({ stopCondition: event.target.value })} />}</Field>
         </>}
@@ -241,13 +245,13 @@ export function CreateTaskView({ context, active, pathname, back, embedded = fal
           <p className={muted}>学习问题：{chosenStage.learningQuestion}</p>
           <p className={muted}>目标：{chosenGoal?.outcome ?? (goalsRead.isPending ? "正在读取…" : "目标未读到")}</p>
           <p className={muted}>属于阶段的任务要写明实际使用成果的身份、来源证据和停止条件。</p>
-        </div> : <p className={muted}>{draft.stageId ? "所选阶段未读到。" : "不属于任何阶段。需要时在“所属阶段”里选一个推进中的阶段。"}</p>}
+        </div> : <p className={muted}>{inStage(draft) ? "所选阶段未读到。" : draft.stageId === NO_STAGE ? "不属于任何阶段。" : "还没有选所属阶段。"}</p>}
       </PanelBlock>
       <PanelBlock title="保存之后">
         <p className={muted}>任务以“待办”建立，主正文随任务自动生成。之后在任务里设置计划时间、截止、优先级和前置依赖，再确认承接的智能体。</p>
       </PanelBlock>
       <FullIdentifiers rows={[{ label: "新任务", value: taskId }, { label: "每日重复的授权范围", value: `task-timing:${taskId}` },
-        { label: "所属阶段", value: draft.stageId || null }, { label: "负责职责", value: draft.owner || null }]} />
+        { label: "所属阶段", value: inStage(draft) ? draft.stageId : draft.stageId === NO_STAGE ? "不属于阶段" : null }, { label: "负责职责", value: draft.owner || null }]} />
     </div></ContextPanelContent>
   </div>;
 }

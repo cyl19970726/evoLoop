@@ -24,7 +24,7 @@ export function FixedGitOriginalReader({ record }: { record: TaskExternalReferen
     return verifyFixedGitRead(record, value);
   });
   const original = read.data;
-  return <section aria-label="固定 Git 原文" className="flex min-w-0 flex-col gap-3 rounded-lg bg-muted p-4 [overflow-wrap:anywhere]">
+  return <section aria-label="固定 Git 原文" className="flex min-w-0 flex-col gap-3 border-t border-border px-0 py-4 [overflow-wrap:anywhere]">
     <h4 className="text-label font-semibold text-foreground">固定 Git 原文 · 只读核对</h4>
     <p className={mutedText}>按登记时的 commit 与路径读取，不跟随仓库当前分支。读取只为核对原文，不新增采用结论，也不表示任务已验收或原文已被使用。</p>
     {!original && (read.error ? <ErrorState title="固定原文不可核实" happened={errorText(read.error)}

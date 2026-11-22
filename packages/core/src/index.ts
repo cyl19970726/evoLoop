@@ -63,6 +63,8 @@ export interface WorkflowDependencies { uow: UnitOfWork; clock: Clock; ids: IdFa
   mergeFacts?: import("@evoloop/contracts").MergeFactReader;
   /** True once the release that carries the completion boundary is running: a new delivery-type Task must then declare one. Off (the default) only in tests and old hosts. */
   requireCompletionBoundary?: boolean;
+  /** True in the running service: `task.create` must choose a stage (`stageId`) or "not part of any stage" (`noStage` + `noStageReason`). Off only in unit fixtures that predate the rule; there is no transition period in a deployment. */
+  requireTaskStage?: boolean;
   recoveryAuthority?: RecoveryAuthority;
   /** The one identity that runs the notice packet's own steps (build, sent, observe) for a project: the configured notice sender. Absent: none may. */
   leaderNoticeServiceActor?: (projectId: string) => Promise<string | null>;
@@ -180,6 +182,8 @@ function pageLimit(limit = 50): number {
   return limit;
 }
 
+const STAGE_CHOICE_MESSAGE = "Choose one: (a) stageId, the id of an active stage (a stage Task also needs consumer, evidence and stopCondition); or (b) noStage: true plus noStageReason, why this Task is not part of any stage.";
+const STAGE_SET_MESSAGE = "Choose one: stageId (an active stage), or stageId: null plus noStageReason.";
 export class WorkflowService {
   constructor(private readonly deps: WorkflowDependencies) {}
 
@@ -456,6 +460,11 @@ export class WorkflowService {
         }
         const documentIds = command.documentIds ?? [];
         if (new Set(documentIds).size !== documentIds.length) throw new DomainError("DUPLICATE_DOCUMENT", "Linked documents must be unique");
+        const noStageChosen = command.noStage === true;
+        if (command.noStageReason !== undefined && !noStageChosen) throw new DomainError("STAGE_CHOICE_INVALID", "noStageReason only goes with noStage: true. " + STAGE_CHOICE_MESSAGE);
+        if (noStageChosen && command.stageId) throw new DomainError("STAGE_CHOICE_INVALID", "Give stageId or noStage, not both. " + STAGE_CHOICE_MESSAGE);
+        if (noStageChosen && !command.noStageReason) throw new DomainError("STAGE_CHOICE_INVALID", "noStage: true needs noStageReason, the reason this Task is not part of any stage. " + STAGE_CHOICE_MESSAGE);
+        if (!noStageChosen && !command.stageId && this.deps.requireTaskStage) throw new DomainError("STAGE_CHOICE_REQUIRED", STAGE_CHOICE_MESSAGE);
         if (command.stageId) {
           const stage = required(await tx.getStage(command.stageId), "Stage");
           if (stage.state !== "active") throw new DomainError("INVALID_STAGE", "Stage task requires an active stage");
@@ -512,6 +521,8 @@ export class WorkflowService {
           evidence: command.evidence ?? "", stopCondition: command.stopCondition ?? "", createdAt: now });
         // The ownership side table (migration 118) is written with the proposal, never separately, so the two cannot disagree.
         if (command.stageId) await tx.putTaskStage?.({ projectId: command.projectId, taskId: task.id, version: 1, stageId: command.stageId, noStageReason: null,
+          actorId, reason: "task.create", updatedAt: now }, 0);
+        else if (noStageChosen) await tx.putTaskStage?.({ projectId: command.projectId, taskId: task.id, version: 1, stageId: null, noStageReason: command.noStageReason!,
           actorId, reason: "task.create", updatedAt: now }, 0);
         for (const linkedId of documentIds) await tx.insertLink({ projectId: command.projectId, id: this.deps.ids.next(),
           taskId: task.id, documentId: linkedId, actorId, createdAt: now });
@@ -757,6 +768,23 @@ export class WorkflowService {
         if (!latest) throw new DomainError("NOT_MARKED", "This delivery has no precondition mark to withdraw");
         if (latest.voided) throw new DomainError("ALREADY_VOIDED", "The current mark of this delivery is already withdrawn; mark it again with task.acceptancePrecondition.mark");
         await tx.insertPreconditionVoid({ projectId: command.projectId, markId: latest.markId, taskId: task.id, deliveryId: delivery.id, actorId, reason: command.reason, createdAt: now });
+        return { result: { ...base, entityId: task.id, version: task.version }, effects: [{ kind: "task", entityId: task.id, version: task.version }] };
+      }
+      case "task.stage.set": {
+        // Ownership lives in the side table: no Task revision, no Task version check, so delivery, acceptance, closing and dispatch read the same before and after.
+        const task = required(await tx.getTask(command.taskId), "Task");
+        if (task.state === "done" || task.state === "cancelled") throw new DomainError("INVALID_STATE", "A closed Task keeps the ownership it had; closed Tasks are not re-assigned");
+        const stageId = command.stageId ?? null;
+        if (stageId !== null && command.noStageReason !== undefined) throw new DomainError("STAGE_CHOICE_INVALID", "Give a stage, or stageId: null with noStageReason. " + STAGE_SET_MESSAGE);
+        if (stageId === null && !command.noStageReason) throw new DomainError("STAGE_CHOICE_INVALID", "stageId: null (not part of any stage) needs noStageReason. " + STAGE_SET_MESSAGE);
+        if (stageId !== null) {
+          const stage = required(await tx.getStage(stageId), "Stage");
+          if (stage.state !== "active") throw new DomainError("INVALID_STAGE", "A Task can only be assigned to an active stage");
+        }
+        if (!tx.getTaskStage || !tx.putTaskStage) throw new DomainError("TASK_STAGE_UNAVAILABLE", "Task stage store unavailable");
+        const owned = await tx.getTaskStage(task.id);
+        await tx.putTaskStage({ projectId: command.projectId, taskId: task.id, version: (owned?.version ?? 0) + 1, stageId, noStageReason: stageId === null ? command.noStageReason! : null,
+          actorId, reason: command.reason, updatedAt: now }, owned?.version ?? 0);
         return { result: { ...base, entityId: task.id, version: task.version }, effects: [{ kind: "task", entityId: task.id, version: task.version }] };
       }
       case "task.reviewBasis": {

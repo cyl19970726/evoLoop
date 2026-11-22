@@ -206,7 +206,7 @@ export function Composer({
               aria-disabled={entry.type === "command" && entry.item.unavailable ? true : undefined}
               onMouseDown={event => { event.preventDefault(); pick(entry); }}
               onMouseEnter={() => setActive(index)}
-              className={cn("flex items-center gap-2.5 rounded-md px-2.5 py-2", entry.type === "command" && entry.item.unavailable ? "cursor-not-allowed opacity-70" : "cursor-pointer", selected && "bg-accent text-accent-strong")}
+              className={cn("flex items-center gap-2.5 rounded-md px-2.5 py-2", entry.type === "command" && entry.item.unavailable ? "cursor-not-allowed opacity-70" : "cursor-pointer", selected && "bg-accent font-semibold text-foreground")}
             >
               {entry.type === "command" ? (
                 <>
@@ -263,15 +263,15 @@ export function Composer({
         </div>
       )}
 
-      <div className={cn("flex flex-col gap-2 rounded-xl bg-raised px-2.5 py-2 shadow-lg transition-shadow duration-150 has-[textarea:focus-visible]:outline-solid has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:-outline-offset-2 has-[textarea:focus-visible]:outline-primary", open && "shadow-[var(--focus-ring),var(--shadow-panel)]", disabled && "opacity-60")}>
+      <div className={cn("flex flex-col gap-2 rounded-xl border border-border-strong bg-raised px-2.5 py-2 has-[textarea:focus-visible]:outline-solid has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:-outline-offset-2 has-[textarea:focus-visible]:outline-primary", open && "shadow-[var(--focus-ring),var(--shadow-panel)]", disabled && "opacity-60")}>
         {attachments.length > 0 && (
           <div className="flex flex-wrap gap-1.5 px-1 pt-0.5">
             {attachments.map(attachment => (
-              <span key={attachment.id} className="inline-flex items-center gap-1.5 rounded-full bg-muted py-0.5 pl-2.5 pr-1.5 text-caption text-text-secondary">
+              <span key={attachment.id} className="inline-flex items-center gap-1.5 rounded-md bg-muted py-0.5 pl-2.5 pr-1.5 text-caption text-text-secondary">
                 {attachment.kind === "task" ? <ListChecks aria-hidden="true" className="size-3" /> : attachment.kind === "document" ? <FileText aria-hidden="true" className="size-3" /> : <Sparkles aria-hidden="true" className="size-3 text-primary" />}
                 {attachment.label}
                 {onRemoveAttachment && (
-                  <button type="button" aria-label={`移除 ${attachment.label}`} onClick={() => onRemoveAttachment(attachment.id)} className="inline-flex size-4 cursor-pointer items-center justify-center rounded-full border-0 bg-transparent p-0 text-muted-foreground hover:bg-field hover:text-foreground">
+                  <button type="button" aria-label={`移除 ${attachment.label}`} onClick={() => onRemoveAttachment(attachment.id)} className="inline-flex size-4 cursor-pointer items-center justify-center rounded-md border-0 bg-transparent p-0 text-muted-foreground hover:bg-field hover:text-foreground">
                     <X aria-hidden="true" className="size-3" />
                   </button>
                 )}
@@ -281,7 +281,7 @@ export function Composer({
         )}
         <div className="flex items-end gap-2.5">
           {onAttach && (
-            <button type="button" aria-label="添加任务、文档或文件" onClick={onAttach} disabled={disabled} className="inline-flex size-[34px] shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-brand-soft text-on-brand-soft outline-none hover:bg-brand-soft-hover active:bg-brand-soft-pressed focus-visible:shadow-[var(--focus-ring)]">
+            <button type="button" aria-label="添加任务、文档或文件" onClick={onAttach} disabled={disabled} className="inline-flex size-[34px] shrink-0 cursor-pointer items-center justify-center rounded-md border-0 bg-brand-soft text-on-brand-soft outline-none hover:bg-brand-soft-hover active:bg-brand-soft-pressed focus-visible:shadow-[var(--focus-ring)]">
               <Plus aria-hidden="true" className="size-4" />
             </button>
           )}
@@ -310,8 +310,8 @@ export function Composer({
             </button>}
           {splitSend && onQueue ? (
             <div role="group" aria-label="发送方式" className="flex shrink-0 items-center gap-1.5">
-              <button type="button" data-send-way={splitSend.sendWay ?? "insert"} onClick={send} disabled={!value.trim() || disabled || busy} className="inline-flex h-9 cursor-pointer items-center justify-center whitespace-nowrap rounded-full border-0 bg-brand px-3.5 text-small font-medium text-on-brand outline-none hover:bg-brand-hover active:bg-brand-pressed focus-visible:shadow-[var(--focus-ring)] disabled:cursor-default disabled:opacity-50">{splitSend.sendLabel}</button>
-              <button type="button" data-send-way={splitSend.queueWay ?? "queue"} onClick={queue} disabled={!value.trim() || disabled || busy} className="inline-flex h-9 cursor-pointer items-center justify-center whitespace-nowrap rounded-full border border-border bg-transparent px-3.5 text-small font-medium text-foreground outline-none hover:bg-field focus-visible:shadow-[var(--focus-ring)] disabled:cursor-default disabled:text-muted-foreground disabled:opacity-100">{splitSend.queueLabel}</button>
+              <button type="button" data-send-way={splitSend.sendWay ?? "insert"} onClick={send} disabled={!value.trim() || disabled || busy} className="inline-flex h-9 cursor-pointer items-center justify-center whitespace-nowrap rounded-md border-0 bg-brand px-3.5 text-small font-medium text-on-brand outline-none hover:bg-brand-hover active:bg-brand-pressed focus-visible:shadow-[var(--focus-ring)] disabled:cursor-default disabled:opacity-50">{splitSend.sendLabel}</button>
+              <button type="button" data-send-way={splitSend.queueWay ?? "queue"} onClick={queue} disabled={!value.trim() || disabled || busy} className="inline-flex h-9 cursor-pointer items-center justify-center whitespace-nowrap rounded-md border border-border bg-transparent px-3.5 text-small font-medium text-foreground outline-none hover:bg-field focus-visible:shadow-[var(--focus-ring)] disabled:cursor-default disabled:text-muted-foreground disabled:opacity-100">{splitSend.queueLabel}</button>
             </div>
           ) : !showStop && (
             <button type="button" aria-label={sendLabels[mode]} title={sendLabels[mode]} onClick={send} disabled={!value.trim() || disabled || busy} className="inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-brand text-on-brand outline-none hover:bg-brand-hover active:bg-brand-pressed focus-visible:shadow-[var(--focus-ring)] disabled:cursor-default disabled:opacity-50">

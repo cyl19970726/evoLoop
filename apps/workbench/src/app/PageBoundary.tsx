@@ -13,7 +13,7 @@ export const errorPage = {
   lede: "text-small text-text-secondary",
   summary: "cursor-pointer text-label text-text-secondary",
   detail: "mt-2 max-w-full overflow-x-auto whitespace-pre-wrap rounded-lg bg-muted p-3 font-mono text-caption [overflow-wrap:anywhere]",
-  button: "inline-flex h-9 items-center justify-center rounded-full bg-brand px-4 text-small font-medium text-on-brand outline-none hover:bg-brand-hover active:bg-brand-pressed focus-visible:shadow-[var(--focus-ring)]",
+  button: "inline-flex h-9 items-center justify-center rounded-md bg-brand px-4 text-small font-medium text-on-brand outline-none hover:bg-brand-hover active:bg-brand-pressed focus-visible:shadow-[var(--focus-ring)]",
 };
 
 /** What a stopped page tells: shown on the page, copyable, and kept by the service (Task c3a8e5d1). */

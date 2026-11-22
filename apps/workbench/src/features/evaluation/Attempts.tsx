@@ -23,7 +23,7 @@ const actorPair = (label: string, actorId: string | null | undefined): Array<[st
 
 type Deliveries = NonNullable<TaskDetail["deliveries"]>;
 type Observations = NonNullable<TaskDetail["observations"]>;
-const block = "flex min-w-0 flex-col gap-1.5 rounded-lg bg-muted px-3 py-2.5";
+const block = "flex min-w-0 flex-col gap-1.5 border-t border-border px-0 py-2.5";
 const pre = "m-0 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md bg-field p-3 font-mono text-caption text-foreground";
 const taskHref = (projectId: string, taskId: string, revisionId?: string) =>
   `/p/${projectId}/tasks/${taskId}${revisionId ? `?revision=${encodeURIComponent(revisionId)}` : ""}`;

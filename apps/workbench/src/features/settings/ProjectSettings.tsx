@@ -50,7 +50,7 @@ export function ProjectSettings({ context }: { context: MutationContext; refresh
         ["身份", <strong key="a" className="font-semibold">{principal.actorId}</strong>],
         ["身份类型", principal.identityKind ? identityLabel[principal.identityKind] ?? principal.identityKind : "未报告"],
         ["可用权限", principal.permissions.length
-          ? <ul key="p" className="flex flex-wrap gap-1.5">{principal.permissions.map(permission => <li key={permission} className="rounded-full bg-field px-2.5 py-0.5 text-caption text-foreground">{permissionLabel[permission] ?? permission}</li>)}</ul>
+          ? <ul key="p" className="flex flex-wrap gap-1.5">{principal.permissions.map(permission => <li key={permission} className="rounded-md bg-field px-2.5 py-0.5 text-caption text-foreground">{permissionLabel[permission] ?? permission}</li>)}</ul>
           : "只读成员"],
         ["决定类", principal.identityKind === "human" || principal.decisions === true ? "随所属类别获得" : "未授予"],
         ["项目范围", <span key="projects" className="break-all">{principal.projectIds.join("、")}</span>],
