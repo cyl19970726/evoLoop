@@ -12,7 +12,8 @@ jobs:
       fail-fast: false
       matrix:
         variant: [baseline, fixed]
-        slot: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]
+        load: [idle, loaded]
+        slot: [1,2,3,4,5,6,7,8,9,10]
     env:
       TEST_DATABASE_URL: postgres://evoloop:test-only-password@127.0.0.1:5432/evoloop_hub_test
     steps:
@@ -32,9 +33,10 @@ jobs:
         run: git show origin/main:tests/integration/hub-machine-conflict.test.ts > tests/integration/hub-machine-conflict.test.ts
       - name: Run the file 5 times in a row
         run: |
+          if [ "${{ matrix.load }}" = loaded ]; then for k in $(seq 1 $(nproc)); do (node -e "for(;;){}" &) ; done; fi
           fails=0
           for i in 1 2 3 4 5; do
-            if node --import tsx --test tests/integration/hub-machine-conflict.test.ts > "run$i.log" 2>&1; then echo "REPEAT ${{ matrix.variant }} slot ${{ matrix.slot }} run $i: pass"; else echo "REPEAT ${{ matrix.variant }} slot ${{ matrix.slot }} run $i: FAIL"; fails=$((fails+1)); grep -n "AssertionError\|✖" "run$i.log" | head -5; fi
+            if node --import tsx --test tests/integration/hub-machine-conflict.test.ts > "run$i.log" 2>&1; then echo "REPEAT ${{ matrix.variant }} ${{ matrix.load }} slot ${{ matrix.slot }} run $i: pass"; else echo "REPEAT ${{ matrix.variant }} ${{ matrix.load }} slot ${{ matrix.slot }} run $i: FAIL"; fails=$((fails+1)); sed -n 1,120p "run$i.log" | cut -c1-300; fi
           done
-          echo "REPEAT-SUMMARY ${{ matrix.variant }} slot ${{ matrix.slot }} fails=$fails/5"
+          echo "REPEAT-SUMMARY ${{ matrix.variant }} ${{ matrix.load }} slot ${{ matrix.slot }} fails=$fails/5"
           [ "${{ matrix.variant }}" = baseline ] || [ "$fails" = 0 ]
