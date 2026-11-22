@@ -184,7 +184,7 @@ function TableRow({ task, list, projectId, selected, onSelect, linkFor, columns,
     {!!timing?.error && <span title={errorText(timing.error)}>执行时间暂未读回</span>}
   </div>;
   const heading = <div className="flex items-start gap-1">
-    <Button variant="link" aria-pressed={selected} onClick={() => onSelect(task.id)} className="min-w-0 flex-1 justify-start whitespace-normal text-left font-medium text-foreground">{title}</Button>
+    <Button variant="link" aria-pressed={selected} onClick={() => onSelect(task.id)} className={cn("min-w-0 flex-1 justify-start whitespace-normal text-left text-foreground", selected ? "font-semibold" : "font-medium")}>{title}</Button>
     <a href={linkFor(task.id)} aria-label={`打开任务：${task.title}`} title="打开任务" className="shrink-0 rounded-sm p-0.5 text-muted-foreground hover:bg-field hover:text-foreground"><ArrowUpRight size={15} aria-hidden="true" /></a>
   </div>;
   const rowClass = cn("border-b border-border", selected ? "bg-accent" : "hover:bg-field/50");

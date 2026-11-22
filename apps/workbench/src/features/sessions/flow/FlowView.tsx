@@ -175,7 +175,7 @@ export function FlowView({ board, events, context, source, startAt, connection, 
         const st = styleOf(e.kind), route = routeOf(e, context);
         return <li key={e.seq}>
           <Button variant="row" data-event={e.seq} aria-pressed={selected?.type === "event" && selected.seq === e.seq} onClick={() => setSelected({ type: "event", seq: e.seq })}
-            className={cn("flex w-full items-baseline gap-2 px-2 py-1.5 text-left text-small", selected?.type === "event" && selected.seq === e.seq ? "bg-accent" : "hover:bg-muted")}>
+            className={cn("flex w-full items-baseline gap-2 px-2 py-1.5 text-left text-small", selected?.type === "event" && selected.seq === e.seq ? "bg-accent font-semibold" : "hover:bg-muted")}>
             <span className={cn("w-4 shrink-0 text-center", tone[st.tone])} aria-hidden="true">{st.glyph}</span>
             <span className="shrink-0 text-caption tabular-nums text-muted-foreground">{new Date(e.at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false })}</span>
             <span className="min-w-0 flex-1 truncate">{st.known ? st.label : `未知事件 ${e.kind}`}{e.subject.title ? `：${e.subject.title}` : ""}</span>
@@ -249,7 +249,7 @@ export function FlowView({ board, events, context, source, startAt, connection, 
   const trackItems = <ol className="flex flex-wrap gap-2" aria-label="对象轨道">
     {stations.map((s, i) => <li key={s.station} className="flex items-center gap-1.5 text-small"><span className="text-muted-foreground" aria-hidden="true">{i ? "→" : ""}</span>
       <Button variant="row" data-node={stationNode(s.station)} aria-pressed={selected?.type === "node" && selected.id === stationNode(s.station)} onClick={() => setSelected({ type: "node", id: stationNode(s.station) })}
-        className={cn("flex h-auto items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-small", selected?.type === "node" && selected.id === stationNode(s.station) && "bg-accent")}>
+        className={cn("flex h-auto items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-small", selected?.type === "node" && selected.id === stationNode(s.station) && "bg-accent font-semibold")}>
         <span>{s.station}</span><span className="tabular-nums font-medium">{s.count === null ? "读不到" : s.count}</span>
         {s.note && <span className="text-caption text-muted-foreground" data-station-note="">{s.note}</span>}
         {s.station === "已验收" && <span className="text-caption text-muted-foreground" data-station-window="">{windowLabel}</span>}</Button></li>)}</ol>;
@@ -302,7 +302,7 @@ export function FlowView({ board, events, context, source, startAt, connection, 
         <ol aria-label="对象轨道">
           {stations.map((s, i) => <li key={s.station} className="absolute bottom-2 flex -translate-x-1/2 flex-col items-center text-caption" style={{ left: `${((100 + i * ((W - 200) / (STATIONS.length - 1))) / W) * 100}%` }}>
             <Button variant="row" data-node={stationNode(s.station)} aria-pressed={selected?.type === "node" && selected.id === stationNode(s.station)} onClick={() => setSelected({ type: "node", id: stationNode(s.station) })}
-              className={cn("flex h-auto flex-col items-center rounded-md px-1.5 py-0.5 text-caption", selected?.type === "node" && selected.id === stationNode(s.station) && "bg-accent")}>
+              className={cn("flex h-auto flex-col items-center rounded-md px-1.5 py-0.5 text-caption", selected?.type === "node" && selected.id === stationNode(s.station) && "bg-accent font-semibold")}>
               <span className="tabular-nums font-medium">{s.count === null ? "读不到" : s.count}</span><span className="text-muted-foreground">{s.station}</span>{s.note && <span className="text-muted-foreground" data-station-note="">{s.note}</span>}{s.station === "已验收" && <span className="text-muted-foreground" data-station-window="">{windowLabel}</span>}</Button></li>)}
         </ol>
       </div>
