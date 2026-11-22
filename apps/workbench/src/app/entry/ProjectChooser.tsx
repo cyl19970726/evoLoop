@@ -1,6 +1,7 @@
 // The project list after login: every project this identity may read, saved receipts to check first,
 // and a create form for an authorised project scope that has no project yet.
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { navigate } from "../../shared/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, LogOut, RefreshCw } from "lucide-react";
 import { Button, EmptyState, Logo, Notice } from "@evoloop/ui";
@@ -44,6 +45,9 @@ export function ProjectChooser({ token, principal, receipts, operationNotice, op
   const projects = (list.data ?? []).flatMap(r => r.project && principal.projectIds.includes(r.project.id) ? [r.project] : []);
   const missing = (list.data ?? []).filter(r => !r.project).map(r => r.id);
   const reading = list.isFetching;
+  // One project, nothing to check first: the list would only be a step in the way, so go straight in (several projects still show the list).
+  const only = list.data && list.data.length === 1 && projects.length === 1 && !missing.length && principal.projectIds.length === 1 && !receipts.length && !operationNotice ? projects[0]! : null;
+  useEffect(() => { if (only) navigate(href(only.id, "overview"), { replace: true }); }, [only?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const reread = () => { void queryClient.invalidateQueries({ queryKey: listKey }); };
   async function refreshProjects() {
     if (refreshing) return;

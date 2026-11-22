@@ -305,7 +305,7 @@ export default function UiSamplesPage() {
                     <HoverCardTrigger asChild><a href="/ui" className="text-primary underline-offset-4 hover:underline">对账规则</a></HoverCardTrigger>
                     <HoverCardContent>
                       <p className="m-0 font-semibold">对账规则</p>
-                      <p className="m-0 mt-1 text-label text-text-secondary">文档 · 第 2 版 · 统筹 今天 14:51 修改 · 3 个任务在引用</p>
+                      <p className="m-0 mt-1 text-label text-text-secondary">文档 · 第 2 版 · Leader 今天 14:51 修改 · 3 个任务在引用</p>
                     </HoverCardContent>
                   </HoverCard>
                   <DropdownMenu>

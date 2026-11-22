@@ -31,7 +31,7 @@ export function holdSummary(listing: ProviderHoldListing | undefined): HoldSumma
 export function holdLine(summary: HoldSummary, firstName?: string | null): string {
   const causes = summary.holds.map(hold => `${providerName[hold.provider]} ${causeText(hold.category)}`).join("、");
   const count = summary.sessionIds.length;
-  const who = count === 0 ? "新的运行已暂停" : count === 1 ? `${firstName || "1 个智能体"}停着` : `${firstName ? `${firstName} 等` : ""} ${count} 个智能体停着`.trim();
+  const who = count === 0 ? "新的运行已暂停" : count === 1 ? `${firstName ? `${firstName} ` : "1 个智能体"}停着` : `${firstName ? `${firstName} 等` : ""} ${count} 个智能体停着`.trim();
   return `模型服务 ${causes}，${who}：需要你充值或重新授权`;
 }
 

@@ -11,17 +11,17 @@ const sessionId = "30000004-0000-4000-8000-000000000004";
 const phases: LeaderWorkPhase[] = ["unknown", "rework", "blocked", "awaiting_delivery", "awaiting_acceptance", "ready",
   "awaiting_assignment", "running", "unassigned", "closed", "cancelled"];
 // Words the server writes for agents (`nextAction`, `responsible.label`) that must not reach the page.
-const internal = /Run|operation|Role|Session|HostLink|Leader|assignment|queue|nextAction/;
+const internal = /Run|operation|Role|Session|HostLink|assignment|queue|nextAction/;
 
 test("every phase has its own Chinese next step without internal words (统筹安排 and the overview)", () => {
   const steps = phases.map(workNextStep);
   assert.equal(new Set(steps).size, phases.length, "no two phases share a step");
   for (const [index, step] of steps.entries()) {
     assert.doesNotMatch(step, internal, phases[index]);
-    assert.doesNotMatch(step, /[A-Za-z]/, `${phases[index]} has no English words`);
+    assert.doesNotMatch(step.replaceAll("Leader", ""), /[A-Za-z]/, `${phases[index]} has no English words`);
   }
   assert.equal(workNextStep("unknown"), "上次执行结果未知，先核对，不要重复派发");
-  assert.equal(workNextStep("unassigned"), "等统筹指定承接的智能体");
+  assert.equal(workNextStep("unassigned"), "等 Leader 指定承接的智能体");
   // The server's nextAction for these phases, word for word: written for agents, not for the page.
   assert.notEqual(workNextStep("unassigned"), "负责人选择真实 Role/Session 并按当前版本正式分派");
   assert.notEqual(workNextStep("unknown"), "先按原 Run 与 operation 对账；结果不明时不要重复派发");
@@ -37,7 +37,7 @@ test("the next responsibility is a kind and a name, never the server label or th
   assert.equal(responsibleText(session, { targetKind: "owned", targetId: sessionId }, { state: "named", name: "前端" }), "智能体 · 前端");
   assert.equal(responsibleText(session, { targetKind: "external", targetId: sessionId }, { state: "unnamed" }), "外部智能体（未登记名称）");
   assert.equal(responsibleText({ kind: "consumer", id: "acceptance-owner" }, null, { state: "failed" }), "指定验收者");
-  assert.equal(responsibleText({ kind: "leader", id: "lead" }, null, { state: "failed" }), "项目统筹");
+  assert.equal(responsibleText({ kind: "leader", id: "lead" }, null, { state: "failed" }), "Leader");
   assert.equal(responsibleText({ kind: "task", id: roleId }, null, { state: "named", name: "前置调研" }), "前置任务 · 前置调研");
   assert.equal(responsibleText({ kind: "unknown", id: null }, null, { state: "failed" }), "下一责任未登记");
   assert.equal(responsibleText({ kind: "role", id: null }, null, { state: "failed" }), "下一责任未登记");

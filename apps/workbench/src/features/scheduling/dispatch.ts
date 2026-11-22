@@ -27,7 +27,7 @@ const reasons: Record<string, string> = {
 const unavailable: Record<string, string> = {
   SESSION_NOT_READY: "名单里的会话还没就绪", RECOVERY_GATE_CLOSED: "名单里的会话正在恢复，恢复门还没打开",
   EXECUTION_PROFILE_UNAVAILABLE: "名单里的会话的执行配置不可用", HEAD_SUSPENDED: "名单里的会话队头的项被挂起",
-  CONTROLLER_SESSION: "名单里的会话就是负责统筹的会话，不能接自己排的活",
+  CONTROLLER_SESSION: "名单里的会话就是Leader 的会话，不能接自己排的活",
 };
 reasons.DIRECT_LIST_EMPTY = "直派名单是空的，没有可接收的会话，交给 Leader";
 /** A dispatch reason code in words; a code the page does not know says so and names it right there. */

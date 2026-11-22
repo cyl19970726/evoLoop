@@ -333,12 +333,12 @@ test("the task page's five tabs read, write and refuse as the record allows, at 
   const dependencyWrite = leaderWrites.find(write => write.path.endsWith("/dependencies"))!.body;
   assert.deepEqual({ expectedTaskVersion: dependencyWrite.expectedTaskVersion, expectedDependencyVersion: dependencyWrite.expectedDependencyVersion, dependsOnTaskIds: dependencyWrite.dependsOnTaskIds },
     { expectedTaskVersion: 4, expectedDependencyVersion: 0, dependsOnTaskIds: [taskC] });
-  await panel.getByText("调整执行时间与重复规则", { exact: true }).click();
+  await panel.getByText("调整定时任务规则", { exact: true }).click();
   const timingForm = panel.getByRole("form", { name: "保存调整" });
   // A date-time control on the task zone's clock (Asia/Shanghai), filled with the stored time; no UTC or offset typed.
-  assert.equal(await timingForm.getByLabel("约定执行时间").inputValue(), "2026-11-11T09:00");
-  assert.equal(await timingForm.getByLabel("约定执行时间").getAttribute("type"), "datetime-local");
-  await timingForm.getByLabel("约定执行时间").fill("2026-11-12T09:00");
+  assert.equal(await timingForm.getByLabel("执行时间").inputValue(), "2026-11-11T09:00");
+  assert.equal(await timingForm.getByLabel("执行时间").getAttribute("type"), "datetime-local");
+  await timingForm.getByLabel("执行时间").fill("2026-11-12T09:00");
   await timingForm.getByText(/记录为 2026-11-12 01:00 UTC/).waitFor();
   await timingForm.getByLabel("调整理由").fill("改到早上");
   if (shots) { await timingForm.scrollIntoViewIfNeeded(); await page.screenshot({ path: `${shots}/task-timing-adjust-1440.png` }); }
@@ -413,10 +413,10 @@ test("the task page's five tabs read, write and refuse as the record allows, at 
   await panel.getByText(/修订历史暂不可读取|上次读回，当前待核对/).first().waitFor();
   panel = await tab("任务操作");
   await panel.getByText(/执行时间暂不可读取|上次读回，当前待核对/).first().waitFor();
-  assert.doesNotMatch(await panel.innerText(), /这项任务没有约定执行时间/);
+  assert.doesNotMatch(await panel.innerText(), /这项任务没有执行时间/);
   for (const what of ["assignment", "queues", "revisions", "timing"]) await fixture(`recover?what=${what}`);
   await center.getByRole("button", { name: "重新读取当前任务" }).click();
-  await panel.getByText("本次约定执行").waitFor();
+  await panel.getByText("本次定时任务").waitFor();
   await page.waitForFunction(() => !document.body.innerText.includes("上次读回，当前待核对"));
 
   // Three widths: the right column is beside the task at 1440, a closed drawer at 1024, and nothing scrolls sideways at 390.
@@ -441,6 +441,6 @@ test("the task page's five tabs read, write and refuse as the record allows, at 
   await actions.getByText(/另有 \d+ 项操作需要写入或审阅权限/).waitFor();
   assert.equal(await actions.locator("form").count(), 0);
   assert.equal(await actions.getByText("取消任务", { exact: true }).count(), 0);
-  await actions.getByText("本次约定执行").waitFor();
+  await actions.getByText("本次定时任务").waitFor();
   assert.deepEqual(errors, []);
 });

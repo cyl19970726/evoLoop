@@ -67,13 +67,13 @@ export function timingSetPayload(taskId: string, taskVersion: number, current: T
 }
 
 /**
- * 执行时间与重复's forms: the date and time typed on the clock of `timezone` (as 新建任务 asks for it), sent as the same
+ * 定时任务's forms: the date and time typed on the clock of `timezone` (as 新建任务 asks for it), sent as the same
  * task.timing.set a typed ISO time with its offset gave before. A time filled from the record and left as it was is sent
  * back exactly as stored (shared/zonedTime timeFieldInstant).
  */
 export function timingFormPayload(taskId: string, taskVersion: number, current: TaskTimingView | null,
   values: { executeAt: string; timezone: string; repeat: "none" | "daily"; scope: "this" | "this_and_future" | "future"; reason: string }) {
-  if (!values.executeAt.trim()) throw new Error("请选择约定执行时间。");
+  if (!values.executeAt.trim()) throw new Error("请选择执行时间。");
   const { executeAt, ...rest } = values;
   return timingSetPayload(taskId, taskVersion, current, { ...rest, executeAtUtc: timeFieldInstant(executeAt, values.timezone) });
 }

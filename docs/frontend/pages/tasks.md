@@ -17,16 +17,16 @@
 | 中间 | 选中任务的正文：目标（只在有明确的阶段目标时显示，不再摘正文第一段重复一遍，行内代码按代码样式）→ 完成条件 → 正文 → 进展与讨论时间线。可切换到“表格视图”，用六列表格给 Leader 对账、批量扫读。手机上 `/work` 默认是紧凑列表（每行是标题、进展、类型、承接和最近进展），“任务视图”里选“表格”后，这个浏览器记住选择 |
 | 右栏 | 状态与对账阶段；承接 Session（显示并可设置绑定）；关联文档（主正文、需求总图、Leader 编排总览、固定依据、交付物）；交付与使用；版本；可收起 |
 
-现状（#229 PR7、PR7b）：三处和正文下的五个页签都已按新设计实现。`/work` 是表格视图，`/tasks/{ID}` 读一项任务；筛选与排序写在地址里。需求总图和统筹总览没有单独标记，作为关联文档列出。1440px 以下右栏默认收起，窄屏用“任务信息”打开。
+现状（#229 PR7、PR7b）：三处和五个页签已按新设计实现。`/work` 是表格视图，`/tasks/{ID}` 读一项任务；筛选与排序写在地址里。需求总图和 Leader 总览没有单独标记，作为关联文档列出。1440px 以下右栏默认收起，窄屏用“任务信息”打开。
 
 | 页签 | 放什么 |
 | --- | --- |
-| 当前工作 | 目标、完成条件、正文、进展与讨论（约定执行、协作、当前关注、阶段区间与计划、负责职责） |
+| 当前工作 | 目标、完成条件、正文、进展与讨论（定时任务、协作、当前关注、阶段区间与计划、负责职责） |
 | 依据与影响 | 开始时固定的依据和各文档现状；每项依据变化单独读两版、决定采用或保留 |
 | 交付与使用 | 每次交付的固定成果、技术检查、来源运行和这次的使用观察；验收接力；验收与关闭 |
 | 运行与关联 | 分派与确认（含分派记录）、执行队列、运行记录（可按链接定位）；被叫停的运行显示“已请求停止”和理由、自动循环、协作入口、Git 与外部来源登记（三种登记都是共同的提交表单；“复核此依据”直接展开采用表单并在表单里说明载入了什么；采用决定按打开表单时的任务版本和修订提交；记录正式关系时按标题选过程文档、按时间和作者选修订，Git 字段当场校验，见[仓库规范](repository.md)） |
 | 历史 | 状态变化、修订时间线、依据复核决定、验收约定；固定修订只读，只给“返回当前任务” |
-| 任务操作 | 当前身份在当前状态下能做的写入；执行时间与重复（与新建任务相同，按任务时区填当地日期和时间；约定时间后的时区写名称，如“（上海）”，与日程页相同）；做不了的只计数。指定验收身份按本项目成员名称选：必须本人验收和独立智能体验收只列此刻能写入、类型符合的成员（必须本人验收不能不指定）；保留旧约定时人的使用由复核者代登记，人列出全部成员，智能体仍要能写入。身份文件改过时写明重启后的变化；成员读取中、列不出或要填服务身份时按完整标识填写 |
+| 任务操作 | 当前身份在当前状态下能做的写入；定时任务（与新建任务相同，按任务时区填当地日期和时间；约定时间后的时区写名称，如“（上海）”，与日程页相同）；做不了的只计数。指定验收身份按本项目成员名称选：必须本人验收和独立智能体验收只列此刻能写入、类型符合的成员（必须本人验收不能不指定）；保留旧约定时人的使用由复核者代登记，人列出全部成员，智能体仍要能写入。身份文件改过时写明重启后的变化；成员读取中、列不出或要填服务身份时按完整标识填写 |
 
 ## 完成边界（Task b5993311）
 
@@ -44,9 +44,9 @@
 | Run completed ≠ 已验收 | “运行中”“已发布”“已验收”各是一项事实 |
 | 固定成果、技术检查、实际使用 | 分三项显示；没有本次交付的使用观察就写没有，旧记录不沿用 |
 | 验收接力 | 逐项显示接收者、消息投递、运行处理、本人读取和使用观察；安排已保存或消息已排队时仍是“尚未使用”；旧交付被替代后，旧安排保留历史状态 |
-| Leader 通知 | 一条一消息的旧通知写“已保存给统筹的消息，还没有核到接收”“统筹已记录收阅”等；经通知包送出的通知（包括被撤回的）按自己在包里的位置写：等待并入通知包、已并入通知包、Leader 这一轮已开始读、已看到（还没有处置）、Leader 已处理或已延后到某时、已撤回并写原因（来源已过时，或有人的消息先送）、包受阻等恢复、这一轮没读完将重送；被重送的项写“上一轮可能已读到过”。已看到不等于已处理 |
+| Leader 通知 | 一条一消息的旧通知写“已保存给 Leader 的消息，还没有核到接收”“Leader 已记录收阅”等；经通知包送出的通知（包括被撤回的）按自己在包里的位置写：等待并入通知包、已并入通知包、Leader 这一轮已开始读、已看到（还没有处置）、Leader 已处理或已延后到某时、已撤回并写原因（来源已过时，或有人的消息先送）、包受阻等恢复、这一轮没读完将重送；被重送的项写“上一轮可能已读到过”。已看到不等于已处理 |
 | 当前承接与历史承接 | 已完成或已取消的任务显示“历史承接”；Session 现在忙碌不说明这项任务仍在运行 |
-| 跨空间返回 | 右栏、运行与关联、表格里的“进入对话”等智能体链接带上来处（当前页签或表格所选行）和任务名，智能体页写“返回任务：<名称>”并回到原页签；从智能体、统筹安排、文档、日程或待我处理（三块都是）进入任务时，页首写“返回智能体：<名称>”“返回统筹安排”“返回文档：<名称>”“返回日程：<名称>”“返回待我验收与判断”，切换页签也保留。从待我决定的职责提案、阶段提案进入职责页或目标与阶段页时，页首同样写“返回待我处理”并回到收件页；直接打开这两页不显示。返回只认本项目的页面和链接生成时的当前身份 |
+| 跨空间返回 | 右栏、运行与关联、表格里的“进入对话”等智能体链接带上来处（当前页签或表格所选行）和任务名，智能体页写“返回任务：<名称>”并回到原页签；从智能体、统筹安排、文档、日程或待我处理（三块都是）进入任务时，页首写“返回智能体：<名称>”“返回统筹安排”“返回文档：<名称>”“返回日程：<名称>”“返回待我处理”，切换页签也保留。从待我决定的职责提案、阶段提案进入职责页或目标与阶段页时，页首同样写“返回待我处理”并回到收件页；直接打开这两页不显示。返回只认本项目的页面和链接生成时的当前身份 |
 | 自动循环未配置 | 编排没配置时状态接口明确返回 `disabled`、循环列表返回空页，写“自动循环未配置或尚未启用”，不写“记录不存在或已被移除” |
 | 固定依据与新版 | 任务保留开始时固定的版本，有新版时标“待复核” |
 | 最近进展与时间 | 事件写成中文（如“任务内容或状态更新”），不显示内部事件名；时间都按全站格式显示读者本地时间 |
@@ -139,9 +139,9 @@
 
 新建任务的其他宽度：[390](../../assets/frontend-pages/task-new-390.png)。
 
-![待我验收与判断，1440](../../assets/frontend-pages/inbox-1440.png)
+![待我处理，1440](../../assets/frontend-pages/inbox-1440.png)
 
-![待我验收与判断，390](../../assets/frontend-pages/inbox-390.png)
+![待我处理，390](../../assets/frontend-pages/inbox-390.png)
 
 ![运行受阻时的待我处理：有内容的块在上，空的折成一行，1440](../../assets/frontend-pages/inbox-runtime-1440.png)
 
@@ -161,7 +161,7 @@
 | 五个页签 | 记录者的叫法统一用 `apps/workbench/src/shared/actorPresentation.ts`（账号名照写，只有 UUID 的写“未登记名称的身份”，`worker-` 凭据写“自动执行方”，完整值在“完整标识”）；`TaskBasisTab.tsx`（两版对照里的非 Markdown 原件用 `apps/workbench/src/shared/ui/OriginalDocumentReader.tsx`）、`TaskDeliveryTab.tsx`、`TaskRuntimeTab.tsx`、`ResidentQueuePanel.tsx`（团队的运行与接入也用）、`apps/workbench/src/features/orchestration/`（自动循环）、`apps/workbench/src/features/references/`（Git 与外部来源登记，仓库规范也用；写入在 `referenceCommands.ts`）、`TaskHistoryTab.tsx`、`TaskActionsTab.tsx`、`EvidenceText.tsx` | `actor-presentation.test.ts`、`task-tabs-browser.test.ts`、`task-evidence-reading.test.ts`、`reference-commands.test.ts`、`legacy-bits-browser.test.ts`、`task-owner-presentation.test.ts`、`task-loop-browser.test.ts`（审计事件与交付页签的记录者不显示标识）、`schedule-run-session-path-browser.test.ts`、`document-original-reading-browser.test.ts` |
 | 写入 | `apps/workbench/src/shared/command/`（唯一的提交表单：基线、回执与表单）、`TaskForms.tsx`（页签部件与读取状态）、`taskCommands.ts`（各命令） | `use-command.test.ts`、`task-commands.test.ts`、`task-list-model.test.ts` |
 | 收件页与计数 | `InboxIndex.tsx`、`inboxModel.ts`（等我使用的判断、计数、带返回参数的链接）、`inboxReads.ts`（各项读取，外壳计数共用；含运行受阻的读取）、`inboxDeliveries.ts`（逐页读工作索引） | `inbox-model.test.ts`、`inbox-browser.test.ts`、`provider-hold-bar-browser.test.ts`（运行受阻一行与“只有你能办的运行问题”，`EVOLOOP_HOLD_SCREENSHOT_DIR` 存截图）、`provider-hold-notice.test.ts`、`decision-return-browser.test.ts`（`EVOLOOP_DECISION_RETURN_SCREENSHOT_DIR` 存两种宽度的截图）、`leader-work-overview-browser.test.ts`、`legacy-bits-browser.test.ts` |
-| 执行时间与重复 | `TaskScheduleSection.tsx`、`taskTimingPresentation.ts`、`apps/workbench/src/shared/zonedTime.ts`、`apps/workbench/src/shared/ui/LocalTimeInput.ts` | `task-timing-ui.test.ts`、`task-commands.test.ts`、`zoned-time.test.ts`、`task-tabs-browser.test.ts` |
+| 定时任务 | `TaskScheduleSection.tsx`、`taskTimingPresentation.ts`、`apps/workbench/src/shared/zonedTime.ts`、`apps/workbench/src/shared/ui/LocalTimeInput.ts` | `task-timing-ui.test.ts`、`task-commands.test.ts`、`zoned-time.test.ts`、`task-tabs-browser.test.ts` |
 | 新建任务 | `CreateTaskPage.tsx`、`taskCreate.ts` | `task-create.test.ts`、`journey-browser.test.ts`、`work-status-recovery-browser.test.ts` |
 | 按成员选验收身份（任务操作、新建任务，日程同用） | `apps/workbench/src/shared/ui/MemberChoice.tsx`、`apps/workbench/src/shared/memberPresentation.ts`、`apps/workbench/src/shared/projectConfiguration.ts` | `member-presentation.test.ts`（与手填时请求体相同）、`member-choice-browser.test.ts`（`EVOLOOP_MEMBERS_SCREENSHOT_DIR`） |
 

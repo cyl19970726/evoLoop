@@ -101,7 +101,7 @@ function StatusFacts({ context, detail, read, linkForTab }: {
   const state = taskStateStatus[task.state];
   return <div className="flex flex-col gap-2.5" aria-label="状态与下一步">
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-      <span className="flex items-center gap-1.5 text-caption text-muted-foreground">任务<StatusTag tone={state.tone} label={state.label} /></span>
+      {(!open || !projection) && <span className="flex items-center gap-1.5 text-caption text-muted-foreground">任务<StatusTag tone={state.tone} label={state.label} /></span>}
       <span className="flex items-center gap-1.5 text-caption text-muted-foreground">对账<StatusTag tone={phase.tone} label={phase.label} /></span>
     </div>
     {open || projection ? <Fact label="下一步">{phase.next}
@@ -113,7 +113,7 @@ function StatusFacts({ context, detail, read, linkForTab }: {
         projection.plan.plannedStartAt ? `计划开始 ${taskTimestamp(projection.plan.plannedStartAt)}` : ""].filter(Boolean).join(" · ")}</Fact>}
     {projection && projection.dependencies.length > 0 && <Fact label="前置任务">{projection.dependencies.filter(item => !item.acceptanceSatisfied).length
       ? `${projection.dependencies.filter(item => !item.acceptanceSatisfied).length} 项尚未验收` : `${projection.dependencies.length} 项均已验收`}</Fact>}
-    {projection?.review && <Fact label="统筹决定">{projection.review.decision === "deferred" ? "已暂缓" : "已核对"}<span className="mt-0.5 block text-caption text-muted-foreground">{projection.review.reason}</span></Fact>}
+    {projection?.review && <Fact label="Leader 决定">{projection.review.decision === "deferred" ? "已暂缓" : "已核对"}<span className="mt-0.5 block text-caption text-muted-foreground">{projection.review.reason}</span></Fact>}
     {pending > 0 && <p className="text-label text-warning">{pending} 项依据变化待复核。<a className="text-primary hover:underline" href={linkForTab("basis")}>去复核</a></p>}
   </div>;
 }
@@ -162,7 +162,7 @@ function DocumentFacts({ projectId, detail }: { projectId: string; detail: TaskD
         })}</ul>
       </div>;
     })}
-    <p className="text-caption text-muted-foreground">需求总图与统筹总览关联到任务后列在“关联文档”；系统尚未单独标记它们。</p>
+    <p className="text-caption text-muted-foreground">需求总图与 Leader 总览关联到任务后列在“关联文档”；系统尚未单独标记它们。</p>
   </div>;
 }
 

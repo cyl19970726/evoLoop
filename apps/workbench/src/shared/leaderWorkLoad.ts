@@ -57,7 +57,7 @@ export function usedWaitResponsibility(item: Pick<LeaderWorkTask, "phase" | "res
   if (item.phase === "awaiting_prerequisite")
     return item.waitingTask ? `前置任务 ${item.waitingTask.taskId.slice(0, 8)} · 当前${waitingTaskState[item.waitingTask.state] ?? "状态未读到"}` : "前置任务未登记";
   if (item.phase === "awaiting_release") return item.responsible.id ? `发布维护者 ${item.responsible.id}` : "发布责任者未登记";
-  if (item.phase === "awaiting_close") return item.responsible.id ? `负责关闭 · ${item.responsible.id}` : "项目统筹 · 负责关闭";
+  if (item.phase === "awaiting_close") return item.responsible.id ? `负责关闭 · ${item.responsible.id}` : "Leader · 负责关闭";
   return null;
 }
 
