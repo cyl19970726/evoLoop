@@ -1,0 +1,69 @@
+/* Orientation 2 — 冷调中性 (cool, neutral). Based on what is live now (palette B). The greys turn neutral-cool, the one accent that is allowed to carry colour is the clickable blue,
+   corners are small, depth comes from hairlines, avatars become quiet monochrome marks: closer to a tool for reading code and evidence. Buttons (DEC-051) keep their brand colour,
+   so the page still has one orange thing, the primary button; that is the part of "only one blue" this sheet cannot reach without touching DEC-051. The "finished" colour moves from violet to a
+   slate so it is not a fourth hue; its meaning is the same. Draft: a sheet laid over the built workbench; nothing here is imported by the app. */
+:root {
+  --surface-sunken: #dfe2e8;
+  --background: #f6f7f9;
+  --surface-raised: #ffffff;
+  --surface-muted: #eaedf1;
+  --surface-field: #dfe3e9;
+  --surface-selected: #d4d9e1;
+  --border: #c8ced8;
+  --border-strong: #a0a9b8;
+  --text: #12161d;
+  --text-secondary: #3a4350;
+  --text-muted: #505a69;
+  --accent: #1d4ed8;
+  --accent-strong: #1b3fae;
+  --accent-soft: #e6edfd;
+  --warning: #775000;
+  --warning-soft: #fceed1;
+  --danger: #a3203a;
+  --danger-soft: #fde9e9;
+  --done: #46515f;
+  --done-soft: #e9edf2;
+  --user-bubble: #12161d;
+  --on-user-bubble: #f8f9fb;
+  --count-bg: #12161d;
+  --count-fg: #f8f9fb;
+  --radius-inline: 3px;
+  --radius-control: 6px;
+  --radius-card: 6px;
+  --radius-panel: 8px;
+  --radius-pill: 6px;
+  --shadow-panel: 0 0 0 1px rgb(18 22 29 / 7%);
+  --shadow-control: 0 0 0 1px rgb(18 22 29 / 6%);
+  --shadow-popover: 0 0 0 1px rgb(18 22 29 / 8%), 0 8px 24px rgb(18 22 29 / 10%);
+}
+:root[data-theme="dark"] {
+  --surface-sunken: #0b0d11;
+  --background: #14171c;
+  --surface-raised: #272d36;
+  --surface-muted: #1b1f26;
+  --surface-field: #2f3640;
+  --surface-selected: #363e4a;
+  --border: #3a424e;
+  --border-strong: #515a69;
+  --text: #e6e9ee;
+  --text-secondary: #bcc3cd;
+  --text-muted: #a9b1bd;
+  --on-accent: #0d1117;
+  --accent: #8fb0ff;
+  --accent-strong: #b3c8ff;
+  --accent-soft: #1c2a4a;
+  --warning: #e3b667;
+  --warning-soft: #362913;
+  --danger: #f08e92;
+  --danger-soft: #3f1e20;
+  --done: #aab4c4;
+  --done-soft: #262c35;
+  --user-bubble: #2d333c;
+  --on-user-bubble: #e6e9ee;
+  --count-bg: #e6e9ee;
+  --count-fg: #12151a;
+  --shadow-panel: 0 0 0 1px rgb(255 255 255 / 6%);
+  --shadow-control: 0 0 0 1px rgb(255 255 255 / 6%);
+}
+/* component-level: avatars are quiet monochrome marks; the role colour stays readable as a grey step. */
+svg:has(> g[clip-path]) { filter: grayscale(1) contrast(.92); }

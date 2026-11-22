@@ -1,0 +1,43 @@
+/* Orientation 1 — 暖调收紧 (warm, tightened). Based on what is live now (palette B). Keeps the warm paper, and goes further in the same direction as the review's 5.2:
+   fewer accents fighting on one screen, tighter corners, depth from lightness steps rather than shadow, decoration turned down. Buttons (DEC-051) and the meaning of
+   the status colours are untouched. Draft: a sheet laid over the built workbench by theme-compare.mjs; nothing here is imported by the app. */
+:root {
+  /* surfaces: less yellow in the greys, steps stay clearly apart */
+  --surface-sunken: #e3ddd3;
+  --background: #faf8f3;
+  --surface-muted: #eee9e0;
+  --surface-field: #dfd9ce;
+  --surface-selected: #d9d1c4;
+  --border: #cfc7ba;
+  --border-strong: #b5ab9d;
+  --text: #1b1713;
+  --text-secondary: #473f39;
+  --text-muted: #5a534c;
+  /* one accent that is clickable; the "finished" colour loses most of its chroma so it stops being a fourth hue on the screen (its meaning stays: finished) */
+  --accent: #2a52a8;
+  --done: #5b4a66;
+  --done-soft: #f1edf3;
+  /* corners: one step smaller everywhere, the pill (buttons, chips, composer) keeps its shape */
+  --radius-inline: 4px;
+  --radius-control: 8px;
+  --radius-card: 10px;
+  --radius-panel: 14px;
+  /* depth by lightness: a hairline and a soft lift, no big drop shadow */
+  --shadow-panel: 0 0 0 1px rgb(28 23 20 / 5%), 0 4px 14px rgb(28 23 20 / 5%);
+  --shadow-control: 0 1px 2px rgb(28 23 20 / 6%);
+}
+:root[data-theme="dark"] {
+  --surface-sunken: #0b0a09;
+  --background: #181614;
+  --surface-raised: #2f2c28;
+  --surface-muted: #211f1b;
+  --surface-field: #373431;
+  --surface-selected: #3d3935;
+  --border: #45413b;
+  --border-strong: #5e5952;
+  --done: #bda7c6;
+  --done-soft: #2e2632;
+  --shadow-panel: 0 0 0 1px rgb(255 248 240 / 6%), 0 8px 24px rgb(0 0 0 / 40%);
+}
+/* component-level: decoration down. The cartoon avatars keep their identity (colour per role) at about half the saturation. */
+svg:has(> g[clip-path]) { filter: saturate(.55); }
