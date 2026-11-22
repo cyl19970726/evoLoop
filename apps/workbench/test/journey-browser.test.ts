@@ -246,7 +246,7 @@ test("目标与阶段 reads goals, stages and their tasks in words, keeps drafts
   await page.waitForURL(new RegExp(`/journey\\?action=propose&stage=${stageActive}$`));
   await main.getByRole("heading", { level: 1, name: "新建任务" }).waitFor();
   const form = main.getByRole("form", { name: "新建任务" });
-  assert.equal(await form.getByLabel("所属阶段（可选）").inputValue(), stageActive);
+  assert.equal(await form.getByLabel("所属阶段").inputValue(), stageActive);
   await page.getByRole("complementary", { name: "右栏" }).getByText("首个可用版本能否被真实使用？", { exact: false }).waitFor();
   await form.getByLabel("负责职责").selectOption(roleId);
   await form.getByRole("button", { name: "保存任务" }).click();
