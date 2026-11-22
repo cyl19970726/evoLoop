@@ -99,8 +99,10 @@
 | 待我决定 | 等我决定的职责提案、阶段提案、Task 讨论里指名问我的问题和被请我确认的事项（[来源与规则](../../architecture/contracts.md#待我决定与决定请求)）；每项写是什么、谁提的、什么时候。职责提案打开职责页并选中该职责（`?role=`），阶段提案打开目标与阶段页并选中该阶段（`?stage=`），都带返回“待我处理”的参数；问题打开该任务的协作并展开、标出那条问题（`?section=collaboration&discussion=&question=`）；缺编号的项没有链接，行里写明缺什么，不退回列表页；请求在行里直接答复；决定后消失，不是 Leader 对话的链接 |
 | 用量与上下文告警 | 今日预算接近或达到上限、某个智能体的上下文接近上限或需要交接时，各列一行（写明原因、可打开该智能体）；没有用量记账的项目没有这一块告警，读取失败写“暂不可读取”，不写 0 项。计入待我处理的数目。这些告警发给使用者，不发给 Leader（DEC-045 W5） |
 | 依据变化 | 待复核的依据新版；打开任务的“依据与影响”，带返回参数 |
+| 只有你能办的运行问题 | 模型服务额度用完或鉴权失败，该提供方的新 Turn 已暂停（`runtime/provider-holds`）：充值、重新授权这类只有人能办的事。写每条暂停的原因与排队消息数，下面每个受影响的智能体一行（一个智能体在两条暂停下只列一行），打开该智能体；来源与完整标识里是暂停编号、版本和放行命令。与每页顶部的“运行受阻”一行指向同一处，那一行写的个数就是这里的行数。计入待我处理的数目（每条暂停算一项）。不含组织自己的卡点（催促、排程），卡超过 3 天或 Leader 自己停了才升上来，那条规则在总览首屏的 Task 里做。 |
 
-- 外层栏计数是三块之和。任一块读不到或没读完，计数改为待核对的问号，其他页顶部写明原因；页面上写“正在读取”“暂不可读取”，不写 0。
+- 有内容的块排在上面；已读到、读完且为空的块折成页末一行（“这些类别当前没有事项：…”），六块都为空时整页只有这一行（“当前没有等你处理的事：…”），一屏内说完。没读到、读取失败或没读完的块照常保留，不折叠，更不写“没有”。
+- 外层栏计数是各块之和。任一块读不到或没读完，计数改为待核对的问号，其他页顶部写明原因；页面上写“正在读取”“暂不可读取”，不写 0。
 - 目标：按权限内待接、跨域或重大取舍、补证、外部编辑冲突、过期基线分组；每项能回到来源，权限不足时写明交给谁、何时再看。
 
 ## 截图
@@ -141,6 +143,10 @@
 
 ![待我验收与判断，390](../../assets/frontend-pages/inbox-390.png)
 
+![运行受阻时的待我处理：有内容的块在上，空的折成一行，1440](../../assets/frontend-pages/inbox-runtime-1440.png)
+
+![六块都为空，一行说完，1440](../../assets/frontend-pages/inbox-empty-1440.png)
+
 ## 代码与测试
 
 源码在 `apps/workbench/src/features/workflow/`，测试在 `apps/workbench/test/`。
@@ -154,7 +160,7 @@
 | 任务正文与进展 | `TaskPage.tsx`、`TaskArrangement.tsx`（当前关注、阶段区间与计划）、`TaskOwner.tsx`、`taskOwnerPresentation.ts`、`apps/workbench/src/features/discussions/TaskCollaborationThread.tsx`、`apps/workbench/src/shared/ui/MarkdownBody.tsx`（标题层级在 `apps/workbench/src/shared/ui/markdownContent.ts`） | `markdown-content.test.ts`、`task-workspace-presentation.test.ts`、`legacy-bits-browser.test.ts`、`task-edit-role-recovery.test.ts`、`task-owner-browser.test.ts`、`task-list-owner-browser.test.ts`、`task-session-return-browser.test.ts`、`discovery-browser.test.ts` |
 | 五个页签 | 记录者的叫法统一用 `apps/workbench/src/shared/actorPresentation.ts`（账号名照写，只有 UUID 的写“未登记名称的身份”，`worker-` 凭据写“自动执行方”，完整值在“完整标识”）；`TaskBasisTab.tsx`（两版对照里的非 Markdown 原件用 `apps/workbench/src/shared/ui/OriginalDocumentReader.tsx`）、`TaskDeliveryTab.tsx`、`TaskRuntimeTab.tsx`、`ResidentQueuePanel.tsx`（团队的运行与接入也用）、`apps/workbench/src/features/orchestration/`（自动循环）、`apps/workbench/src/features/references/`（Git 与外部来源登记，仓库规范也用；写入在 `referenceCommands.ts`）、`TaskHistoryTab.tsx`、`TaskActionsTab.tsx`、`EvidenceText.tsx` | `actor-presentation.test.ts`、`task-tabs-browser.test.ts`、`task-evidence-reading.test.ts`、`reference-commands.test.ts`、`legacy-bits-browser.test.ts`、`task-owner-presentation.test.ts`、`task-loop-browser.test.ts`（审计事件与交付页签的记录者不显示标识）、`schedule-run-session-path-browser.test.ts`、`document-original-reading-browser.test.ts` |
 | 写入 | `apps/workbench/src/shared/command/`（唯一的提交表单：基线、回执与表单）、`TaskForms.tsx`（页签部件与读取状态）、`taskCommands.ts`（各命令） | `use-command.test.ts`、`task-commands.test.ts`、`task-list-model.test.ts` |
-| 收件页与计数 | `InboxIndex.tsx`、`inboxModel.ts`（等我使用的判断、计数、带返回参数的链接）、`inboxReads.ts`（三项读取，外壳计数共用）、`inboxDeliveries.ts`（逐页读工作索引） | `inbox-model.test.ts`、`inbox-browser.test.ts`、`decision-return-browser.test.ts`（`EVOLOOP_DECISION_RETURN_SCREENSHOT_DIR` 存两种宽度的截图）、`leader-work-overview-browser.test.ts`、`legacy-bits-browser.test.ts` |
+| 收件页与计数 | `InboxIndex.tsx`、`inboxModel.ts`（等我使用的判断、计数、带返回参数的链接）、`inboxReads.ts`（各项读取，外壳计数共用；含运行受阻的读取）、`inboxDeliveries.ts`（逐页读工作索引） | `inbox-model.test.ts`、`inbox-browser.test.ts`、`provider-hold-bar-browser.test.ts`（运行受阻一行与“只有你能办的运行问题”，`EVOLOOP_HOLD_SCREENSHOT_DIR` 存截图）、`provider-hold-notice.test.ts`、`decision-return-browser.test.ts`（`EVOLOOP_DECISION_RETURN_SCREENSHOT_DIR` 存两种宽度的截图）、`leader-work-overview-browser.test.ts`、`legacy-bits-browser.test.ts` |
 | 执行时间与重复 | `TaskScheduleSection.tsx`、`taskTimingPresentation.ts`、`apps/workbench/src/shared/zonedTime.ts`、`apps/workbench/src/shared/ui/LocalTimeInput.ts` | `task-timing-ui.test.ts`、`task-commands.test.ts`、`zoned-time.test.ts`、`task-tabs-browser.test.ts` |
 | 新建任务 | `CreateTaskPage.tsx`、`taskCreate.ts` | `task-create.test.ts`、`journey-browser.test.ts`、`work-status-recovery-browser.test.ts` |
 | 按成员选验收身份（任务操作、新建任务，日程同用） | `apps/workbench/src/shared/ui/MemberChoice.tsx`、`apps/workbench/src/shared/memberPresentation.ts`、`apps/workbench/src/shared/projectConfiguration.ts` | `member-presentation.test.ts`（与手填时请求体相同）、`member-choice-browser.test.ts`（`EVOLOOP_MEMBERS_SCREENSHOT_DIR`） |
