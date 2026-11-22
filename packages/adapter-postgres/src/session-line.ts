@@ -1,5 +1,6 @@
 import type { PoolClient, QueryResultRow } from "pg";
 import { DomainError } from "@evoloop/contracts/ports";
+import type { RunDispatch } from "@evoloop/contracts/session-timeline";
 import type { SessionLine, SessionLineEntry, SessionLineEvent, SessionLineTransaction } from "@evoloop/contracts/session-line";
 
 type Row = QueryResultRow;
@@ -15,6 +16,22 @@ const entryOf = (r: Row): SessionLineEntry => ({ projectId: r.project_id, id: r.
   appendedAt: iso(r.appended_at), updatedAt: iso(r.updated_at) });
 const eventOf = (r: Row): SessionLineEvent => ({ projectId: r.project_id, seq: Number(r.event_seq), sessionId: r.session_id,
   entryId: r.entry_id, taskId: r.task_id, kind: r.kind, detail: r.detail, actorId: r.actor_id, at: iso(r.at) });
+
+/** How the lines took these Runs in, by run id. One read shared by the timeline origin and the agent page's latest Run. */
+export async function readRunDispatches(client: PoolClient, projectId: string, runIds: string[]): Promise<Map<string, RunDispatch>> {
+  const found = new Map<string, RunDispatch>();
+  const r = await client.query(`SELECT e.run_id, e.source, e.source_actor_id, e.schedule_id, e.rework_observation_id, e.rework_delivery_id,
+      l.controller_actor_id,
+      (SELECT rev.task_template->>'title' FROM schedule_definition d JOIN schedule_revision rev
+         ON rev.project_id=d.project_id AND rev.schedule_id=d.schedule_id AND rev.revision_id=d.current_revision_id
+       WHERE d.project_id=e.project_id AND d.schedule_id=e.schedule_id) AS schedule_title
+    FROM session_line_entry e JOIN session_line l ON l.project_id=e.project_id AND l.session_id=e.session_id
+    WHERE e.project_id=$1 AND e.run_id = ANY($2::uuid[])`, [projectId, runIds]);
+  for (const row of r.rows) found.set(row.run_id, { source: row.source, actorId: row.source_actor_id, viaController: row.source_actor_id === row.controller_actor_id,
+    scheduleId: row.schedule_id ?? null, scheduleTitle: row.schedule_title ?? null,
+    reworkObservationId: row.rework_observation_id ?? null, reworkDeliveryId: row.rework_delivery_id ?? null });
+  return found;
+}
 
 export class PgSessionLine implements SessionLineTransaction {
   constructor(private readonly client: PoolClient, private readonly projectId: string) {}
@@ -55,6 +72,9 @@ export class PgSessionLine implements SessionLineTransaction {
     const r = await this.client.query(`SELECT * FROM session_line_entry WHERE project_id=$1 AND task_id=$2
       AND state IN ('queued','suspended','starting')`, [this.projectId, taskId]);
     return r.rows[0] ? entryOf(r.rows[0]) : null;
+  }
+  async listRunDispatches(runIds: string[]): Promise<Map<string, RunDispatch>> {
+    return runIds.length && await this.hasLineTable() ? readRunDispatches(this.client, this.projectId, runIds) : new Map();
   }
   async listSessionLineEvents(afterSeq: number, limit: number, sessionId?: string): Promise<SessionLineEvent[]> {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) throw new RangeError("event limit must be 1..500");

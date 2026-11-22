@@ -61,6 +61,8 @@ export interface SessionLineReader {
   listSessionLineEvents(afterSeq: number, limit: number, sessionId?: string): Promise<SessionLineEvent[]>;
   /** The live entry (queued, suspended or starting) holding this Task, if any. */
   getLiveSessionLineEntryForTask(taskId: string): Promise<SessionLineEntry | null>;
+  /** How each of these Runs was taken into a line, by run id; a Run no entry names is absent. */
+  listRunDispatches?(runIds: string[]): Promise<Map<string, import("./session-timeline.js").RunDispatch>>;
 }
 export interface SessionLineTransaction extends SessionLineReader {
   insertSessionLine(value: SessionLine): Promise<void>;

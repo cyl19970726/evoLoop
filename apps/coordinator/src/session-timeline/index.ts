@@ -62,7 +62,7 @@ const messageEntry=(m:SessionMessageRecord,turnId:string|null=null):WorkspaceMes
   ...(m.state==='queued'&&m.blockedReason?{blockedReason:m.blockedReason.slice(0,600)}:{}),
 });
 const originOf=(source:NativeInputSource|null):WorkspaceOrigin|null=>source?.kind==='run'?{
-  kind:'run',id:source.runId,taskId:source.taskId,taskRevisionId:source.taskRevisionId,initiatingActorId:source.actorId
+  kind:'run',id:source.runId,taskId:source.taskId,taskRevisionId:source.taskRevisionId,initiatingActorId:source.actorId,dispatch:source.dispatch??null
 }:source?.kind==='message'?{kind:'message',id:source.messageId,taskId:null,taskRevisionId:null,
   initiatingActorId:source.actorId}:null;
 const toolDetailDenied='原始工具详情需要本项目读取与复核权限。';
@@ -362,6 +362,9 @@ export class SessionTimelineService {
       const found=native.findSources?await native.findSources(projectId,sessionId,turnIds):new Map<string,NativeInputSource>();
       if(!native.findSources)for(const turnId of turnIds){const source=await native.findSource(projectId,sessionId,turnId);
         if(source)found.set(turnId,source)}
+      const runs=[...found.values()].filter((source):source is Extract<NativeInputSource,{kind:'run'}>=>source.kind==='run');
+      const dispatches=r.sessionLines?.listRunDispatches&&runs.length?await r.sessionLines.listRunDispatches(runs.map(source=>source.runId)):new Map();
+      for(const source of runs)source.dispatch=dispatches.get(source.runId)??null;
       const ids=[...found.values()].flatMap(source=>source.kind==='message'?[source.messageId]:[]);
       const messages=r.sessionMessages?.getSessionMessages?await r.sessionMessages.getSessionMessages(ids):
         (await Promise.all(ids.map(id=>r.sessionMessages?.getSessionMessage(id)))).filter((x):x is SessionMessageRecord=>!!x);
