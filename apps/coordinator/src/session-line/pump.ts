@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { hasDecisionAuthority, isProjectMember, type Principal } from "@evoloop/contracts";
 import type { SessionLineEntry } from "@evoloop/contracts/session-line";
 import type { WorkflowService } from "@evoloop/core";
+import { confirmationRequest, runInstruction, type ReworkSource } from "./dispatch-text.js";
 
 const terminalRun = new Set(["completed", "failed", "interrupted"]);
 /**
@@ -183,6 +184,9 @@ export class SessionLinePump {
     }
     const detail = await wf.getTask(lead, projectId, entry.taskId);
     const task = detail.task;
+    // A rework entry carries the delivery and observation that sent the Task back; the texts to the Session quote them.
+    const rework = (d: typeof detail): ReworkSource | null => entry.source !== "rework" || !entry.reworkDeliveryId || !entry.reworkObservationId ? null
+      : { deliveryId: entry.reworkDeliveryId, observationId: entry.reworkObservationId, observation: d.observations?.find(o => o.id === entry.reworkObservationId) ?? null };
     const recipient = async () => this.deps.recipientActorId(projectId, entry.sessionId);
     const noRecipient = (reason = `Session ${entry.sessionId} has no configured business identity`) =>
       this.suspend(projectId, entry, lead, "RECIPIENT_UNAVAILABLE", reason);
@@ -209,7 +213,7 @@ export class SessionLinePump {
       if (!await wf.getSessionMessageRecord(lead, projectId, entry.messageId!)) {
         const posted = await step({ type: "session.message.post", projectId, operationId: lineIntentId("message-op", entry.id, String(entry.attempt), String(entry.stepTry)),
           messageId: entry.messageId!, target: { kind: "owned", sessionId: entry.sessionId }, context: { taskId: entry.taskId, taskRevisionId: task.currentRevisionId },
-          content: confirmationRequest(task.title, task.id, task.currentRevisionId, task.version, assigned?.version ?? 1) });
+          content: confirmationRequest(task.title, projectId, task.id, task.version, assigned?.version ?? 1, rework(detail)) });
         if (posted.kind !== "ok") return;
       }
       await step({ type: "line.advance", projectId, operationId: lineIntentId("advance-confirm", entry.id, String(entry.attempt), String(entry.version)),
@@ -265,17 +269,9 @@ export class SessionLinePump {
     }
     const reserved = await step({ type: "runtime.run.reserve", projectId, operationId: entry.reserveOperationId!, runId, taskId: entry.taskId,
       sessionId: entry.sessionId, expectedVersion: current.version,
-      input: `Session 队伍排到了：按固定 Task 修订 ${current.currentRevisionId} 执行「${current.title}」。你已确认的计划见分派确认记录；先读固定 Task 与依据，再按验收交付。` });
+      input: runInstruction(current.title, projectId, current.id, rework(await wf.getTask(lead, projectId, entry.taskId))) });
     if (reserved.kind !== "ok") return;
     await step({ type: "line.started", projectId, operationId: lineIntentId("started", entry.id, String(entry.attempt), String(entry.version)),
       entryId: entry.id, expectedVersion: entry.version, runId });
   }
-}
-
-function confirmationRequest(title: string, taskId: string, revisionId: string, taskVersion: number, assignmentVersion: number): string {
-  return [`Session 队伍轮到任务「${title}」（${taskId}），请先做执行确认，系统在你确认后才开 Run。`,
-    `1. 读固定 Task 修订 ${revisionId}（evoloop task ${taskId} --project … --revision ${revisionId}）。`,
-    `2. 能执行：提交 task.assignment.acknowledge，verdict=confirm，plan=简短计划，expectedRevisionId=${revisionId}，expectedVersion=${assignmentVersion}，expectedTaskVersion=${taskVersion}，evidence=已读依据。`,
-    `3. 缺少执行所需的信息：同一命令用 verdict=return，missing=缺什么（列表）。该 Task 会退出队伍、回到作者那里修改。`,
-    `只做确认，不要开始改文件；确认后系统自动开 Run。不带 verdict 的普通签收会被拒绝。`].join("\n");
 }
