@@ -1,4 +1,4 @@
-// 待我处理 › 待我验收与判断 (tasks.md 收件页, layout.md 待我处理): acceptance arranged for me, deliveries that declare me
+// 待我处理 › 待我处理 (tasks.md 收件页, layout.md 待我处理): acceptance arranged for me, deliveries that declare me
 // as their consumer and wait for my use, and basis changes waiting for review, each linked to its task with the way
 // back here (inboxTaskLink). Reading and observing is recorded by the person (the CLI, or the task's 交付与使用), said
 // in words, never as the command line; a basis change is decided on the task's 依据与影响. Open to-do tasks are in the
@@ -95,7 +95,7 @@ export function InboxIndex({ context }: { context: MutationContext; refresh: num
   return <div data-ui="" className="mx-auto flex w-full max-w-[880px] flex-col gap-6 px-4 py-5 compact:px-8 compact:py-7" data-inbox="">
     <header className="flex flex-wrap items-start justify-between gap-3">
       <div className="min-w-0">
-        <h1 tabIndex={-1} className="text-title font-semibold text-foreground outline-none">待我验收与判断</h1>
+        <h1 tabIndex={-1} className="text-title font-semibold text-foreground outline-none">待我处理</h1>
         <p className="mt-1 text-small text-text-secondary">分配给我的验收安排、等我使用的交付、待复核的依据变化，以及只有你能办的运行问题。每项打开它的任务或会话，在那里核对并决定下一步。</p>
       </div>
       <Button variant="ghost" disabled={reading} onClick={context.onChanged}><RefreshCw aria-hidden="true" className={reading ? "animate-spin" : undefined} />重新读取</Button>

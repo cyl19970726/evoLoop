@@ -94,13 +94,13 @@ test("row wording and the link into the task's 交付与使用 with the way back
   assert.equal(link.searchParams.get("tab"), "delivery");
   assert.equal(link.searchParams.get("return"), "/p/p-1/inbox");
   assert.equal(link.searchParams.get("actor"), "人 a");
-  assert.equal(link.searchParams.get("returnTitle"), "待我验收与判断");
+  assert.equal(link.searchParams.get("returnTitle"), "待我处理");
   // 依据变化 and 待我验收 carry the same way back (N1): to 依据与影响, or to the task's first tab.
   const basis = new URL(inboxTaskLink("p-1", "t-2", "人 a", "basis"), "http://x");
   assert.deepEqual([basis.pathname, basis.searchParams.get("tab"), basis.searchParams.get("return"), basis.searchParams.get("actor"), basis.searchParams.get("returnTitle")],
-    ["/p/p-1/tasks/t-2", "basis", "/p/p-1/inbox", "人 a", "待我验收与判断"]);
+    ["/p/p-1/tasks/t-2", "basis", "/p/p-1/inbox", "人 a", "待我处理"]);
   const plain = new URL(inboxTaskLink("p-1", "t-3", "人 a"), "http://x");
-  assert.deepEqual([plain.searchParams.has("tab"), plain.searchParams.get("return"), plain.searchParams.get("returnTitle")], [false, "/p/p-1/inbox", "待我验收与判断"]);
+  assert.deepEqual([plain.searchParams.has("tab"), plain.searchParams.get("return"), plain.searchParams.get("returnTitle")], [false, "/p/p-1/inbox", "待我处理"]);
 });
 
 test("the 待我处理 count adds the three parts, and a part that failed or was not read through is never counted short", () => {
@@ -239,7 +239,7 @@ test("待我决定 deep links carry the specific id of the item, not a list page
   assert.equal(question.searchParams.get("question"), "e-1", "and the question event itself");
   assert.equal(question.searchParams.get("return"), "/p/p1/inbox");
   assert.equal(question.searchParams.get("actor"), me);
-  assert.equal(question.searchParams.get("returnTitle"), "待我验收与判断", "the task page keeps its existing inbox return name");
+  assert.equal(question.searchParams.get("returnTitle"), "待我处理", "the task page keeps its existing inbox return name");
   // Ids are encoded, never concatenated raw.
   assert.equal(params({ ...decision("role_proposal"), roleId: "a b&c" } as DecisionItem).searchParams.get("role"), "a b&c");
 });

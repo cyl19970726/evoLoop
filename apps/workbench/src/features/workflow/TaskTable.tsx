@@ -179,7 +179,7 @@ function TableRow({ task, list, projectId, selected, onSelect, linkFor, columns,
     {cognition && <span>判断与接续记录 · <a className="text-primary hover:underline" href={href(projectId, "task", task.id)}>查看来源</a></span>}
     {!cognition && task.legacyDecision && <span>{legacyDecisionLabel(task.legacyDecision)}</span>}
     {attentionCount > 0 && <a className="text-primary hover:underline" href={`${linkFor(task.id, "overview")}&section=attention`}>{attentionCount} 项待关注</a>}
-    {scheduled && <span>约定执行 {formatScheduled(scheduled.executeAtUtc, scheduled.timezone)} · {repeatLabel(scheduled.repeat)} · {nextTimingLabel(scheduled)}</span>}
+    {scheduled && <span>定时任务 {formatScheduled(scheduled.executeAtUtc, scheduled.timezone)} · {repeatLabel(scheduled.repeat)} · {nextTimingLabel(scheduled)}</span>}
     {scheduled?.repeat === "daily" && <span>同系列最近 {scheduled.occurrences.length} 份{latestSeries && <> · 最新 <a className="text-primary hover:underline" href={href(projectId, "task", latestSeries.taskId)}>{taskStateStatus[latestSeries.state].label}任务</a></>}{latestDone ? <> · <a className="text-primary hover:underline" href={href(projectId, "task", latestDone.taskId)}>最近已完成的结果</a></> : " · 尚无已完成结果"}</span>}
     {!!timing?.error && <span title={errorText(timing.error)}>执行时间暂未读回</span>}
   </div>;

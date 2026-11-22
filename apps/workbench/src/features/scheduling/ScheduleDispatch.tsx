@@ -97,12 +97,12 @@ export function TriggerList({ rows, zoneOf, taskHref, dispatchProblem }: {
         <span>{scheduleTime(row.plannedAtUtc, zoneOf(row.revisionId))}</span>
         <span className={cn("text-caption", toneClass[row.tone])} data-trigger-label="">{row.label}</span>
       </span>
-      {row.reasonText && <span className="text-small text-text-secondary">{row.reasonText}{row.reasonCode && row.dispatch?.reason && row.reasonText.indexOf(row.reasonCode) < 0 ? <span className={muted}> · {row.reasonCode}</span> : null}</span>}
+      {row.reasonText && <span className="text-small text-text-secondary">{row.reasonText}</span>}
       {row.dispatch?.state === "dispatched" && <span className={muted}>{row.dispatch.dispatchedAt ? `${date(row.dispatch.dispatchedAt)} 放进队伍` : "已放进队伍"}{row.dispatch.escalatedAt ? ` · 等待超过上限，已告知 Leader（${date(row.dispatch.escalatedAt)}）` : ""}。放进队伍不等于已开始或已完成。</span>}
       {row.taskId && <a href={taskHref(row.taskId)} className="w-fit text-caption text-foreground underline">{row.taskLabel}</a>}
       <FullIdentifiers rows={[{ label: "操作", value: row.occurrence?.operationId ?? null }, { label: "任务", value: row.taskId }, { label: "日程修订", value: row.revisionId },
         { label: "队伍会话", value: row.dispatch?.sessionId ?? null }, { label: "队伍项", value: row.dispatch?.entryId ?? null },
-        { label: "原因原文", value: row.reasonKnown ? null : row.reasonCode, text: true }]} />
+        { label: "原因原文", value: row.reasonCode, text: true }]} />
     </li>)}</ol>
   </>;
 }

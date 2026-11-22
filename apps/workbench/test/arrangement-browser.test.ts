@@ -44,14 +44,14 @@ test("统筹安排 shows who works on what, the unassigned Tasks and the proven 
     assert.doesNotMatch(await writer.innerText(), /新版文档页/, "entries of a queue not yet adopted are not queued work");
     const unassigned = page.getByRole("region", { name: /没有承接者的任务/ });
     const unassignedText = await unassigned.innerText();
-    assert.match(unassignedText, /验收新版外壳[\s\S]*等验收者核对交付与实际使用[\s\S]*整理旧文档[\s\S]*等统筹指定承接的智能体/);
+    assert.match(unassignedText, /验收新版外壳[\s\S]*等验收者核对交付与实际使用[\s\S]*整理旧文档[\s\S]*等 Leader 指定承接的智能体/);
     assert.doesNotMatch(unassignedText, internalWords, "the server's next action for agents is not shown to people");
     assert.doesNotMatch(await page.locator(".arrangement-page").innerText(), internalWords);
     assert.doesNotMatch(await page.locator(".arrangement-page").innerText(), /智能体回报/);
     assert.match(await page.locator(".arrangement-page p", { hasText: "条待处理消息" }).innerText(),
       /项目里：3 条待处理消息 · 1 个待答问题 · 2 项待验收/, "the directory's project-wide counts stay visible");
-    await page.getByRole("link", { name: "与统筹对话" }).waitFor();
-    assert.equal(await page.getByRole("link", { name: "与统筹对话" }).getAttribute("href"),
+    await page.getByRole("link", { name: "与 Leader 对话" }).waitFor();
+    assert.equal(await page.getByRole("link", { name: "与 Leader 对话" }).getAttribute("href"),
       `/p/${projectId}/sessions?${new URLSearchParams({ session: `owned:${id(1)}`, return: `/p/${projectId}/arrangement`, actor: "reader" })}`,
       "the agent page offers 返回统筹安排");
     await page.getByText("系统还没有标出哪份文档是当前的编排总览").waitFor();

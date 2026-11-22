@@ -97,12 +97,12 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
     assert.equal(acceptanceRows, counts.awaiting_acceptance, "the 待验收 rows equal the 待验收 count");
 
     // The reconciliation list names the actual party for each wait.
-    await page.getByText(/查看全项目统筹对账/).click();
+    await page.getByText(/查看全项目的 Leader 对账/).click();
     const overview = page.locator("[data-leader-overview]");
     await overview.waitFor();
     const text = (await overview.innerText()).replace(/\s+/g, " ");
     assert.match(text, /验收者已签 used，不需要再验收；等负责关闭的责任者关闭/);
-    assert.match(text, /项目统筹 · 负责关闭/);
+    assert.match(text, /Leader · 负责关闭/);
     assert.match(text, /发布维护者 requirements/);
     assert.match(text, new RegExp(`前置任务 ${id(9).slice(0, 8)} · 当前进行中`));
     // The stage clock on a used Task no longer says it waits for acceptance.

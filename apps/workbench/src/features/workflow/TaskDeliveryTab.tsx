@@ -156,7 +156,8 @@ function DeliveryRecord({ projectId, detail, delivery, latest, title, run, activ
     <div className="flex flex-wrap items-center gap-2">
       <h3 className="text-small font-semibold text-foreground">{latest ? "最新交付" : "历史交付"}</h3>
       <StatusTag tone={delivery.technicalResult === "passed" ? "done" : "blocked"} label={delivery.technicalResult === "passed" ? "技术检查通过" : "技术检查未通过"} />
-      {!current && <StatusTag tone="history" label="属于旧修订" />}
+      {/* Only the latest delivery of a task that is still open can be out of date; older deliveries are history by their heading, and a closed task's delivery was accepted as it was. */}
+      {latest && !current && (detail.task.state === "todo" || detail.task.state === "in_progress") && <StatusTag tone="history" label="属于旧修订" />}
     </div>
     <Fine>登记于 {date(delivery.createdAt)} · 登记者 {actorText(delivery.actorId)}{delivery.submittedByActorId ? ` · 提交者 ${actorText(delivery.submittedByActorId)}` : ""}</Fine>
     <div className="flex flex-col gap-1">

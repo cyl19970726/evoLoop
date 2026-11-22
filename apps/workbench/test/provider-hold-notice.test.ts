@@ -17,7 +17,7 @@ test("a held provider is one plain line: who is stopped, what the person does, n
   assert.deepEqual(summary.sessionIds, ["s1", "s2"], "only Sessions the hold touches are counted");
   assert.equal(holdLine(summary, "统筹"), "模型服务 Codex 额度用完，统筹 等 2 个智能体停着：需要你充值或重新授权");
   assert.doesNotMatch(holdLine(summary, "统筹"), /runtime\.providerHold|暂停编号|版本|\bh\b/);
-  assert.equal(holdLine(holdSummary(listing(hold({ impact: [hold().impact[0]!] })))!, "统筹"), "模型服务 Codex 额度用完，统筹停着：需要你充值或重新授权");
+  assert.equal(holdLine(holdSummary(listing(hold({ impact: [hold().impact[0]!] })))!, "统筹"), "模型服务 Codex 额度用完，统筹 停着：需要你充值或重新授权");
   assert.match(holdLine(summary), /^模型服务 Codex 额度用完，2 个智能体停着/, "without a name the count still says who");
 });
 

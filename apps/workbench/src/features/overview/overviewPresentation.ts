@@ -28,11 +28,11 @@ export function unsettledRunText(state: string | null | undefined): string | nul
 /** The server's waiting reason is free text naming the previous task by ID; the line only says that there is one. */
 export const timingWaitText = "有未满足的等待条件";
 
-/** What 约定执行 says when no scheduled task is listed. Only a complete, current read may say there are none. */
+/** What 定时任务 says when no scheduled task is listed. Only a complete, current read may say there are none. */
 export function scheduledEmptyText(read: { hasSnapshot: boolean; stale: boolean; timingReadFailed: number; timingScanLimited: boolean }): string {
-  if (!read.hasSnapshot) return "约定执行任务待读回。";
-  if (read.timingReadFailed > 0) return `${read.timingReadFailed} 项任务的执行时间未能读回，无法判断是否有约定执行的任务。`;
-  if (read.stale) return "上次读回时没有约定执行的任务；当前待核对。";
-  if (read.timingScanLimited) return "已核对的前 60 项未结束任务中没有约定执行；其余任务未核对。";
-  return "已读范围内没有约定执行的未结束任务。";
+  if (!read.hasSnapshot) return "定时任务任务待读回。";
+  if (read.timingReadFailed > 0) return `${read.timingReadFailed} 项任务的执行时间未能读回，无法判断是否有定时任务的任务。`;
+  if (read.stale) return "上次读回时没有定时任务的任务；当前待核对。";
+  if (read.timingScanLimited) return "已核对的前 60 项未结束任务中没有定时任务；其余任务未核对。";
+  return "已读范围内没有定时任务的未结束任务。";
 }

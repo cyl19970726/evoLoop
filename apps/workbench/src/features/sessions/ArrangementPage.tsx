@@ -256,10 +256,10 @@ export function ArrangementPage({ context, refresh, flow, operations }: { contex
     <header className="flex flex-wrap items-start justify-between gap-3">
       <div className="min-w-0">
         <h1 className="text-title font-semibold text-foreground" tabIndex={-1}>统筹安排</h1>
-        <p className="mt-1 text-small text-text-secondary" data-page-role="">统筹安排：谁在做什么、谁空闲、队伍与冲突，是唯一显示安排的页面。要调整安排，回到与统筹的对话；执行服务、连接与恢复看<a href={href(projectId, "runtime")} className="text-primary hover:underline">运行与接入</a>，具体的智能体看<a href={href(projectId, "sessions")} className="text-primary hover:underline">智能体目录</a>。</p>
+        <p className="mt-1 text-small text-text-secondary" data-page-role="">统筹安排：谁在做什么、谁空闲、队伍与冲突，是唯一显示安排的页面。要调整安排，回到与 Leader 的对话；执行服务、连接与恢复看<a href={href(projectId, "runtime")} className="text-primary hover:underline">运行与接入</a>，具体的智能体看<a href={href(projectId, "sessions")} className="text-primary hover:underline">智能体目录</a>。</p>
       </div>
       <div className="flex items-center gap-2">
-        {board?.leader && <Button asChild variant="primary"><a href={sessionHref(projectId, board.leader.key, from)}><MessageSquare aria-hidden="true" />与统筹对话</a></Button>}
+        {board?.leader && <Button asChild variant="primary"><a href={sessionHref(projectId, board.leader.key, from)}><MessageSquare aria-hidden="true" />与 Leader 对话</a></Button>}
         <Button onClick={reread} disabled={busy}><RefreshCw aria-hidden="true" className={busy ? "animate-spin" : undefined} />重新读取</Button>
       </div>
     </header>
@@ -282,8 +282,8 @@ export function ArrangementPage({ context, refresh, flow, operations }: { contex
           </div>
           {sessions.data && <Waiting attention={sessions.data.page.attention} stale={sessionRead === "stale"} />}
           <section aria-labelledby="arrangement-overview" className="flex flex-col gap-2">
-            <h2 id="arrangement-overview" className={heading}>统筹总览</h2>
-            <Notice tone="info">系统还没有标出哪份文档是当前的编排总览，这里暂时不能固定显示。统筹写的过程文档在<a href={href(projectId, "documents")} className="underline">文档</a>里。</Notice>
+            <h2 id="arrangement-overview" className={heading}>Leader 总览</h2>
+            <Notice tone="info">系统还没有标出哪份文档是当前的编排总览，这里暂时不能固定显示。Leader 写的过程文档在<a href={href(projectId, "documents")} className="underline">文档</a>里。</Notice>
           </section>
           <section aria-labelledby="arrangement-board" className="flex flex-col gap-2">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -316,7 +316,7 @@ export function ArrangementPage({ context, refresh, flow, operations }: { contex
           </section>}
           {/* The project's daily limit and recent days; an agent's card links here when the project is near its limit. */}
           <ProjectUsageSection projectId={projectId} token={token} />
-          <p className="flex items-center gap-1.5 text-caption text-muted-foreground"><CalendarClock size={14} aria-hidden="true" />优先级、截止时间和依赖由统筹经 CLI 设置；这里只读。</p>
+          <p className="flex items-center gap-1.5 text-caption text-muted-foreground"><CalendarClock size={14} aria-hidden="true" />优先级、截止时间和依赖由 Leader 经 CLI 设置；这里只读。</p>
           {operations}
           <ArrangementPanel projectId={projectId} board={board} reads={reads} from={from} directoryComplete={!moreAgents} />
         </>}

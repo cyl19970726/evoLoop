@@ -15,6 +15,7 @@ import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { ResponsibleName, RoleName } from "../../shared/ui/RecordName";
 import { readOutcome, selectAttention, type ProjectOutcome } from "./contextPresentation";
 import { MilestonesBlock } from "./MilestonesBlock";
+import { readOverviewParam, writeOverviewParam } from "./overviewAddress";
 
 interface ContextSnapshot {
   scope: string; goals: Goal[]; stages: Stage[]; goalProblem: string; workProblem: string;
@@ -26,7 +27,7 @@ interface ContextSnapshot {
 export function ProjectContext({ token, projectId, refresh, active }: { token: string; projectId: string; refresh: number; active: boolean }) {
   const scope = `${projectId}:${token}`;
   const [snapshot, setSnapshot] = useState<ContextSnapshot | null>(null);
-  const [selection, setSelection] = useState<{scope: string; id: string} | null>(null);
+  const [selection, setSelection] = useState<{scope: string; id: string} | null>(() => { const id = readOverviewParam("stage"); return id ? { scope: `${projectId}:${token}`, id } : null; });
   const [reading, setReading] = useState(false);
   useEffect(() => {
     if (!active) return;
@@ -124,7 +125,7 @@ export function ProjectContext({ token, projectId, refresh, active }: { token: s
   const title = (icon: React.ReactNode, text: string, link?: React.ReactNode) => <div className="flex items-center gap-2 text-text-secondary">
     <span aria-hidden="true" className="[&_svg]:size-4">{icon}</span><h2 className="text-label font-semibold text-foreground">{text}</h2>{link}
   </div>;
-  const choose = (id: string) => setSelection({ scope, id });
+  const choose = (id: string) => { setSelection({ scope, id }); if (active) writeOverviewParam("stage", id); };
   const stageButton = (item: Stage) => <Button variant="row" key={item.id} aria-pressed={stage?.id === item.id} onClick={() => choose(item.id)}
     className="rounded-lg px-3 py-2 text-small aria-pressed:bg-accent aria-pressed:font-semibold aria-pressed:text-foreground">
     <span className="line-clamp-2">{item.deliverable}</span>

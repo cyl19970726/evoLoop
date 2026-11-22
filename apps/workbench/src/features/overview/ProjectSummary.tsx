@@ -234,7 +234,7 @@ export function ProjectSummary({ token, projectId, refresh, active, flowGlance }
         <PanelSection title="读取范围">
           <p className={muted}>队列摘要读取项目已登记的驻留队列；每轮最多展开并核对 12 个队列条目。{selection?.omitted ? `另有 ${selection.omitted} 个队列条目未展开。` : ""}</p>
         </PanelSection>
-        <PanelSection title="约定执行">
+        <PanelSection title="定时任务">
           {current?.scheduled.length ? <ul>{current.scheduled.slice(0, 8).map(({ task, timing }) => {
             const latestDone = timing.occurrences.slice().reverse().find(item => item.state === "done");
             return <li key={task.id} className="flex flex-col gap-0.5 border-t border-border py-2.5 first:border-t-0">
@@ -268,7 +268,7 @@ export function ProjectSummary({ token, projectId, refresh, active, flowGlance }
             {selection?.next.length ? <ul>{selection.next.map(item => <QueueItem key={item.entry.id} item={item} snapshot={current!} projectId={projectId} kind="next" />)}</ul> : selection?.total.next === 0 && !stale ? empty("已采纳队列中没有读到下一顺位。") : !selection?.omittedByKind.next ? empty("下一顺位待读回。") : null}
             {!!selection?.omittedByKind.next && <p role="status" className={muted}>另有 {selection.omittedByKind.next} 项下一顺位未展开；请看<a href={href(projectId, "runtime")} className="underline">完整队列</a>。</p>}
           </section>
-          <div className="flex flex-wrap gap-3 text-small"><a href={href(projectId, "runtime")} className="underline">分工与承载</a><a href={href(projectId, "inbox")} className="underline">待判断与复核</a></div>
+          <div className="flex flex-wrap gap-3 text-small"><a href={href(projectId, "runtime")} className="underline">运行与接入</a><a href={href(projectId, "inbox")} className="underline">待我处理</a></div>
         </PanelSection>
       </div>
     </ContextPanelContent>

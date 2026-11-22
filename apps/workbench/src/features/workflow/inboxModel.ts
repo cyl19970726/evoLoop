@@ -50,10 +50,10 @@ export function lastUseText(last: DeliveryForMe["last"]): string {
 
 /**
  * 待我处理 › a task (its 交付与使用 or 依据与影响 tab, or its first tab), carrying where it came from (`return`, `actor`,
- * `returnTitle`, as other returns do): every row of the page leads back to 待我验收与判断.
+ * `returnTitle`, as other returns do): every row of the page leads back to 待我处理.
  */
 export function inboxTaskLink(projectId: string, taskId: string, actorId: string, tab?: "delivery" | "basis"): string {
-  const params = new URLSearchParams({ ...tab ? { tab } : {}, return: `/p/${projectId}/inbox`, actor: actorId, returnTitle: "待我验收与判断" });
+  const params = new URLSearchParams({ ...tab ? { tab } : {}, return: `/p/${projectId}/inbox`, actor: actorId, returnTitle: "待我处理" });
   return `/p/${projectId}/tasks/${taskId}?${params}`;
 }
 
@@ -129,7 +129,7 @@ export function decisionLinkProblem(item: DecisionItem): string | null {
  */
 export function decisionLink(projectId: string, item: DecisionItem, actorId: string): string | null {
   if (decisionLinkProblem(item)) return null;
-  const back = { return: `/p/${projectId}/inbox`, actor: actorId, returnTitle: "待我验收与判断" };
+  const back = { return: `/p/${projectId}/inbox`, actor: actorId, returnTitle: "待我处理" };
   const decisionBack = { ...back, returnTitle: "待我处理" };
   switch (item.kind) {
     case "role_proposal": return `/p/${projectId}/roles?${new URLSearchParams({ role: item.roleId, ...decisionBack })}`;

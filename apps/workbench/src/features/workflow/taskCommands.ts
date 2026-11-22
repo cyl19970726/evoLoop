@@ -1,4 +1,4 @@
-// The commands written from the task page (任务操作, 依据与影响, 运行与关联, 执行时间与重复), as pure functions of what
+// The commands written from the task page (任务操作, 依据与影响, 运行与关联, 定时任务), as pure functions of what
 // the form recorded when it opened (`seen`, its baseline) and what the person entered. Each one keeps the shape the
 // old forms on main sent, field for field; `task-commands.test.ts` pins them, the expected versions first.
 // useCommand adds the project and a new operation ID.
@@ -164,7 +164,7 @@ export const impactSeen = (task: { version: number }, impact: Pick<Impact, "id" 
   taskVersion: task.version, impactId: impact.id, impactState: impact.state, from: impact.fromRevisionId, to: impact.toRevisionId,
 });
 
-// ── 执行时间与重复 ──────────────────────────────────────────────────────────────────────────────────────
+// ── 定时任务 ──────────────────────────────────────────────────────────────────────────────────────
 
 export interface TimingSeen { taskVersion: number; timingVersion: number }
 

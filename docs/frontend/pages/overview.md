@@ -23,9 +23,9 @@
 | --- | --- |
 | 左栏 | 主导航；对象列表处列出正在推进的阶段，有多个阶段时在这里切换 |
 | 中间 | 目标与阶段 → 本次优先核对的一件事 → 最近使用反馈 → 当前工作 |
-| 右栏 | 读取时间与覆盖范围、约定执行的任务、队列与承接明细；可收起 |
+| 右栏 | 读取时间与覆盖范围、定时任务的任务、队列与承接明细；可收起 |
 
-现状（#229 PR9b，Task 523a91e9 起项目列表直接进总览）：中间依次是当前目标、本次优先核对与最近使用反馈（宽时并排）、当前工作；右栏是读取范围、约定执行、队列与承接；多个阶段时在内层栏切换，目标卡片里也列出全部阶段，选定后可用下拉切换，内层栏收起或窄屏时照样能换。
+现状（#229 PR9b，Task 523a91e9 起项目列表直接进总览）：中间依次是当前目标、本次优先核对与最近使用反馈（宽时并排）、当前工作；右栏是读取范围、定时任务、队列与承接；多个阶段时在内层栏切换，目标卡片里也列出全部阶段，选定后可用下拉切换，内层栏收起或窄屏时照样能换。所选阶段与里程碑展开写进地址，详见[布局](../layout.md)。
 
 ## 内容与状态
 
@@ -36,7 +36,7 @@
 - **用语与标识**：职责状态、执行状态、暂停原因按代码写成中文；暂停原因原文、等待原因原文和各类完整标识收进每项的“来源与完整标识”。
 - **最近使用反馈**：写明真人还是 Agent、使用结果（已使用、使用失败、未使用）和本次技术检查；只取当前交付或关闭时关联的交付。
 - **当前工作**：只列少量进行中的业务任务，完整列表回任务页；同一任务不在多处重复铺开。
-- **约定执行**：每项写本次时间、重复方式、上一份和后一份任务，以及最近一份已完成任务的结果。有执行时间没读回时，不写“没有约定执行”。
+- **定时任务**：每项写本次时间、重复方式、上一份和后一份任务，以及最近一份已完成任务的结果。有执行时间没读回时，不写“没有定时任务”。
 - **队列与承接**：暂停、当前占用、下一项分开列；队列占用不等于任务进度。
 - 最近业务活动不算消费者使用，任务关闭不等于目标达成。
 - 汇总只来自有权限、有范围的读取。没读全时写明已读范围，计数为零不代表没有问题。
@@ -59,7 +59,7 @@
 | 部分 | 主要源码 | 相关测试 |
 | --- | --- | --- |
 | 目标、本次优先核对、最近使用反馈 | `ProjectContext.tsx`、`contextPresentation.ts`；共用的下一动作与下一责任在 `shared/workPresentation.ts`，名称读取在 `shared/ui/RecordName.tsx` | `project-context-presentation.test.ts`、`work-presentation.test.ts` |
-| 页面、约定执行、当前工作、队列明细 | `ProjectSummary.tsx`、`summary.ts`、`overviewPresentation.ts`；职责状态在 `shared/rolePresentation.ts` | `project-summary.test.ts`、`overview-presentation.test.ts`、`project-summary-browser.test.ts`、`overview-wording-browser.test.ts` |
+| 页面、定时任务、当前工作、队列明细 | `ProjectSummary.tsx`、`summary.ts`、`overviewPresentation.ts`；职责状态在 `shared/rolePresentation.ts` | `project-summary.test.ts`、`overview-presentation.test.ts`、`project-summary-browser.test.ts`、`overview-wording-browser.test.ts` |
 
 ## 相关
 
