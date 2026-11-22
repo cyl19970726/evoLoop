@@ -12,6 +12,7 @@ import type { CheckedOrigin, OperationItem } from "../features/settings/operatio
 import { checkedNoticeText } from "./operationNotice";
 import { providerHoldReadFailure } from "./providerHoldNotice";
 import { useProviderHolds } from "../shared/providerHolds";
+import { useEmptySections } from "../shared/emptySections";
 import { clearRecoveryIntents, forgetRecoveryIntent, isSpecialOperation, rememberRecoveryIntent } from "./recoveryIntent";
 
 import { readRoute, href, type Route } from "../shared/ui/shared";
@@ -213,6 +214,7 @@ export function App() {
   const drain = drainNotice(drainRead.data, iso => new Date(iso).toLocaleString("zh-CN"));
   const projectTitle = projectRead.data?.title ?? "";
   const holdsRead = useProviderHolds(projectId ?? "", !!session);
+  const emptySections = useEmptySections(projectId ?? "", token, !!session);
   // 待我处理 counts 验收安排, 依据变化 and 等我使用的交付 under the page's own keys; an unknown part is never counted as 0.
   const inbox = useInboxCount(projectId ?? "", session?.principal.actorId ?? "", !!session);
   const projectError = projectRead.error ? errorText(projectRead.error) : "";
@@ -301,7 +303,7 @@ export function App() {
     ...route.section !== "inbox" && inbox.state === "unknown" ? [{ key: "inbox", tone: "waiting" as const, text: inbox.text, link: { href: href(projectId, "inbox"), label: "去待我处理核对" } }] : [],
   ];
   return <>{confirmHost}<Suspense fallback={<p className={opening} role="status">正在打开工作台…</p>}><AppShell route={route} projectId={projectId} projectTitle={projectTitle} actor={principal.actorId} permissions={principal.permissions}
-    receiptCount={projectReceipts.length} inboxCount={shellInboxCount(inbox)} token={token} logout={logout} notices={notices} providerHolds={holdsRead.data}>
+    receiptCount={projectReceipts.length} inboxCount={shellInboxCount(inbox)} token={token} logout={logout} notices={notices} providerHolds={holdsRead.data} emptySections={emptySections}>
     <WorkspacePages key={`${principal.actorId}:${projectId}`} route={route} context={context} refresh={refresh} operations={operationItems} />
   </AppShell></Suspense></>;
 }

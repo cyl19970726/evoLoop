@@ -1,7 +1,7 @@
 import { preconditionText } from "@evoloop/contracts/acceptance-convention";
 
 const target: Record<string, string> = {
-  human: "指定的人", leader: "项目 Leader", business_session: "Leader 指派的独立业务 Session",
+  human: "指定的人", leader: "Leader", business_session: "Leader 指派的独立业务 Session",
   named_agent: "声明的业务身份直接验收（不经验收接力）",
 };
 const precondition: Record<string, string> = {

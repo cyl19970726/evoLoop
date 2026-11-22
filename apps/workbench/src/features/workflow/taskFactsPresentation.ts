@@ -40,13 +40,13 @@ export function agentFacts(task: Pick<Task, "state" | "currentRevisionId">, assi
       : assignment.state === "released" ? { label: "已分派", value: "分派已释放", tone: "history" }
         : closed ? { label: "已分派", value: "历史分派", tone: "history" }
           : current ? { label: "已分派", value: "已分派", tone: "done" }
-            : { label: "已分派", value: "分派属于旧修订", tone: "waiting" });
+            : { label: "已分派", value: "分派时的任务已改版，要重新分派", tone: "waiting" });
   const accepted: AgentFact = pending("已接受", assignmentRead.state)
     ?? (!live ? { label: "已接受", value: "未接受", tone: "idle" }
       : live.state === "accepted"
         ? closed ? { label: "已接受", value: "当时已接受", tone: "history" }
           : current ? { label: "已接受", value: live.ack?.method === "direct" ? "已接受 · 本人确认" : "已接受 · 负责人观察到", tone: "done" }
-            : { label: "已接受", value: "接受属于旧修订", tone: "waiting" }
+            : { label: "已接受", value: "接手时的任务已改版，要重新确认", tone: "waiting" }
         : closed ? { label: "已接受", value: "当时未接受", tone: "history" } : { label: "已接受", value: "待接受", tone: "waiting" });
   const run = runRead.value;
   const running: AgentFact = closed

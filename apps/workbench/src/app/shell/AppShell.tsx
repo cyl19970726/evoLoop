@@ -34,6 +34,8 @@ export interface AppShellProps {
   notices?: ShellNoticeItem[];
   /** The provider holds as read ("运行受阻"): the one-line bar above every page, or nothing while none is held. */
   providerHolds?: import("@evoloop/contracts/provider-hold").ProviderHoldListing | undefined;
+  /** Sections whose own list was read and is empty: not listed in the menu unless the reader is on them. */
+  emptySections?: ReadonlySet<import("../../shared/routes").Section> | undefined;
 }
 
 const permissionLabel: Record<string, string> = { task: "任务", document: "文档", session: "Session", management: "项目管理" };
@@ -54,6 +56,19 @@ export function AppShell(props: AppShellProps) {
   // On a phone the top bar already names the page. A page title that says exactly the same (任务 / 过程文档 / 日程 …) is marked, and shown to screen readers only below 760px
   // (the `max-compact:` class on <main>); a title that says more (a task's name, 项目总览 under 总览) stays. Wide screens have no top bar and keep every title (task 4f6c948f).
   const mainRef = React.useRef<HTMLElement>(null);
+  // The browser tab names the object on the page (a task's or document's title, an agent's name) when the page's own heading says one, else the section.
+  React.useEffect(() => {
+    const main = mainRef.current; if (!main) return;
+    const apply = () => {
+      const heading = main.querySelector("h1")?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+      const name = heading && heading !== title ? (heading.length > 60 ? `${heading.slice(0, 60)}…` : heading) : title;
+      document.title = `${name} · ${props.projectTitle || "evoLoop"}`;
+    };
+    apply();
+    const observer = new MutationObserver(apply);
+    observer.observe(main, { childList: true, subtree: true, characterData: true });
+    return () => observer.disconnect();
+  }, [title, props.projectTitle, path]);
   React.useEffect(() => {
     const main = mainRef.current; if (!main) return;
     const mark = () => { for (const heading of main.querySelectorAll("h1")) { if (heading.textContent?.trim() === title) heading.setAttribute("data-echo", ""); else heading.removeAttribute("data-echo"); } };
@@ -187,7 +202,7 @@ function ContextRail(props: AppShellProps & { space: Space; sessionState: Sessio
           onNavigate={props.onNavigate} state={props.sessionState} onState={props.onSessionState} />
       </div>
       : <nav data-ui="" aria-label={space === "inbox" ? "待我处理" : "工作分区"} className={cn("flex-1", !inDrawer && "min-h-0 overflow-y-auto")}>
-        <SectionList items={space === "inbox" ? inboxNavigation : workNavigation} route={route} projectId={projectId} onNavigate={props.onNavigate} />
+        <SectionList items={space === "inbox" ? inboxNavigation : workNavigation} route={route} projectId={projectId} onNavigate={props.onNavigate} empty={props.emptySections} />
         {(inDrawer || !compact) && <ContextRailSlot className="mt-3 empty:hidden" onNavigate={props.onNavigate} />}
       </nav>}
     <div data-ui="" className="mt-2 flex items-center gap-2.5 border-t border-border px-2 pt-2.5">
@@ -201,7 +216,7 @@ function ContextRail(props: AppShellProps & { space: Space; sessionState: Sessio
   </aside>;
 }
 
-function SectionList({ items, route, projectId, onNavigate }: { items: readonly NavItem[]; route: Route; projectId: string; onNavigate(): void }) {
+function SectionList({ items, route, projectId, onNavigate, empty }: { items: readonly NavItem[]; route: Route; projectId: string; onNavigate(): void; empty?: ReadonlySet<Section> | undefined }) {
   const owner = workSectionOf(route.section) ?? route.section;
   const leaf = leafOf(route.section);
   return <ul className="flex flex-col gap-0.5">
@@ -212,7 +227,7 @@ function SectionList({ items, route, projectId, onNavigate }: { items: readonly 
           className={cn("selected-edge flex items-center rounded-md px-3 py-2 text-text-secondary hover:bg-selected hover:text-foreground focus-visible:shadow-[var(--focus-ring)] outline-none",
             current && "bg-accent font-medium text-accent-strong hover:bg-accent")}>{item.label}</a>
         {current && item.children && <ul className="mb-1 ml-3 mt-0.5 flex flex-col gap-0.5 border-l border-border pl-2">
-          {item.children.map(child => <li key={child.section}>
+          {item.children.filter(child => !empty?.has(child.section) || leaf === child.section).map(child => <li key={child.section}>
             <a href={href(projectId, child.section)} onClick={onNavigate} aria-current={leaf === child.section ? "page" : undefined}
               className={cn("selected-edge block rounded-md px-2.5 py-1.5 text-small text-muted-foreground hover:bg-selected hover:text-foreground focus-visible:shadow-[var(--focus-ring)] outline-none",
                 leaf === child.section && "bg-accent font-medium text-accent-strong hover:bg-accent")}>{child.label}{child.hint && <span className="block text-caption font-normal text-muted-foreground">{child.hint}</span>}</a>

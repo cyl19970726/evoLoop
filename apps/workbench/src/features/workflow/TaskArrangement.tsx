@@ -111,8 +111,8 @@ export function TaskAttentionSection({ context, detail, leader }: { context: Mut
       {staleFollowUp && <Fine>已有的跟进属于任务的旧修订；核对当前任务后，按已有跟进的第 {value.followUp!.version} 版保存新的安排。</Fine>}
       {followUp ? <p className="text-label text-text-secondary [overflow-wrap:anywhere]">{decisionLabel[followUp.decision]} · {followUp.actionTaken}</p> : !staleFollowUp && <p className="text-label text-text-secondary">还没有跟进安排。</p>}
       <Fine>等待 {followUp?.waitingOn ? waitingParty(followUp.waitingOn) : "责任未知"} · 下一检查点 {followUp?.nextCheckAt ? date(followUp.nextCheckAt) : "未定"}</Fine>
-      {followUp?.releaseHandoff && <Fine>具备发布条件，等待维护者 · {date(followUp.releaseHandoff.readyForPublicationAt)} · {actorText(followUp.releaseHandoff.recipient)}</Fine>}
-      {followUp?.releaseHandoff && <ActorIdentifiers actors={[["发布维护者", followUp.releaseHandoff.recipient]]} />}
+      {followUp?.releaseHandoff && (detail.task.state === "todo" || detail.task.state === "in_progress") && !publicationCurrent && <Fine>具备发布条件，等待维护者 · {date(followUp.releaseHandoff.readyForPublicationAt)} · {actorText(followUp.releaseHandoff.recipient)}</Fine>}
+      {followUp?.releaseHandoff && (detail.task.state === "todo" || detail.task.state === "in_progress") && !publicationCurrent && <ActorIdentifiers actors={[["发布维护者", followUp.releaseHandoff.recipient]]} />}
       <Fine>{publicationCurrent ? `已发布且有固定证据 · ${date(followUp!.publication!.publishedAt)}`
         : followUp?.publication ? "有发布记录；当前修订的发布来源还要核对" : "当前修订的发布证据未知"}</Fine>
       {canWrite && <ActionRow title="填写跟进安排" description="跟进判断、已做的事、等待谁和下一检查时间。">

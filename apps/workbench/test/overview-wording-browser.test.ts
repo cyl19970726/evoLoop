@@ -123,8 +123,8 @@ test("overview wording: next step and responsibility in words, codes mapped, ide
     await panel.getByRole("link", { name: "智能体 · 前端智能体" }).first().waitFor();
     assert.match(await panel.innerText(), /承接职责当前为待交接关闭/);
     // A timing read failed: the page cannot say there is no scheduled work.
-    await panel.getByText("1 项任务的执行时间未能读回，无法判断是否有约定执行的任务。").waitFor();
-    assert.doesNotMatch(await panel.innerText(), /已读范围内没有约定执行/);
+    await panel.getByText("1 项任务的执行时间未能读回，无法判断是否有定时任务的任务。").waitFor();
+    assert.doesNotMatch(await panel.innerText(), /已读范围内没有定时任务/);
     for (const text of [await main.innerText(), await panel.innerText()]) {
       assert.doesNotMatch(text, leaked);
       assert.doesNotMatch(text, uuid, "no raw identifier in the main layer");
@@ -142,7 +142,7 @@ test("overview wording: next step and responsibility in words, codes mapped, ide
 
     // A complete read with no timing may say there is none; a waiting reason is summarised and folded.
     await fixture("timing=none"); await reread();
-    await panel.getByText("已读范围内没有约定执行的未结束任务。").waitFor();
+    await panel.getByText("已读范围内没有定时任务的未结束任务。").waitFor();
     await fixture("timing=waiting&responsible=session"); await reread();
     const scheduled = panel.locator("li").filter({ hasText: "进行中的改版" });
     await scheduled.getByText(/有未满足的等待条件/).waitFor();

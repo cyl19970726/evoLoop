@@ -24,7 +24,7 @@ export function versionView(info: VersionInfo | null): VersionView {
     links: [{ label: "这个提交（公开仓库）", href: `${repoBase}/commit/${info.commit}` }, roadmap, deploy] };
 }
 
-export interface MilestoneRowView { id: string; title: string; deliver: string; exit: string; status: string; tone: "done" | "progress" | "partial" | "idle" | "none"; date: string; current: boolean; linked: boolean }
+export interface MilestoneRowView { id: string; title: string; deliver: string; exit: string; status: string; tone: "done" | "progress" | "partial" | "idle" | "none"; date: string; current: boolean; linked: boolean; stageId: string | null }
 const tones: Record<string, MilestoneRowView["tone"]> = { exited: "done", in_progress: "progress", partial: "partial", reviewed: "partial", not_started: "idle" };
 export function milestoneRows(view: MilestonesView | null): MilestoneRowView[] {
   return (view?.phases ?? []).map((phase: MilestonePhase) => ({
@@ -33,6 +33,6 @@ export function milestoneRows(view: MilestonesView | null): MilestoneRowView[] {
     tone: phase.status ? tones[phase.status] ?? "idle" : "none",
     // 未登记 only when no stage is linked; a linked stage that was never reviewed says so.
     date: !phase.stage ? NOT_REGISTERED : phase.reviewedAt ? `回看于 ${day(phase.reviewedAt)}` : NO_REVIEW,
-    current: view?.currentPhaseId === phase.id, linked: !!phase.stage,
+    current: view?.currentPhaseId === phase.id, linked: !!phase.stage, stageId: phase.stage?.id ?? null,
   }));
 }

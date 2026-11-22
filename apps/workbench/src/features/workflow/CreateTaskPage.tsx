@@ -182,7 +182,7 @@ export function CreateTaskView({ context, active, pathname, back, embedded = fal
           {control => <Textarea {...control} rows={2} value={draft.stopCondition} onChange={event => edit({ stopCondition: event.target.value })} />}</Field>
       </>}
     </section>
-    <section aria-label="约定执行时间" className={section}>
+    <section aria-label="执行时间" className={section}>
       <div className="flex flex-col gap-1"><h2 className="text-label font-semibold text-foreground">执行时间（可选）</h2>
         <p className={muted}>约定时间只记录在任务上；到时谁来执行，仍要在任务里安排承接。</p></div>
       <div className="grid grid-cols-1 gap-4 compact:grid-cols-3">

@@ -9,6 +9,8 @@ import { agentDisplayName, agentNameCollisions, agentNameIsGenerated } from "../
 import { agentNameKey, readAgent } from "../../shared/agentRead";
 import { currentStageText, leaderWorkItemPresentation, loadLeaderWorkStatuses } from "../../shared/leaderWorkLoad";
 import { queryKeys, useProjectQuery } from "../../shared/query";
+import { capabilityGapText } from "../../shared/capabilityPresentation";
+import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { tableOrigin } from "./taskOrigin";
 import { phaseOrder, phaseStatus } from "../../shared/taskStatus";
 import { timingDate, timingDuration, timingStageLabel } from "../../shared/taskTiming";
@@ -125,9 +127,10 @@ export function CapacitySummary({ projectId, overview, error, actorId }: {
         : read?.problem ? { state: "failed" } : { state: "reading" };
       const name = nameOnly("智能体", nameRead);
       return <li key={item.sessionId} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 py-2 text-label">
-        <a className="font-medium text-foreground hover:underline" href={sessionHref(projectId, `owned:${item.sessionId}`, actorId ? tableOrigin(projectId, actorId) : null)}>{item.isLeader ? "统筹" : name}</a>
+        <a className="font-medium text-foreground hover:underline" href={sessionHref(projectId, `owned:${item.sessionId}`, actorId ? tableOrigin(projectId, actorId) : null)}>{item.isLeader ? "Leader" : name}</a>
         <span className="text-caption text-muted-foreground">{item.tenure === "temporary" ? "临时" : "常驻"} · {item.persistedWorkIdle ? "已登记工作已清" : "仍在工作"} · 验收 {item.openAcceptance} · 消息 {item.pendingMessages} · 队列 {item.queueEntries}</span>
-        <span className="text-caption">{item.readyForAcceptance ? "可接验收" : item.missingCapabilities.length ? `缺：${item.missingCapabilities.join("、")}` : "不可接验收"}</span>
+        {item.missingCapabilities.length > 0 && <FullIdentifiers rows={[{ label: "缺项原文", value: item.missingCapabilities.join("、"), text: true }]} />}
+        <span className="text-caption">{item.readyForAcceptance ? "可接验收" : item.missingCapabilities.length ? `缺：${item.missingCapabilities.map(capabilityGapText).join("、")}` : "不可接验收"}</span>
       </li>;
     })}</ul> : <p className="text-label text-muted-foreground">当前没有可读取的智能体。</p>}
     <p className="text-caption text-muted-foreground">容量只说明已登记的工作已清；执行配置和消息授权仍按缺项单独核对。这里不会自动创建授权。</p>

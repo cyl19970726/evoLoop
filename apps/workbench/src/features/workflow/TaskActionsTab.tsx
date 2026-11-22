@@ -162,7 +162,7 @@ export function TaskActionsTab({ context, detail, leader, leaderState, documents
   }
 
   const ending: Action[] = [];
-  if (task.state === "todo" || task.state === "in_progress") ending.push({ key: "cancel", title: "取消任务", needs: "decision", description: "取消这一份任务；重复任务的以后生成另在“执行时间与重复”里停止。",
+  if (task.state === "todo" || task.state === "in_progress") ending.push({ key: "cancel", title: "取消任务", needs: "decision", description: "取消这一份任务；重复任务的以后生成另在“定时任务”里停止。",
     element: <CommandForm context={context} submitLabel="取消任务" permission="task" decision danger baseline={{ taskVersion: task.version }} fields={[reasonField()]}
       build={(values, seen) => taskCancelCommand(detail, seen, { reason: values.reason ?? "" })} /> });
   if (task.state === "in_progress" || task.state === "done" || task.state === "cancelled") ending.push({ key: "reopen",

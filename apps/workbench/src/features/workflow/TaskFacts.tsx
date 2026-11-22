@@ -101,7 +101,7 @@ function StatusFacts({ context, detail, read, linkForTab }: {
   const state = taskStateStatus[task.state];
   return <div className="flex flex-col gap-2.5" aria-label="状态与下一步">
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-      <span className="flex items-center gap-1.5 text-caption text-muted-foreground">任务<StatusTag tone={state.tone} label={state.label} /></span>
+      {(!open || !projection) && <span className="flex items-center gap-1.5 text-caption text-muted-foreground">任务<StatusTag tone={state.tone} label={state.label} /></span>}
       <span className="flex items-center gap-1.5 text-caption text-muted-foreground">对账<StatusTag tone={phase.tone} label={phase.label} /></span>
     </div>
     {open || projection ? <Fact label="下一步">{phase.next}

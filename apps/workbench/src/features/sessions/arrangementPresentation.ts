@@ -9,7 +9,7 @@ import type { FreeCapacity } from "./arrangementModel";
 
 /** A task's phase on the board. An assignment that would stop the next dispatch (`Arrangement.stale`) is not “待接手”. */
 export function boardPhaseText(task: Pick<LeaderWorkTask, "phase">, stale?: "assigned" | "accepted" | null): string {
-  return stale ? `${stale === "accepted" ? "接手" : "分派"}属于旧修订 · 要重新指定` : leaderPhaseLabel[task.phase];
+  return stale ? `${stale === "accepted" ? "接手" : "分派"}是按旧版任务做的 · 要重新指定` : leaderPhaseLabel[task.phase];
 }
 
 const directoryRelations: Record<ObservedTask["relation"], string> = {

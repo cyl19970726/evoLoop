@@ -1,3 +1,4 @@
+import { isSampleTitle } from "../../shared/sampleObjects";
 import { useEffect } from "react";
 import { CalendarClock } from "lucide-react";
 import { Button, EmptyState, Notice as UiNotice, cn } from "@evoloop/ui";
@@ -41,17 +42,8 @@ export function TimedTasksView({ view, projectId, actorId, coordinator, focus, o
     document.getElementById(`timing-${focus}`)?.scrollIntoView({ block: "center" });
   }, [focus, items.length]); // eslint-disable-line react-hooks/exhaustive-deps
   const copyBlocked = copyBlockedByCoordinator(coordinator) && items.some(item => item.repeat === "daily" && item.seriesState === "active");
-  return <section aria-label="定时任务" className="flex flex-col gap-3 rounded-xl bg-raised p-4 shadow-sm compact:p-5">
-    <div className="flex flex-wrap items-center justify-between gap-2">
-      <h2 className="flex flex-wrap items-center gap-2 text-heading font-semibold text-foreground">定时任务{loaded ? ` · ${items.length}${view.hasMore ? "+" : ""}` : ""}<span className="rounded-full bg-field px-2.5 py-0.5 text-caption font-normal text-muted-foreground" data-kind="task-timing">Task 自己的执行时间</span></h2>
-      <Button size="compact" variant="ghost" onClick={onRefresh} disabled={view.fetching}>{view.fetching ? "读取中…" : "重新读取"}</Button>
-    </div>
-    <p className={muted}>这不是上面的日程定义：日程是项目里的规则，这里列的是某个 Task 自己设的执行时间（一次定时与每日重复，含已停止的系列）。修改仍在任务详情里做；列出不等于已执行，也不等于已验收。</p>
-    {view.error && <UiNotice tone="error">定时任务本次没有读到：{view.error}。这不表示没有定时任务。{loaded ? "下面保留上次读回，待核对。" : ""}</UiNotice>}
-    {copyBlocked && <UiNotice tone="error">协调器当前{coordinator === "disabled" ? "未启用" : coordinator === "no-authority" ? "没有可运行授权" : "不可用"}：进行中的每日重复不会自行复制出新任务。</UiNotice>}
-    {!loaded && !view.error && <p className="text-small text-text-secondary">正在读取定时任务…</p>}
-    {loaded && items.length === 0 && !view.error && <EmptyState title="本项目没有设了执行时间的任务" reason="在任务详情的“执行时间与重复”里设置后，会出现在这里。" />}
-    {items.length > 0 && <ul className="flex flex-col">{items.map(item => <li key={item.seriesId} id={`timing-${item.rootTaskId}`}
+const renderList = (list: typeof items) => (
+    list.length > 0 && <ul className="flex flex-col">{list.map(item => <li key={item.seriesId} id={`timing-${item.rootTaskId}`}
       className={cn("flex flex-col gap-1 border-t border-border py-3 first:border-t-0", focus === item.rootTaskId && "rounded-lg px-3 outline outline-2 outline-offset-2 outline-foreground/30")}>
       <div className="flex flex-wrap items-center gap-2">
         <CalendarClock size={15} aria-hidden="true" className="text-muted-foreground" />
@@ -67,7 +59,20 @@ export function TimedTasksView({ view, projectId, actorId, coordinator, focus, o
       </dl>
       {item.rootTaskId !== item.latestTask.taskId && <a href={timedTaskHref(projectId, item.rootTaskId, item, actorId)} className="w-fit text-caption text-foreground underline">打开首个任务</a>}
       <FullIdentifiers rows={[{ label: "系列", value: item.seriesId }, { label: "首个任务", value: item.rootTaskId }, { label: "最近任务", value: item.latestTask.taskId }]} />
-    </li>)}</ul>}
+    </li>)}</ul>
+  );
+  return <section aria-label="定时任务" className="flex flex-col gap-3 rounded-xl bg-raised p-4 shadow-sm compact:p-5">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <h2 className="flex flex-wrap items-center gap-2 text-heading font-semibold text-foreground">定时任务{loaded ? ` · ${items.length}${view.hasMore ? "+" : ""}` : ""}<span className="rounded-full bg-field px-2.5 py-0.5 text-caption font-normal text-muted-foreground" data-kind="task-timing">Task 自己的执行时间</span></h2>
+      <Button size="compact" variant="ghost" onClick={onRefresh} disabled={view.fetching}>{view.fetching ? "读取中…" : "重新读取"}</Button>
+    </div>
+    <p className={muted}>这不是上面的日程定义：日程是项目里的规则，这里列的是某个 Task 自己设的执行时间（一次定时与每日重复，含已停止的系列）。修改仍在任务详情里做；列出不等于已执行，也不等于已验收。</p>
+    {view.error && <UiNotice tone="error">定时任务本次没有读到：{view.error}。这不表示没有定时任务。{loaded ? "下面保留上次读回，待核对。" : ""}</UiNotice>}
+    {copyBlocked && <UiNotice tone="error">协调器当前{coordinator === "disabled" ? "未启用" : coordinator === "no-authority" ? "没有可运行授权" : "不可用"}：进行中的每日重复不会自行复制出新任务。</UiNotice>}
+    {!loaded && !view.error && <p className="text-small text-text-secondary">正在读取定时任务…</p>}
+    {loaded && items.length === 0 && !view.error && <EmptyState title="本项目没有设了执行时间的任务" reason="在任务详情的“定时任务”里设置后，会出现在这里。" />}
+    {renderList(items.filter(item => !isSampleTitle(item.title)))}
+    {items.some(item => isSampleTitle(item.title)) && <details data-sample-fold=""><summary className="cursor-pointer text-small text-muted-foreground">测试与样本 · {items.filter(item => isSampleTitle(item.title)).length}（默认折叠）</summary>{renderList(items.filter(item => isSampleTitle(item.title)))}</details>}
     {view.hasMore && <Button className="w-fit" onClick={onMore} disabled={view.fetchingMore}>{view.fetchingMore ? "继续读取中…" : "加载更多定时任务"}</Button>}
     {view.pageFailed && <UiNotice tone="error">下一页没有读到，已显示的是已读部分。</UiNotice>}
     {view.readAt && <p className={muted}>读于 {date(view.readAt)}。</p>}

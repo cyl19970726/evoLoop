@@ -214,7 +214,7 @@ export function buildArrangement(sessions: readonly ObservedSession[], tasks: re
     const kind = stale.get(task.taskId);
     if (kind) risks.push({
       kind: "stale_assignment", sessionKey: null, taskIds: [task.taskId],
-      title: `${quoted(task.title)}的${kind === "accepted" ? "接手" : "分派"}属于旧修订，要重新指定`,
+      title: `${quoted(task.title)}的${kind === "accepted" ? "接手" : "分派"}是按旧版任务做的，要重新指定`,
       detail: kind === "assigned" ? "任务修订已变化，按原来的分派确认接手会被拒绝" : "任务修订已变化，按原来的接手派发会被拒绝",
     });
     // The server's own gate: a dependency counts once its current revision is accepted, not when its state says done.

@@ -220,9 +220,9 @@ test("an assignment the server would refuse next is a risk to reassign; the norm
   const tasks = [waiting, ready, rework, delivered, running, awaitingDelivery, current, unknown, released];
   const board = buildArrangement([agent(1, false)], tasks, [], now, complete);
   assert.deepEqual(board.risks.map(risk => [risk.kind, risk.title]), [
-    ["stale_assignment", "「任务1」的分派属于旧修订，要重新指定"],
-    ["stale_assignment", "「任务2」的接手属于旧修订，要重新指定"],
-    ["stale_assignment", "「任务3」的接手属于旧修订，要重新指定"],
+    ["stale_assignment", "「任务1」的分派是按旧版任务做的，要重新指定"],
+    ["stale_assignment", "「任务2」的接手是按旧版任务做的，要重新指定"],
+    ["stale_assignment", "「任务3」的接手是按旧版任务做的，要重新指定"],
   ]);
   assert.deepEqual([...board.stale.keys()], [waiting.taskId, ready.taskId, rework.taskId]);
   assert.ok(board.rows[0]!.assigned.some(item => item.title === "任务1"), "the stale work stays on the agent's row");
@@ -232,10 +232,10 @@ test("an assignment the server would refuse next is a risk to reassign; the norm
     .filter(risk => risk.kind === "stale_assignment"), [], "without the queues nothing owned is concluded");
   const withExternal = buildArrangement([agent(1, false)], [...tasks, externalAssigned], [], now, { ...complete, queuesRead: false });
   assert.deepEqual(withExternal.risks.filter(risk => risk.kind === "stale_assignment").map(risk => [risk.title, risk.detail]),
-    [["「任务11」的分派属于旧修订，要重新指定", "任务修订已变化，按原来的分派确认接手会被拒绝"]]);
-  assert.equal(boardPhaseText(externalAssigned, withExternal.stale.get(externalAssigned.taskId)), "分派属于旧修订 · 要重新指定");
-  assert.equal(boardPhaseText(waiting, board.stale.get(waiting.taskId)), "分派属于旧修订 · 要重新指定");
-  assert.equal(boardPhaseText(ready, board.stale.get(ready.taskId)), "接手属于旧修订 · 要重新指定");
+    [["「任务11」的分派是按旧版任务做的，要重新指定", "任务修订已变化，按原来的分派确认接手会被拒绝"]]);
+  assert.equal(boardPhaseText(externalAssigned, withExternal.stale.get(externalAssigned.taskId)), "分派是按旧版任务做的 · 要重新指定");
+  assert.equal(boardPhaseText(waiting, board.stale.get(waiting.taskId)), "分派是按旧版任务做的 · 要重新指定");
+  assert.equal(boardPhaseText(ready, board.stale.get(ready.taskId)), "接手是按旧版任务做的 · 要重新指定");
   assert.equal(boardPhaseText(delivered, board.stale.get(delivered.taskId)), "待验收");
   assert.equal(boardPhaseText(current, board.stale.get(current.taskId)), "待接手");
 });

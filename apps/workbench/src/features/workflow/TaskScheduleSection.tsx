@@ -1,4 +1,4 @@
-// 执行时间与重复 (tasks.md 重开与重复): when this occurrence is to run and whether it repeats daily. Each repetition
+// 定时任务 (tasks.md 重开与重复): when this occurrence is to run and whether it repeats daily. Each repetition
 // is its own task with its own result; editing changes this occurrence by default, “本次及后续” is chosen
 // explicitly, and stopping the series is separate from cancelling one occurrence.
 import React from "react";
@@ -47,7 +47,7 @@ export function TaskScheduleSection({ context, detail }: { context: MutationCont
   // As 新建任务: the date and time on the clock of the task's zone (a date-time control), never UTC or an offset.
   const zone = timing?.timezone ?? browserTimezone();
   const timeFields: FormField[] = [
-    { name: "executeAt", label: "约定执行时间", kind: "custom", initial: timeFieldValue(timing?.executeAtUtc, zone),
+    { name: "executeAt", label: "执行时间", kind: "custom", initial: timeFieldValue(timing?.executeAtUtc, zone),
       hint: "按下面时区的当地日期和时间填写；每天重复时，以后每天在同一当地时刻生成。",
       render: ({ control, value, values, onChange }) => <LocalTimeInput control={control} name="executeAt" value={value} timezone={values.timezone ?? ""} onChange={onChange} /> },
     { name: "timezone", label: "时区", kind: "select", initial: zone, options: timezoneOptions([timing?.timezone]) },
@@ -69,7 +69,7 @@ export function TaskScheduleSection({ context, detail }: { context: MutationCont
       form: <CommandForm context={context} permission="task" options={timingOptions} submitLabel="改为每天重复" baseline={baseline} fields={[...timeFields, reasonField("调整理由")]} build={set("daily", "this_and_future")} /> });
   }
   if (writable && timing?.repeat === "daily") {
-    actions.push({ key: "adjust-daily", title: "调整执行时间与重复规则", description: editableThis ? "默认只改本次；“本次及后续”要另选。" : "本次已开始或结束，只能改以后的。", needs: "write",
+    actions.push({ key: "adjust-daily", title: "调整定时任务规则", description: editableThis ? "默认只改本次；“本次及后续”要另选。" : "本次已开始或结束，只能改以后的。", needs: "write",
       form: <CommandForm context={context} permission="task" options={timingOptions} submitLabel="保存调整" baseline={baseline} build={set("daily", editableThis ? "this" : "future")} fields={[...timeFields,
         { name: "repeat", label: "重复规则", kind: "select", initial: timing.repeat, options: [{ value: "none", label: "仅本次" }, { value: "daily", label: "每天固定时间" }] },
         { name: "scope", label: "修改范围", kind: "select", initial: editableThis ? "this" : "future", options: [
@@ -99,11 +99,11 @@ export function TaskScheduleSection({ context, detail }: { context: MutationCont
   }
   const shown = actions.filter(action => action.needs === "write" ? canWrite : canStopSeries);
   const hidden = actions.length - shown.length;
-  return <TabSection id="task-schedule" title="执行时间与重复">
+  return <TabSection id="task-schedule" title="定时任务">
     <ReadNote read={read} what="执行时间" />
     {versionError && <p role="alert" className="text-label text-destructive">执行时间暂不可核对：{versionError}</p>}
     {read.data !== undefined && (timing ? <TimingFacts projectId={projectId} timing={timing} />
-      : <p className="text-label text-text-secondary">这项任务没有约定执行时间。</p>)}
+      : <p className="text-label text-text-secondary">这项任务没有执行时间。</p>)}
     {read.data !== undefined && !editableThis && <Fine>本次任务已经开始或结束，本次的执行依据保持固定。{timing?.repeat === "daily" ? "仍可修改以后的要求或停止以后重复。" : ""}</Fine>}
     {shown.length > 0 && <div className="flex flex-col">{shown.map(action => <ActionRow key={action.key} title={action.title} description={action.description}>{action.form}</ActionRow>)}</div>}
     {hidden > 0 && <Fine>另有 {hidden} 项时间调整需要任务决定权限，当前身份不能执行。</Fine>}
@@ -113,7 +113,7 @@ export function TaskScheduleSection({ context, detail }: { context: MutationCont
 function TimingFacts({ projectId, timing }: { projectId: string; timing: TaskTimingView }) {
   return <div className="flex flex-col gap-3">
     <div className="grid grid-cols-2 gap-x-6 gap-y-3 max-compact:grid-cols-1">
-      <Fact label="本次约定执行">{formatScheduled(timing.executeAtUtc, timing.timezone)}</Fact>
+      <Fact label="本次定时任务">{formatScheduled(timing.executeAtUtc, timing.timezone)}</Fact>
       <Fact label="重复规则">{repeatLabel(timing.repeat)}{timing.repeat === "daily" ? ` · ${timing.seriesState === "active" ? "继续重复" : "已停止以后生成"}` : ""}</Fact>
       <Fact label="以后生成">{nextTimingLabel(timing)}</Fact>
       <Fact label="每份任务">单独执行，单独验收</Fact>

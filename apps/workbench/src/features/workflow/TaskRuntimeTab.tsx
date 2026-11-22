@@ -127,7 +127,7 @@ function AssignmentSection({ context, task, read }: { context: MutationContext; 
   const state = !assignment ? null : assignment.state === "released" ? { tone: "history" as const, label: "分派已释放" }
     : closed ? { tone: "history" as const, label: assignment.state === "accepted" ? "历史承接 · 当时已接手" : "历史分派" }
       : assignment.state === "accepted" ? valid ? { tone: "done" as const, label: "已接手" } : { tone: "waiting" as const, label: "接手属于旧修订" }
-        : valid ? { tone: "waiting" as const, label: "已分派，待确认接手" } : { tone: "waiting" as const, label: "分派属于旧修订" };
+        : valid ? { tone: "waiting" as const, label: "已分派，待确认接手" } : { tone: "waiting" as const, label: "分派时的任务已改版，要重新分派" };
   return <div className="flex flex-col gap-3" data-assignment="">
     <ReadNote read={read} what="分派" />
     {read.error !== null && read.error !== undefined && read.data === undefined && <Fine>读到分派之前，不能说这项任务没有人承接。</Fine>}

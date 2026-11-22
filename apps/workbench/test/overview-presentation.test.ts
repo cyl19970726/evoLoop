@@ -20,12 +20,12 @@ test("an unsettled run reads as words, never as its state code", () => {
 
 test("scheduled work is only called absent after a complete, current read", () => {
   const base = { hasSnapshot: true, stale: false, timingReadFailed: 0, timingScanLimited: false };
-  assert.equal(scheduledEmptyText(base), "已读范围内没有约定执行的未结束任务。");
+  assert.equal(scheduledEmptyText(base), "已读范围内没有定时任务的未结束任务。");
   const failed = scheduledEmptyText({ ...base, timingReadFailed: 3 });
   assert.match(failed, /3 项任务的执行时间未能读回，无法判断/);
-  assert.doesNotMatch(failed, /没有约定执行/);
-  assert.doesNotMatch(scheduledEmptyText({ ...base, timingReadFailed: 1, stale: true }), /没有约定执行/);
-  assert.equal(scheduledEmptyText({ ...base, hasSnapshot: false }), "约定执行任务待读回。");
+  assert.doesNotMatch(failed, /没有定时任务/);
+  assert.doesNotMatch(scheduledEmptyText({ ...base, timingReadFailed: 1, stale: true }), /没有定时任务/);
+  assert.equal(scheduledEmptyText({ ...base, hasSnapshot: false }), "定时任务任务待读回。");
   assert.match(scheduledEmptyText({ ...base, stale: true }), /上次读回.*当前待核对/);
   assert.match(scheduledEmptyText({ ...base, timingScanLimited: true }), /其余任务未核对/);
 });
