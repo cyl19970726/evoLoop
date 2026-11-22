@@ -92,6 +92,8 @@ export interface HeaderFacts {
   replyingTo?: "me" | string | null;
   /** The title of the Task being worked on, when read. */
   taskTitle?: string | null;
+  /** How the Run in progress was dispatched, already in words ("Leader 派发"); null when not read. */
+  dispatch?: string | null;
   /** How long the agent has been idle, already in words ("3 小时"); null when no time is known. */
   idleFor?: string | null;
 }
@@ -117,7 +119,7 @@ export function agentHeaderStatus(session: StatusSource, progress: NativeProgres
     if (session.busy !== true) return "运行记录不一致，待核对";
     if (turn.source?.kind === "message") return replyingPhrase(facts.replyingTo ?? null);
     if (turn.source?.kind === "run") return turn.source.id === session.latestBusinessRun?.id && session.latestBusinessRun.state === "running"
-      ? facts.taskTitle ? `正在做任务「${facts.taskTitle}」（Leader 派发）` : "正在执行任务" : "正在执行 · 任务记录待核对";
+      ? facts.taskTitle ? `正在做任务「${facts.taskTitle}」（${facts.dispatch ?? "来源待核对"}）` : "正在执行任务" : "正在执行 · 任务记录待核对";
     return "正在运行 · 来源待核对";
   }
   if (session.busy === true) return "有在途工作 · 执行待核对";

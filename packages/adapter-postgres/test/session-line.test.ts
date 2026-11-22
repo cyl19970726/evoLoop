@@ -235,6 +235,21 @@ test("a busy Session makes entries wait; on its Run's end the first entry is con
   assert.equal(entryA.state, "started", JSON.stringify(entryA));
   const runA = (await uow.read(p, r => r.listRuntimeRuns(a)))[0]!;
   assert.equal(runA.id, entryA.runId); assert.equal((await task(a)).state, "in_progress");
+  // Task c58b83e2: the timeline reads how the line took the Run in, by run id: who queued it and whether that is the line's controller.
+  const line = (await uow.read(p, r => r.sessionLines!.getSessionLine(session)))!;
+  const read = (id: string) => uow.read(p, r => r.sessionLines!.listRunDispatches!([id, randomUUID()]));
+  const dispatched = (await read(runA.id)).get(runA.id)!;
+  assert.deepEqual({ source: dispatched.source, actorId: dispatched.actorId, viaController: dispatched.viaController },
+    { source: "leader", actorId: entryA.sourceActorId, viaController: entryA.sourceActorId === line.controllerActorId });
+  assert.equal((await read(runA.id)).size, 1, "a Run no entry names is absent, never guessed");
+  // Another identity queuing for the line is not the controller; a schedule entry carries its schedule.
+  const scheduleId = randomUUID();
+  await pool.query("UPDATE session_line_entry SET source_actor_id='requirements-claude-agent' WHERE project_id=$1 AND entry_id=$2", [p, entryA.id]);
+  assert.equal((await read(runA.id)).get(runA.id)!.viaController, false);
+  await pool.query("UPDATE session_line_entry SET source='schedule',schedule_id=$3 WHERE project_id=$1 AND entry_id=$2", [p, entryA.id, scheduleId]);
+  const scheduled = (await read(runA.id)).get(runA.id)!;
+  assert.equal(scheduled.source, "schedule"); assert.equal(scheduled.scheduleId, scheduleId);
+  await pool.query("UPDATE session_line_entry SET source='leader',schedule_id=NULL,source_actor_id=$3 WHERE project_id=$1 AND entry_id=$2", [p, entryA.id, entryA.sourceActorId]);
   // Task 586504eb: an ordinary entry's texts carry no rework wording and no Task revision (the Run is bound to a revision made after the text).
   const requestA = (await workflow.getSessionMessageRecord(lead, p, entryA.messageId!))!;
   const revisionsA = (await workflow.listTaskRevisions(lead, p, a)).map(item => item.revision.id);

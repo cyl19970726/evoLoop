@@ -25,6 +25,8 @@ export interface ObservedRun {
   state: string;
   updatedAt: string;
   source: ObservationSource;
+  /** How a Session line took this Run in; null when no entry names it (older data). Absent from an older server. */
+  dispatch?: import("./session-timeline.js").RunDispatch | null;
 }
 /** Whether a Run can start on a Session now, with the reasons when it cannot (coordinator-judged; see apps/coordinator/src/runtime/session-usability.ts). */
 export interface SessionDispatch { usable: boolean; reasons: Array<{ code: string; reason: string }> }

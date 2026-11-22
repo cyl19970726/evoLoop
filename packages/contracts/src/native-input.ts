@@ -26,7 +26,7 @@ export interface NativeInputCapture {
 }
 
 export type NativeInputSource =
-  | { kind: "run"; runId: string; operationId: string; actorId: string; taskId: string; taskRevisionId: string }
+  | { kind: "run"; runId: string; operationId: string; actorId: string; taskId: string; taskRevisionId: string; dispatch?: import("./session-timeline.js").RunDispatch | null }
   | { kind: "message"; messageId: string; processingId: string; operationId: string; actorId: string };
 
 export interface NativeInputResponse {

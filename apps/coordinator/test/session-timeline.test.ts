@@ -4,7 +4,7 @@ import type { Principal, RuntimeSessionRecord } from '@evoloop/contracts';
 import type { NativeInputSource } from '@evoloop/contracts/native-input';
 import type { DirectInputRecord } from '@evoloop/contracts/direct-input';
 import type { SessionMessageRecord, SessionMessageProcessing } from '@evoloop/contracts/session-messages';
-import type { NativeWorkspacePage, WorkspaceEntry, WorkspaceMessage, WorkspaceRuntimeUpdate } from '@evoloop/contracts/session-timeline';
+import type { NativeWorkspacePage, RunDispatch, WorkspaceEntry, WorkspaceMessage, WorkspaceRuntimeUpdate } from '@evoloop/contracts/session-timeline';
 import { DomainError } from '@evoloop/contracts/ports';
 import type { UnitOfWork } from '@evoloop/contracts/ports';
 import type { SessionObservationService } from '@evoloop/core/session-observation';
@@ -34,6 +34,8 @@ const pg=(n:number,state:SessionMessageRecord['state'],sender:string):SessionMes
   operationId:id(n+100),target:{kind:'owned',sessionId},senderActorId:sender,content:`Message ${n} from ${sender}`,
   context:null,replyToMessageId:null,state,version:1,blockedReason:null,readReceipt:null,createdAt:now,updatedAt:now});
 const sourceMessage:NativeInputSource={kind:'message',messageId:id(10),processingId:id(110),operationId:id(210),actorId:'human-a'};
+let noDispatch=false;
+const runDispatch:RunDispatch={source:'schedule',actorId:'scheduler-actor',viaController:false,scheduleId:id(60),scheduleTitle:'每日评估',reworkObservationId:null,reworkDeliveryId:null};
 const sourceRun:NativeInputSource={kind:'run',runId:id(30),operationId:id(130),actorId:'dispatcher',taskId:id(40),taskRevisionId:id(41)};
 const session:RuntimeSessionRecord={projectId:project,id:sessionId,roleId:'role',cwd:'/tmp',authorizationScope:'scope',
   model:null,sandbox:'read-only',approvalPolicy:'on-request',state:'ready',version:1,nativeThreadId:thread,
@@ -50,6 +52,7 @@ function harness(){
   const sources=new Map([['turn-message',sourceMessage],['turn-run',sourceRun]]);
   const uow={read:async (_project:string,fn:(r:unknown)=>Promise<unknown>)=>fn({
     getRuntimeSession:async()=>revoked?null:session,
+    sessionLines:{listRunDispatches:async (ids:string[])=>ids.includes(sourceRun.runId)&&!noDispatch?new Map([[sourceRun.runId,runDispatch]]):new Map()},
     nativeInputs:{findSources:async (_p:string,_s:string,turnIds:string[])=>{
       if(ambiguous)throw new DomainError('INPUT_SOURCE_AMBIGUOUS','two sources');
       return new Map(turnIds.flatMap(turnId=>sources.has(turnId)?[[turnId,sources.get(turnId)!]]:[]));}},
@@ -816,4 +819,24 @@ test('a queued message blocked for a missing grant carries its reason to the pag
     const clear=await h.service.page(reader,project,key,{limit:25});
     assert.equal('blockedReason' in clear.pending.find(entry=>entry.id===`message:${id(11)}`)!,false,'nothing is added when nothing blocks');
   }finally{h.service.close()}
+});
+
+test('a Run turn carries how the line took it in; a Run no entry names says so with null, never a guess (Task c58b83e2)',async()=>{
+  const h=harness();
+  try{
+    noDispatch=false;
+    const first=await h.service.page(reader,project,key,{limit:1});
+    const second=await h.service.page(reader,project,key,{limit:1,cursor:first.nextCursor!,messagesCursor:first.messagesCursor!});
+    const run=second.turns.find(turn=>turn.id==='turn-run');
+    assert.deepEqual(run?.origin?.dispatch,runDispatch);
+    assert.equal(run?.origin?.initiatingActorId,'dispatcher');
+    assert.deepEqual((second.entries[0] as {origin:{dispatch:unknown}}).origin.dispatch,runDispatch);
+  }finally{h.service.close()}
+  const bare=harness();
+  try{
+    noDispatch=true;
+    const first=await bare.service.page(reader,project,key,{limit:1});
+    const second=await bare.service.page(reader,project,key,{limit:1,cursor:first.nextCursor!,messagesCursor:first.messagesCursor!});
+    assert.equal(second.turns.find(turn=>turn.id==='turn-run')?.origin?.dispatch,null);
+  }finally{noDispatch=false;bare.service.close()}
 });

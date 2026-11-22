@@ -32,7 +32,7 @@ import { buildRounds, lastReplyId, roundEntries, timelineRows, type Round } from
 import { useMessageFacts } from "./useMessageFacts";
 import { CoordinationGroup, CoordinationLine } from "./CoordinationLine";
 import { RoundTimes } from "./RoundTimes";
-import { runSourceLabel, sentAndStarted, type SentStarted } from "./roundPresentation";
+import { reworkHref, runSourceLabel, sentAndStarted, type SentStarted } from "./roundPresentation";
 import { replyingPhrase } from "./sessionStatusPresentation";
 import { api } from "../../shared/api";
 import {
@@ -165,11 +165,12 @@ function ReplyRecord({ id, reply, title, sessionKey, roleSeed, lastReply, projec
   </article>;
 }
 
-function RunStrip({ id, turnId, label, at, href }: { id: string; turnId: string | null; label: string; at: string | null; href: string | null }) {
+function RunStrip({ id, turnId, label, at, href, reworkHref = null }: { id: string; turnId: string | null; label: string; at: string | null; href: string | null; reworkHref?: string | null }) {
   return <article className="workspace-system-strip flex flex-wrap items-center gap-x-2 gap-y-1 self-center rounded-md bg-muted px-3 py-1.5 text-caption text-text-secondary" data-workspace-entry={id} data-round-source="" data-turn-id={turnId ?? undefined}>
     <FileText size={14} aria-hidden="true" /><strong className="font-medium text-foreground">{label}</strong>
     {at && <time dateTime={at}>{date(at)}</time>}
     {href && <a className="text-primary hover:underline" href={href}>查看任务与指令</a>}
+    {reworkHref && <a className="text-primary hover:underline" href={reworkHref} data-rework-link="">查看退回意见</a>}
   </article>;
 }
 
@@ -497,8 +498,9 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, titleO
   const renderRound = (round: Round) => {
     const { source, input } = round;
     const head = source.kind === "run" && (input?.origin?.taskId ?? source.taskId) !== null
-      ? <RunStrip key={`source:${round.key}`} id={input?.id ?? round.key} turnId={round.turnId} label={runSourceLabel(source.by, titleOf(source.taskId ?? input!.origin!.taskId!))}
-        at={round.startedAt ?? round.at} href={taskLink(source.taskId ?? input!.origin!.taskId!, source.runId)} />
+      ? <RunStrip key={`source:${round.key}`} id={input?.id ?? round.key} turnId={round.turnId} label={runSourceLabel(source.label, titleOf(source.taskId ?? input!.origin!.taskId!))}
+        at={round.startedAt ?? round.at} href={taskLink(source.taskId ?? input!.origin!.taskId!, source.runId)}
+        reworkHref={source.dispatch?.source === "rework" ? reworkHref(taskHref(source.taskId ?? input!.origin!.taskId!), source.dispatch) : null} />
       : source.kind === "message" && source.from === "leader" && input
         ? <CoordinationLine key={`source:${round.key}`} round={round} projectId={context.projectId} titleOf={titleOf} taskHref={taskHref} onMessage={messageId => inspect({ messageId })} />
         : input ? entryView(round, input, `source:${round.key}`) : null;
