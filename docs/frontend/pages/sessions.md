@@ -101,6 +101,21 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 | 统筹安排旁的数字 | “共 N 个智能体”（含历史与待归类） | — |
 | 统筹安排页首的空闲数 | 任务或队列没读全、或统筹以外的智能体占用都待核对（右栏写“暂不能确认谁空闲”）时写“无法判断”，不写 0；部分待核对时照数，旁注“另有 N 个待核对” | — |
 
+### 对话时间线：按“一轮工作”来读（Task f2d82dfe）
+
+| 规则 | 怎样做 |
+| --- | --- |
+| 单位 | 时间线的单位是“一轮工作”：**来源行 → 智能体的回复 → 结果行（有数据才有）**。读的人先问“这是谁让它做的、它答了什么”，所以来源在前、回复紧跟其后 |
+| 次序 | 已保存的消息与原生的回合合成一个按时间排的序列。一轮的时间取回合开始时间，没有就取这条消息的“开始处理”时间，再没有才用发送时间；原生回合之间的次序不重排。没有任何时间的保存消息接在末尾 |
+| 打开落点 | 打开一个智能体，落在它**最后一次回复**的开头，上方带上这一轮的来源行（来源离回复不远时），不是停在最底。没有任何回复的会话仍停在末尾；已有保存过的阅读位置时恢复该位置。落点之后的内容用“回到最新内容”回到底 |
+| 回复回到消息下方 | 对话里的 Leader 消息，它的回复紧接在消息下面。回复来自原生时间线；时间线没有这条回复、而消息记录里有原生回复预览时，补一条“回复（来自消息记录）”，预览超长写“预览，全文在消息详情” |
+| 来源行 | 写清谁、为哪个任务：“Leader 派发 · 任务「…」”（Run 起的一轮）、“你的消息”、“Leader 消息”、“其他智能体的消息”；有唯一任务时整行链到该任务。任务标题读不到写“标题待核对”，不猜 |
+| 时间 | 每条回复和消息都有时间。**发送时间写“发出”，来自消息记录的创建时间，处理开始后不变**；“开始处理”单独标，只在与发送相差一分钟以上时才写，从不顶替发送时间。读不到发送时间时只写“开始处理”，不用别的时间代充；回复没有自己的时间时写“本轮开始”或本轮完成时间 |
+| 协调消息折成一行 | Leader 与智能体之间的协调消息（派发通知、执行确认请求、排队通知等）默认折成一行“类型 · 任务标题 · 时间 ›”，点开在原位展开全文、时间、“查看任务”与“消息详情”。**连续三条及以上**、中间没有回复或别的内容的协调消息，合成一组“Leader 的 N 条协调消息”，组内每条仍是一行。智能体的回复在它下面，不折叠 |
+| 谁的话要认得出 | 发送者先看消息记录的发送者类别，其次是协议固定文案（如“请先做执行确认”），再没有才是“消息”；不凭语气猜。你的消息不折叠 |
+| 页首、气泡与右栏 | 对同一件事用同一句话：空闲写“空闲 · 已 X”；做任务写“正在做任务「…」（Leader 派发）”；回复你的消息写“正在回复你的消息”（回复 Leader 的写“正在回复 Leader 的消息”）；暂停写“已暂停（原因）”，原因来自模型服务的暂停记录（鉴权失败、额度不足或欠费），读不到原因只写“已暂停”。Run 起的一轮一律写“Leader 派发”，记录里没有“人发起还是 Leader 发起”的区分，不写“你派发” |
+| 不在这里 | 时间线里的业务节点与每轮改动统计、工具调用内容、历史分页、输入框，以及右栏结构 |
+
 **目标体验：像用 Claude Code 一样用 Session**
 
 随时知道 Agent 在做什么、做到哪一步，发消息也一样顺手。参考是用户提供的两段录屏：Claude Code 桌面版（工作流、待办清单、输入框、右栏环境与产出）和一个 Bot 应用（提问卡、右栏实体卡、单行实时状态）。
@@ -163,6 +178,7 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 | 外壳 | `app/shell/AppShell.tsx` | `shell.test.ts`、`shell-browser.test.ts`（切换空间后保留各空间的地址与智能体目录搜索）、`session-directory-groups-browser.test.ts` |
 | 智能体目录（内层栏） | `features/sessions/SessionNavigation.tsx`（新目录）、`features/sessions/sessionDirectoryPresentation.ts`、`features/sessions/useSessionDirectoryGroup.ts` | `session-directory-presentation.test.ts`、`session-directory-groups.test.ts`、`session-directory-groups-browser.test.ts` |
 | 智能体详情 | `features/sessions/SessionWorkspace.tsx`（页首、右栏；执行队列由 `app/App.tsx` 传入 `features/workflow` 的面板）、`features/sessions/sessionWorkPresentation.ts`（正在做与接下来的判定与用语）、`features/sessions/RuntimeEnvironmentCard.tsx`（运行环境卡片）、`features/sessions/environmentPresentation.ts`（环境与用量的三种状态）、`features/sessions/SessionTimeline.tsx`（对话流）、`features/sessions/readingScopePresentation.ts` 与 `features/sessions/SourceLimitations.tsx`（读取限制的中文与原文）、`shared/agentNamePresentation.ts`（没登记名称时怎样称呼）、`features/sessions/conversationPresentation.ts`（工具、计划、状态行与每轮小结的用语）、`features/sessions/workspaceTimelineModel.ts`、`features/sessions/NativeSessionPanel.tsx`、`features/sessions/SessionModelControl.tsx`、`features/sessions/SessionClosePanel.tsx` | `session-work-presentation.test.ts`、`session-rail-browser.test.ts`（三类智能体在 1440 与 390 宽的首屏、溢出、队伍读取失败）、`session-wording-presentation.test.ts`、`agent-name-presentation.test.ts`、`session-external-wording-browser.test.ts`（`EVOLOOP_AGENT_WORDING_SCREENSHOT_DIR`）、`session-workspace-redesign-browser.test.ts`、`session-timeline-browser.test.ts`、`session-workspace-timeline-model.test.ts`、`session-conversation-presentation.test.ts`、`session-native-input-browser.test.ts`、`session-native-progress-browser.test.ts`、`session-close-entry-browser.test.ts`、`session-activity-narrow-browser.test.ts`、`task-session-return-browser.test.ts` |
+| 对话时间线（一轮工作） | `features/sessions/timelineRounds.ts`（把原生条目、保存消息和消息记录合成按时间排的“轮”，来源、折叠与分组规则）、`features/sessions/useMessageFacts.ts`（读消息记录的发送者、发送与开始时间、回复预览）、`features/sessions/roundPresentation.ts`、`features/sessions/RoundTimes.tsx`、`features/sessions/CoordinationLine.tsx`（折叠的一行与分组）、`features/sessions/SessionTimeline.tsx`（渲染与落点） | `timeline-rounds.test.ts`、`session-timeline-browser.test.ts`、`session-rounds-ci-browser.test.ts`（落在最后一次回复、折叠与分组、时间、来源与状态用语） |
 | 上下文与用量 | `features/sessions/UsageBudgetPanel.tsx`（上下文与用量卡片）、`features/sessions/usagePresentation.ts`（进度、今日、项目上限提醒） | `usage-presentation.test.ts`、`usage-budget-panel.test.ts`、`usage-today-large-browser.test.ts`（今日四格与统筹安排的项目用量在十亿量级下两种宽度可读，单位与完整值都在；无记录与记录为 0 的区别）、`runtime-environment-presentation.test.ts`（运行环境主行与上下文、今日、提醒的说法） |
 | 输入框 | `features/sessions/SessionComposer.tsx`（待办、排队、`/`、`@`、停止）、`features/sessions/queuedMessagePresentation.ts`（排队项的中文摘要、授权受阻提示）、`packages/ui` 的 `QueuedMessages`（限高与折叠）、`features/sessions/composerPresentation.ts`（Enter 与 Cmd/Ctrl+Enter 做什么）、`features/sessions/useDirectInput.tsx`（即时输入与回执）、`features/sessions/sessionCommand.ts` | `session-grant-blocked-browser.test.ts`（授权受阻的消息可见且页面可用）、`session-queue-area-browser.test.ts`（12 条排队时 1195 与 390 宽：时间线可滚、输入框在屏内、折叠展开、摘要与原文、撤回；无排队不变）、`queued-message-summary.test.ts`、`session-composer-browser.test.ts`（三个宽度，`EVOLOOP_AGENT_SCREENSHOT_DIR` 存截图）、`session-direct-input-layout-browser.test.ts`、`session-message-entry-browser.test.ts`、`session-conversation-presentation.test.ts`、`leader-insert-queue-browser.test.ts`（统筹页面两个发送按钮与结果，1440 与 390 宽） |
 | 统筹安排 | `features/sessions/ArrangementPage.tsx`（页面与右栏）、`features/sessions/ProjectUsageSection.tsx`（项目用量块）、`features/sessions/arrangementModel.ts`（看板、空闲与风险规则，含分派属于旧修订）、`features/sessions/arrangementPresentation.ts`（读取状态、页首空闲数与看板阶段用语；按阶段的下一步与总览共用，在 `shared/workPresentation.ts`） | `arrangement-model.test.ts`、`arrangement-presentation.test.ts`、`usage-budget-panel.test.ts`（项目用量块）、`work-presentation.test.ts`、`arrangement-browser.test.ts`、`cross-space-return-browser.test.ts` |
