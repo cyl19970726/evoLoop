@@ -196,7 +196,8 @@ test("two coordinators on one machine credential: reproduction, then explicit co
     const reads: number[] = [];
     for (let n = 0; n < 24; n++) { reads.push(await readThroughHub()); await wait(50); }
     assert.deepEqual([...new Set(reads)], [200], "every read through the Hub reaches the first coordinator");
-    assert.equal(first.state, "online"); assert.equal(second.state, "conflict");
+    // The refused process asks again every few hundred ms and is "connecting" while that request is in flight, "conflict" while it waits: either is a refusal in progress. What must never be is online.
+    assert.equal(first.state, "online"); assert.ok(second.state === "conflict" || second.state === "connecting", `the refused process is not admitted (state ${second.state})`);
     assert.equal(eventsOf("replaced_stale").length + eventsOf("reattached_same_process").length, 0, "the first connection was never replaced");
     assert.equal(eventsOf("attached").length, attachedBefore, "no new connection was admitted");
     assert.ok(eventsOf("conflict").length >= 2);
