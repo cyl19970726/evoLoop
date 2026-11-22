@@ -25,5 +25,5 @@ export function sentStartedText({ sent, started }: SentStarted): string {
 
 /** The one-line label of a Run's round: who dispatched it and for which Task. */
 export function runSourceLabel(by: "me" | "leader", title: string | null): string {
-  return `${by === "me" ? "你派发" : "统筹派发"} · 任务「${title || "标题待核对"}」`;
+  return `${by === "me" ? "你派发" : "Leader 派发"} · 任务「${title || "标题待核对"}」`;
 }

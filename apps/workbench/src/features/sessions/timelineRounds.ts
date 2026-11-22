@@ -70,7 +70,7 @@ export function isCoordinationText(body: string): boolean {
   return body.startsWith("Session 队伍轮到任务「") || body.startsWith("Session 队伍排到了") || queuedMessageSummary(body).label !== null;
 }
 
-const classLabels: Record<string, string> = { user: "使用者", leader: "统筹", requirements: "需求 Session", session: "其他智能体", system: "系统", hub: "经 Hub 的身份", service: "Hub 服务身份" };
+const classLabels: Record<string, string> = { user: "使用者", leader: "Leader", requirements: "需求 Session", session: "其他智能体", system: "系统", hub: "经 Hub 的身份", service: "Hub 服务身份" };
 /** The short name the page gives a message's sender class (the full wording stays in 消息详情). */
 export function shortClassLabel(senderClass: string | null | undefined): string | null {
   return senderClass ? classLabels[senderClass] ?? null : null;
@@ -80,11 +80,11 @@ function classify(input: WorkspaceEntry | null, fact: MessageFact | null, me: st
   const actor = fact?.senderActorId ?? (input?.author.kind === "actor" ? input.author.id : null);
   if (actor !== null && actor === me) return { from: "me", classLabel: null };
   const senderClass = fact?.senderClass ?? null;
-  if (senderClass === "leader") return { from: "leader", classLabel: "统筹" };
+  if (senderClass === "leader") return { from: "leader", classLabel: "Leader" };
   if (senderClass) return { from: "other", classLabel: shortClassLabel(senderClass) };
   // No class was read for this message: only the Leader's own protocol texts are taken as Leader's, anything else stays unclassified.
   const body = fact?.content ?? (input && input.kind === "message" ? input.body : "");
-  if (isCoordinationText(body)) return { from: "leader", classLabel: "统筹" };
+  if (isCoordinationText(body)) return { from: "leader", classLabel: "Leader" };
   return { from: "unknown", classLabel: null };
 }
 
@@ -212,7 +212,7 @@ export function coordinationSummary(round: Round, titleOf: (taskId: string) => s
   const body = round.fact?.content ?? (round.input && round.input.kind === "message" ? round.input.body : "");
   const first = body.split("\n")[0]?.trim() ?? "";
   const kind = queuedMessageSummary(body);
-  const type = first.startsWith("Session 队伍轮到任务「") ? "执行确认请求" : first.startsWith("Session 队伍排到了") ? "派发通知" : kind.label ?? "统筹消息";
+  const type = first.startsWith("Session 队伍轮到任务「") ? "执行确认请求" : first.startsWith("Session 队伍排到了") ? "派发通知" : kind.label ?? "Leader 消息";
   const named = /^Session 队伍(?:轮到任务「|排到了：按固定 Task 修订 \S+ 执行「)([^」]+)」/.exec(first)?.[1] ?? null;
   const taskId = round.taskId ?? kind.taskId;
   const title = (taskId ? titleOf(taskId) : null) ?? named ?? (kind.label ? "" : shorten(first, 40));

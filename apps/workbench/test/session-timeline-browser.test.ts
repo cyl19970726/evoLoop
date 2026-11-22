@@ -1007,7 +1007,7 @@ test("revocation invalidates a held homepage, inspector and cache until an expli
   assert.equal(await dispatch.count(), 1, "a Run input remains project dispatch even when the initiating actor is the current reader");
   assert.equal(await dispatch.getAttribute("data-turn-id"), "dispatch-turn");
   assert.equal(await dispatch.locator(".lucide-user-round").count(), 0, "project dispatch does not use the personal chat avatar");
-  assert.match(await dispatch.innerText(), /统筹派发 · 任务「/);
+  assert.match(await dispatch.innerText(), /Leader 派发 · 任务「/);
   assert.ok((await dispatch.getByRole("link", { name: "查看任务与指令" }).getAttribute("href"))?.includes(taskId));
   assert.equal(await page.getByRole("article", { name: "我发出的消息", exact: true }).count(), 1, "only the ordinary saved message is mine");
   await page.locator(".workspace-tools-toggle").click();
