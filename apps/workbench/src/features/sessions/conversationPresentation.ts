@@ -25,6 +25,9 @@ export const isFailedEntry = (entry: { state: WorkspaceState }) => failedStates.
 const toolNames: Record<string, string> = {
   Command: "执行命令", "Read file": "读取文件", "List files": "列出文件", Search: "搜索", "Web search": "网页搜索",
   "File change": "修改文件", "Agent collaboration": "智能体协作", "Tool result": "工具结果", Tool: "工具",
+  // The names Claude's own tools carry.
+  Bash: "执行命令", Read: "读取文件", Glob: "列出文件", Grep: "搜索", Edit: "修改文件", Write: "写入文件", MultiEdit: "修改文件", NotebookEdit: "修改笔记本",
+  WebSearch: "网页搜索", WebFetch: "读取网页", TodoWrite: "更新待办",
 };
 /** A tool's name in Chinese; names the native source does not translate (an MCP server/tool) stay as they are. */
 export function toolLabel(name: string): string {
@@ -53,18 +56,18 @@ export function toolStepText(entry: Pick<WorkspaceTool, "name" | "summary" | "na
 
 type ToolKind = "command" | "read" | "list" | "search" | "change" | "web" | "other";
 function toolKind(entry: Pick<WorkspaceTool, "name" | "nativeKind">): ToolKind {
-  if (entry.name === "Read file") return "read";
-  if (entry.name === "List files") return "list";
-  if (entry.name === "Search") return "search";
-  if (entry.nativeKind === "fileChange" || entry.name === "File change") return "change";
-  if (entry.nativeKind === "webSearch" || entry.name === "Web search") return "web";
-  if (entry.nativeKind === "commandExecution" || entry.name === "Command") return "command";
+  if (entry.name === "Read file" || entry.name === "Read") return "read";
+  if (entry.name === "List files" || entry.name === "Glob") return "list";
+  if (entry.name === "Search" || entry.name === "Grep") return "search";
+  if (entry.nativeKind === "fileChange" || entry.name === "File change" || ["Edit", "Write", "MultiEdit", "NotebookEdit"].includes(entry.name)) return "change";
+  if (entry.nativeKind === "webSearch" || entry.name === "Web search" || entry.name === "WebSearch" || entry.name === "WebFetch") return "web";
+  if (entry.nativeKind === "commandExecution" || entry.name === "Command" || entry.name === "Bash") return "command";
   return "other";
 }
 const kindPhrase: Record<ToolKind, (count: number) => string> = {
   command: count => `执行了 ${count} 个指令`, read: count => `读了 ${count} 个文件`, list: count => `列出 ${count} 次目录`,
   search: count => `搜索 ${count} 次`, change: count => `改了 ${count} 处文件`, web: count => `网页搜索 ${count} 次`,
-  other: count => `调用 ${count} 次其他工具`,
+  other: count => `用了 ${count} 个别的工具`,
 };
 
 /** The one muted line a folded tool group shows, for example 执行了 5 个指令、读了 3 个文件. */
@@ -126,7 +129,7 @@ export function pinnedToolIds(entries: readonly Pick<WorkspaceTool, "id" | "stat
 
 const noticeLabels: Record<string, string> = {
   Plan: "执行计划", Image: "图片", "Image generation": "生成图片", "Subagent activity": "子智能体活动", Wait: "等待",
-  "Context compacted": "上下文已压缩", "Review started": "开始审查", "Review ended": "审查结束", "Unsupported native item": "暂不支持显示的原生条目",
+  "未核对的原生输入": "这条输入的来源还在核对", "Context compacted": "上下文已压缩", "Review started": "开始审查", "Review ended": "审查结束", "Unsupported native item": "暂不支持显示的原生条目",
 };
 /** A record's heading (a plan, a notice from the native source) in Chinese. */
 export function recordLabel(label: string): string {

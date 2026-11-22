@@ -131,7 +131,7 @@ test("external agents are named without the short identifier, same-role ones sta
   assert.deepEqual(recoveryReads, [], "an external agent's recovery is never read");
 
   // 消息怎样处理与读取范围: Chinese lines, the English originals folded under 原文.
-  const scope = page.locator(".workspace-reading-scope");
+  const scope = page.locator(".workspace-reading-limits");
   await scope.locator("summary").first().click();
   await scope.getByText("这个智能体的来源不提供原有历史，这里只显示经 evoLoop 保存的消息。", { exact: true }).waitFor();
   await scope.getByText("人工转交的记录只说明消息已保存，不能证明原聊天已收到或已读。", { exact: true }).waitFor();

@@ -25,7 +25,6 @@ import { readingProse } from "../../shared/ui/readingProse";
 import { sessionClient } from "../../shared/sessionClient";
 import { agentDisplayName } from "../../shared/agentNamePresentation";
 import { useProjectQuery } from "../../shared/query";
-import { sessionMessageEntry } from "./sessionMessageEntry";
 import { useSessionTimeline } from "./useSessionTimeline";
 import { ActorIdentifiers } from "../../shared/ui/ActorIdentifiers";
 import { settleEndedTools, workspaceReadingGroups } from "./workspaceTimelineModel";
@@ -208,11 +207,12 @@ function TimelineEntry({ item, context, title, sessionKey, target, identity, tas
   const messageId = item.origin?.kind === "message" ? item.origin.id : null;
   const heading = item.kind === "message" ? null : item.kind === "tool" ? toolLabel(item.name) : item.kind === "reasoning" ? "思考过程" : recordLabel(item.label);
   const expandedBody = item.kind === "message" && fullText && item.state !== "running" && fullText.body.startsWith(item.body) ? fullText : null;
-  const body = expandedBody?.body ?? (item.kind === "tool" ? toolStepText(item) : item.body);
+  const uncheckedInput = item.kind === "notice" && item.nativeKind === "userMessage" && item.label === "未核对的原生输入";
+  const body = expandedBody?.body ?? (uncheckedInput ? "这条输入的来源还在核对，展开可核对；这不表示来源不明。" : item.kind === "tool" ? toolStepText(item) : item.body);
   const runHref = item.origin?.kind === "run" && item.origin.taskId ? `${taskHref(item.origin.taskId)}${taskHref(item.origin.taskId).includes("?") ? "&" : "?"}run=${encodeURIComponent(item.origin.id)}` : null;
-  const failedInput = item.kind === "message" && item.role === "input" && ["failed", "unknown", "interrupted", "declined"].includes(item.state);
+  const failedInput = item.kind === "message" && item.role === "input" && ["failed", "unknown", "interrupted"].includes(item.state);
   const stateTag = item.kind === "message" && item.role === "input" && ["pending", "running", "failed", "unknown", "interrupted", "declined"].includes(item.state)
-    ? <span className={cn("workspace-input-state rounded-full px-2 py-px text-caption", failedInput ? "bg-danger-soft text-destructive" : "bg-field text-text-secondary")}>{item.state === "pending" ? (item.kind === "message" && grantBlockText(item.blockedReason) !== null ? "受阻：缺少消息授权" : "排队中") : item.state === "running" && mine ? replyingPhrase("me") : entryStateLabel[item.state]}</span> : null;
+    ? <span className={cn("workspace-input-state rounded-full px-2 py-px text-caption", failedInput ? "bg-danger-soft text-destructive" : "bg-field text-text-secondary")}>{item.state === "pending" ? (item.kind === "message" && grantBlockText(item.blockedReason) !== null ? "受阻：缺少消息授权" : "排队中") : item.state === "running" && mine ? replyingPhrase("me") : item.state === "declined" ? "已撤回" : entryStateLabel[item.state]}</span> : null;
   const actions = <>
     {(expandedBody?.truncated ?? item.truncated) && <Button variant="link" className={linkButton} disabled={bodyBusy} onClick={() => void expandBody()}>{bodyBusy ? "读取完整内容中…" : `读取完整${assistant ? "回复" : "内容"}`}</Button>}
     {messageId && <Button variant="link" className={linkButton} onClick={() => onMessage(messageId)}>消息详情</Button>}
@@ -336,16 +336,22 @@ function MessageInspector({ id, context, snapshot, onApplied }: { id: string; co
   </div>;
 }
 
-export function SessionTimeline({ context, snapshot, onApplied, taskHref, titleOf: knownTitleOf, refresh = 0, reauthorizeVersion = 0, progress = null, waitingTurnIds, composerFacts = [], children }: {
+export function SessionTimeline({ context, snapshot, onApplied, taskHref, titleOf: knownTitleOf, refresh = 0, reauthorizeVersion = 0, progress = null, waitingTurnIds, composerFacts = [], holdReason = null, children }: {
   context: MutationContext; snapshot: SessionSnapshot; onApplied(): void; taskHref(taskId: string): string; titleOf?(taskId: string): string | null; refresh?: number; reauthorizeVersion?: number;
-  progress?: NativeProgressView | null; waitingTurnIds?: ReadonlySet<string>; composerFacts?: string[]; children?: ReactNode;
+  progress?: NativeProgressView | null; waitingTurnIds?: ReadonlySet<string>; composerFacts?: string[]; holdReason?: string | null; children?: ReactNode;
 }) {
   const timeline = useSessionTimeline(context.token, context.projectId, context.principal.actorId, snapshot.session.key, refresh, reauthorizeVersion);
-  const capability = sessionMessageEntry(snapshot.session.kind, snapshot.session.capabilities);
   const settledEntries = useMemo(() => settleEndedTools(timeline.entries, timeline.turns), [timeline.entries, timeline.turns]);
   // Message ids the page shows, so the message list is read far enough to tell who sent each and what was answered.
   const wantedMessages = useMemo(() => [...new Set([...settledEntries, ...timeline.pending].flatMap(entry => entry.origin?.kind === "message" ? [entry.origin.id] : []))], [settledEntries, timeline.pending]);
   const activeId = timeline.live?.activeTurnId ?? "";
+  // The reply reached the timeline on the 1.5 s update channel; the receipt and the header read the snapshot. Read it now instead of at its next tick, so the three settle together.
+  const seenActive = useRef(activeId);
+  const settleRead = useRef(onApplied); settleRead.current = onApplied;
+  useEffect(() => {
+    const was = seenActive.current; seenActive.current = activeId;
+    if (was && !activeId) settleRead.current?.();
+  }, [activeId]);
   const facts = useMessageFacts(context.projectId, snapshot.session.key, wantedMessages, timeline.loaded && !timeline.denied, `${settledEntries.length}:${timeline.pending.length}:${timeline.turns.length}:${activeId}`);
   const rounds = useMemo(() => buildRounds(settledEntries, timeline.pending, timeline.turns, { messages: facts.messages, me: context.principal.actorId }),
     [settledEntries, timeline.pending, timeline.turns, facts.messages, context.principal.actorId]);
@@ -457,7 +463,10 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, titleO
   const live = timeline.live?.freshness === "live";
   const currentTool = live && activeTurn ? [...items].reverse().find((entry): entry is WorkspaceTool => entry.kind === "tool" && entry.turnId === activeTurn.id && entry.state === "running") ?? null : null;
   const replying = live && !!activeTurn && items.some(entry => entry.turnId === activeTurn.id && entry.kind === "message" && entry.role === "assistant" && entry.state === "running");
-  const now = useNow(live && !!activeTurn);
+  // Waiting: a message of mine that is saved but not yet being answered, with how long it has waited (the live turn has its own line).
+  const waitingSince = !activeTurn ? items.filter((entry): entry is Extract<WorkspaceEntry, { kind: "message" }> => entry.kind === "message" && entry.role === "input" && entry.state === "pending"
+    && entry.author.kind === "actor" && entry.author.id === context.principal.actorId && !!entry.occurredAt).map(entry => entry.occurredAt!).sort()[0] ?? null : null;
+  const now = useNow(live && !!activeTurn || !!waitingSince);
   const source = activeTurn?.origin;
   const limitations = [...new Set([...(timeline.page?.limitations ?? []), ...(timeline.live?.limitations ?? [])])];
   const mayReadOriginal = timeline.page?.capabilities.originalToolDetail ?? false;
@@ -498,18 +507,13 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, titleO
       {reply && <ReplyRecord key={`reply:${round.key}`} id={`reply:${round.key}`} reply={reply} title={agentDisplayName(snapshot.session)} sessionKey={snapshot.session.key}
         roleSeed={snapshot.session.title} lastReply={`reply:${round.key}` === lastReply} projectId={context.projectId} onFull={() => round.messageId && inspect({ messageId: round.messageId })} />}</Fragment>;
   };
-  const readingScope = <details className="workspace-reading-scope text-caption text-muted-foreground">
-    <summary className="w-fit cursor-pointer hover:text-foreground">消息怎样处理与读取范围</summary>
-    <div className="mt-1.5 flex flex-col gap-1">
-      <p>{capability.introduction}</p>
-      <p>自动处理：{capability.executionLabel}。{capability.executionReason}</p>
-      {capability.budgetLabel && <p>{capability.budgetLabel}。账户额度与此累计次数分开。</p>}
-      {capability.executionObservedAt && <p>执行状态读于 {date(capability.executionObservedAt)}；配置变化后请点上方“重新读取”。</p>}
-      <p>{timeline.page?.capabilities.history ? "历史按来源分页读取。" : "这个智能体的原有历史暂不可读取。"}{live ? "实时活动来自现有连接。" : "当前没有可确认的实时连接。"}</p>
-      {timeline.page && <p>读取于 {date(timeline.page.observedAt)}{timeline.page.partial && " · 来源仅展示已读范围"}</p>}
-      <SourceLimitations items={limitations} />
-    </div>
-  </details>;
+  // The limits of this read are said where they matter: only when there is one. (The standing “消息怎样处理与读取范围” block is gone.)
+  const readingLimits = limitations.length > 0 || timeline.page?.partial ? <details className="workspace-reading-limits text-caption text-muted-foreground">
+    <summary className="w-fit cursor-pointer hover:text-foreground">这次读取有限制{timeline.page?.partial ? "，只显示了已读到的部分" : ""}</summary>
+    <div className="mt-1.5 flex flex-col gap-1"><SourceLimitations items={limitations} /></div>
+  </details> : null;
+  const routing = { held: holdReason, replying: source?.kind === "message",
+    taskTitle: source?.kind === "run" && source.taskId && snapshot.currentWork?.id === source.taskId ? snapshot.currentWork.title : null };
   return <section className="session-conversation unified-session-timeline flex min-h-0 flex-1 flex-col gap-2 overflow-hidden" aria-label="活动与对话">
     {snapshot.session.kind === "external" && <p className="flex items-center gap-1.5 text-caption text-muted-foreground"><Info size={13} aria-hidden="true" />外部智能体 · 这里只显示已同步的内容，消息保存后需人工转交。</p>}
     {timeline.error && <Notice tone="error" action={<Button size="compact" onClick={timeline.reread}>重新读取活动</Button>}>活动暂不可读取：{timeline.error}
@@ -536,11 +540,14 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, titleO
           {source?.taskId && <a className="text-primary hover:underline" href={taskHref(source.taskId)}>{snapshot.currentWork?.id === source.taskId ? `任务「${snapshot.currentWork.title}」` : "查看关联任务"}</a>}
         </LiveStatusLine>
         : <p className="workspace-turn-state stale text-label text-muted-foreground" role="status">上次读回时这一轮在进行，当前连接状态待核对。</p>)}
+      {waitingSince && !timeline.denied && <LiveStatusLine className="workspace-turn-state" avatar={<AgentAvatar seed={snapshot.session.key} roleSeed={snapshot.session.title} size={20} />}
+        text="等它开始处理你的消息" elapsed={elapsedText(waitingSince, now) ?? undefined} />}
       {!timeline.denied && children}
     </div>
-    {!nearBottom && items.length > 0 && <Button size="compact" className="absolute bottom-3 left-1/2 z-10 h-auto -translate-x-1/2 gap-1.5 bg-raised px-3 py-1.5 text-caption font-normal shadow-md hover:bg-selected" onClick={() => { if (scroll.current) scroll.current.scrollTo({ top: scroll.current.scrollHeight, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }); follow.current = true; setNearBottom(true); }}><ArrowDown size={15} aria-hidden="true" />回到最新内容</Button>}
     </div>
-    <SessionComposer context={context} snapshot={snapshot} entries={items} activeTurn={activeTurn} live={live} progress={progress} facts={composerFacts} readingScope={readingScope} onApplied={applied} />
+    {!nearBottom && items.length > 0 && <Button size="compact" className="h-auto shrink-0 gap-1.5 self-center bg-raised px-3 py-1 text-caption font-normal hover:bg-selected" onClick={() => { if (scroll.current) scroll.current.scrollTo({ top: scroll.current.scrollHeight, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }); follow.current = true; setNearBottom(true); }}><ArrowDown size={15} aria-hidden="true" />回到最新内容</Button>}
+    {readingLimits}
+    <SessionComposer context={context} snapshot={snapshot} entries={items} activeTurn={activeTurn} live={live} progress={progress} facts={composerFacts} routing={routing} onApplied={applied} />
     <Dialog open={inspector !== null && !timeline.denied} onOpenChange={open => { if (!open) setInspector(null); }}>
       <DialogContent className="workspace-inspector max-h-[85dvh] w-[min(640px,calc(100vw-32px))] overflow-y-auto" aria-describedby="workspace-inspector-description" onCloseAutoFocus={event => { const trigger = inspectorTrigger.current; if (trigger?.isConnected && trigger.getClientRects().length) { event.preventDefault(); trigger.focus({ preventScroll: true }); } inspectorTrigger.current = null; }}>
         <DialogTitle>活动详情</DialogTitle>

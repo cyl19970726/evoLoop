@@ -125,7 +125,7 @@ test("native question stays bound to its Session and one exact operation, then d
   await fetch(`${base}/__fixture/set?state=resolved`);
   await page.getByRole("button", { name: "重新读取" }).click();
   await question.waitFor({ state: "detached" });
-  await page.getByRole("button", { name: "会话详情" }).click();
+  { const details = page.getByRole("button", { name: "会话详情" }); if (await details.getAttribute("aria-expanded") !== "true") await details.click(); const info = page.locator(".session-information").first(); if (await info.getAttribute("open") === null) await info.locator(":scope > summary").click(); }   // one switch for the right column: press it only when closed
   await page.getByText("已结束的原生提问").waitFor();
   assert.equal(await question.count(), 0, "closed question leaves the active area");
   await page.keyboard.press("Escape"); // close the right drawer

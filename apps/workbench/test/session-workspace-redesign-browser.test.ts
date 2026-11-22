@@ -209,12 +209,21 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   await sidebar.getByRole("link").filter({ hasText: "测试 Session" }).first().click();
   await page.getByRole("heading", { name: /测试 Session/ }).waitFor();
   // The saved colour mark sits beside the name in the right column; the header shows the role avatar.
-  if (await page.getByRole("button", { name: "展开右栏" }).count()) await page.getByRole("button", { name: "展开右栏" }).click();
+  // The switch reads what is on screen, and one press changes it (the 1440 default-open case is asserted in session-rail-browser).
+  {
+    const sw = page.getByRole("button", { name: "会话详情" }), column = page.locator(".session-panel").first();
+    const shown = await column.isVisible();
+    assert.equal(await sw.getAttribute("aria-expanded"), String(shown), "the switch reads the column's real state");
+    await sw.click();
+    await column.waitFor({ state: shown ? "hidden" : "visible" });
+    assert.equal(await sw.getAttribute("aria-expanded"), String(!shown), "one press flips both the screen and the reading");
+  }
+  { const details = page.getByRole("button", { name: "会话详情" }); if (await details.getAttribute("aria-expanded") !== "true") await details.click(); const info = page.locator(".session-information").first(); if (await info.getAttribute("open") === null) await info.locator(":scope > summary").click(); }
   await page.locator(".session-panel section[aria-label=智能体] .session-identity-violet").waitFor();
   // 标识设置 is a rarely used setting: it lives in 详情与来源, out of the right column's first screen.
   const information = page.locator(".session-information");
   assert.equal(await page.locator(".session-panel > .session-identity-settings, .session-panel > div > .session-identity-settings").count(), 0);
-  await information.locator(":scope > summary").click();
+  if (await information.getAttribute("open") === null) await information.locator(":scope > summary").click();
   const identitySettings = page.locator(".session-identity-settings");
   await identitySettings.locator("summary").first().click();
   await identitySettings.locator("summary", { hasText: "调整颜色与图标" }).click();
@@ -234,7 +243,7 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   await page.reload();
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
-  if (await page.getByRole("button", { name: "展开右栏" }).count()) await page.getByRole("button", { name: "展开右栏" }).click();
+  { const details = page.getByRole("button", { name: "会话详情" }); if (await details.getAttribute("aria-expanded") !== "true") await details.click(); const info = page.locator(".session-information").first(); if (await info.getAttribute("open") === null) await info.locator(":scope > summary").click(); }
   await page.locator(".session-panel section[aria-label=智能体] .session-identity-teal").waitFor();
   assert.match(await page.locator(".session-panel section[aria-label=智能体] .session-identity-teal").getAttribute("aria-label") ?? "",
     /测试 Session.*青蓝色.*方格/, "the mark gives screen readers both stable identity properties");
@@ -277,7 +286,7 @@ test("Sessions is the sole directory and renders conversation, source, reply and
       value: async value => { window.fixtureClipboardWrites.push(value); return writeText(value); } });
     document.addEventListener("copy", () => { window.fixtureCopyEvents += 1; });
   })()`);
-  await page.getByRole("button", { name: "会话详情" }).click();
+  { const details = page.getByRole("button", { name: "会话详情" }); if (await details.getAttribute("aria-expanded") !== "true") await details.click(); const info = page.locator(".session-information").first(); if (await info.getAttribute("open") === null) await info.locator(":scope > summary").click(); }   // one switch for the right column: press it only when closed
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), clipboardSentinel,
     "opening Session details leaves the system clipboard unchanged");
   assert.deepEqual(await page.evaluate(() => (window as Window & { fixtureClipboardWrites: string[] }).fixtureClipboardWrites), [],
@@ -286,6 +295,15 @@ test("Sessions is the sole directory and renders conversation, source, reply and
     "opening Session details does not fire a copy event");
   const informationPanel = page.locator(".session-information");
   assert.equal(await informationPanel.evaluate(element => (element as HTMLDetailsElement).open), true);
+  // 会话详情 is the one switch for the right column: its state is what is on screen, and pressing it changes the screen.
+  const detailsSwitch = page.getByRole("button", { name: "会话详情" });
+  assert.equal(await detailsSwitch.getAttribute("aria-expanded"), "true", "open on screen reads as expanded");
+  await detailsSwitch.click();
+  await informationPanel.waitFor({ state: "hidden" });
+  assert.equal(await detailsSwitch.getAttribute("aria-expanded"), "false", "closed on screen reads as collapsed");
+  await detailsSwitch.click();
+  await informationPanel.waitFor({ state: "visible" });
+  assert.equal(await detailsSwitch.getAttribute("aria-expanded"), "true");
   assert.equal(await informationPanel.locator(".session-project-activity").count(), 1,
     "project audit remains reachable inside Session details");
   assert.equal(await page.locator(".unified-session-timeline:visible").count(), 1, "details open in the right column beside the conversation, which stays in place");
@@ -297,10 +315,10 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   assert.equal(await deepLinkPage.locator(".session-information").evaluate(element => (element as HTMLDetailsElement).open), true,
     "an audit deep link restores the Session details panel");
   await deepLinkPage.close();
-  await page.getByRole("button", { name: "会话详情" }).click();
+  { const details = page.getByRole("button", { name: "会话详情" }); if (await details.getAttribute("aria-expanded") !== "true") await details.click(); const info = page.locator(".session-information").first(); if (await info.getAttribute("open") === null) await info.locator(":scope > summary").click(); }   // one switch for the right column: press it only when closed
   await page.getByRole("combobox", { name: "消息" }).fill("键盘发送");
   await page.getByRole("combobox", { name: "消息" }).press("Control+Enter");
-  await page.getByText("已保存，正在读取持久记录。", { exact: true }).waitFor();
+  await page.locator("[data-receipt-phase]").waitFor();   // the one receipt line; the applied outcome is no longer a second line
   const postedMessage = posted.find(command => command.type === "session.message.post");
   assert.equal(posted.filter(command => command.type === "session.message.post").length, 1);
   assert.deepEqual(postedMessage?.context, { taskId, taskRevisionId: currentTask.revisionId });
@@ -317,7 +335,8 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   await page.setViewportSize({ width: 390, height: 840 });
   assert.equal(await page.locator("body").evaluate(element => element.scrollWidth <= innerWidth), true);
   // Below 1100px the right column is a drawer; its contents (and this half-filled editor) keep their state.
-  await page.getByRole("button", { name: "展开右栏" }).click();
+  await page.waitForFunction(() => document.querySelector("button[aria-controls=session-information-panel]")?.getAttribute("aria-expanded") === "false");   // the switch follows the screen: the drawer starts closed
+  { const details = page.getByRole("button", { name: "会话详情" }); if (await details.getAttribute("aria-expanded") !== "true") await details.click(); const info = page.locator(".session-information").first(); if (await info.getAttribute("open") === null) await info.locator(":scope > summary").click(); }
   if (process.env.EVOLOOP_CAPTURE_MODEL_CONTROL) await page.screenshot({
     path: `${process.env.EVOLOOP_CAPTURE_MODEL_CONTROL}-narrow.png`, fullPage: true });
   assert.equal(await editor.getByLabel("思考强度").inputValue(), "max", "the editor keeps its choice when the column becomes a drawer");
