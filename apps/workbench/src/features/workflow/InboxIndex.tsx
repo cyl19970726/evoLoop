@@ -13,7 +13,8 @@ import { errorText } from "../../shared/api";
 import type { MutationContext } from "../../shared/ActionForm";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { PageSection, mutedText } from "../../shared/ui/PageParts";
-import { useTaskName } from "../../shared/ui/RecordName";
+import { SessionName, useTaskName } from "../../shared/ui/RecordName";
+import { holdFacts, holdIdentifiers, holdSummary, type HoldSummary } from "../../shared/providerHoldPresentation";
 import { date } from "../../shared/ui/shared";
 import { nameOnly } from "../../shared/workPresentation";
 import { decisionKindText, decisionLink, decisionLinkProblem, deliveryLink, inboxTaskLink, lastUseText, useRequirementText, type DeliveryForMe } from "./inboxModel";
@@ -37,46 +38,47 @@ function ReadState<T>({ read, what }: { read: Read<T>; what: string }): ReactNod
 
 const countText = (read: Read<unknown>, count: number | undefined) => read.data !== undefined ? `${count ?? 0} 项` : read.error ? "暂不可读取" : "正在读取";
 
+/** One category of 待我处理: whether it is settled empty (read, whole and nothing in it), and how it is shown. */
+interface InboxCategory { key: string; label: string; empty: boolean; node: ReactNode }
+const settledEmpty = (read: Read<unknown>, count: number | undefined, whole = true) => read.data !== undefined && !read.error && whole && count === 0;
+
 export function InboxIndex({ context }: { context: MutationContext; refresh: number }) {
   const { projectId } = context;
   const actorId = context.principal.actorId;
-  const { acceptance: mine, impacts, deliveries, decisions, alerts } = useInboxReads(projectId, actorId);
+  const { acceptance: mine, impacts, deliveries, decisions, alerts, holds } = useInboxReads(projectId, actorId);
   const acceptance = mine.data?.items;
   const pending = impacts.data?.filter(item => item.state === "pending");
   const reading = mine.isFetching || impacts.isFetching || deliveries.isFetching || decisions.isFetching;
   const decide = decisions.data?.items;
-  return <div data-ui="" className="mx-auto flex w-full max-w-[880px] flex-col gap-6 px-4 py-5 compact:px-8 compact:py-7" data-inbox="">
-    <header className="flex flex-wrap items-start justify-between gap-3">
-      <div className="min-w-0">
-        <h1 tabIndex={-1} className="text-title font-semibold text-foreground outline-none">待我验收与判断</h1>
-        <p className="mt-1 text-small text-text-secondary">分配给我的验收安排、等我使用的交付和待复核的依据变化。每项打开它的任务，在那里核对并决定下一步。</p>
-      </div>
-      <Button variant="ghost" disabled={reading} onClick={context.onChanged}><RefreshCw aria-hidden="true" className={reading ? "animate-spin" : undefined} />重新读取</Button>
-    </header>
-    <PageSection title="待我验收" action={<span className={mutedText}>{countText(mine, acceptance?.length)}</span>}
+  const held = holdSummary(holds.data);
+  // A category with something in it comes first; one not read yet or whose read failed stays as it is (a failed read never says "nothing");
+  // a category read and empty folds into one line below.
+  const categories: InboxCategory[] = [
+    { key: "runtime", label: "只有你能办的运行问题", empty: settledEmpty(holds, held ? 1 : 0), node: <RuntimeProblems key="runtime" projectId={projectId} read={holds} summary={held} /> },
+    { key: "acceptance", label: "待我验收", empty: settledEmpty(mine, acceptance?.length), node: <PageSection key="acceptance" title="待我验收" action={<span className={mutedText}>{countText(mine, acceptance?.length)}</span>}
       description="读过没有、用得怎样，由验收人本人记录：在命令行里记，或在任务的“交付与使用”里记录使用。这里只列出安排与当前进度。">
       <ReadState read={mine} what="待验收事项" />
       {acceptance?.length === 0 && <p className="text-small text-text-secondary">当前没有分配给我的验收事项。</p>}
       {!!acceptance?.length && <ul aria-label="待我验收" className="flex flex-col">{acceptance.map(item => <li key={item.relayId}><AcceptanceRow projectId={projectId} actorId={actorId} item={item} /></li>)}</ul>}
-    </PageSection>
-    <PageSection title="等我使用的交付" action={<span className={mutedText}>{deliveryCountText(deliveries)}</span>}
+    </PageSection> },
+    { key: "deliveries", label: "等我使用的交付", empty: settledEmpty(deliveries, deliveries.data?.items.length, deliveries.data?.complete), node: <PageSection key="deliveries" title="等我使用的交付" action={<span className={mutedText}>{deliveryCountText(deliveries)}</span>}
       description="任务声明你是这次交付的使用者，你还没有记录“已使用”。打开任务的“交付与使用”读成果，并记录用过的版本和结果。你记过“使用失败”的交付由执行者返工，不在这里列出。">
       <ReadState read={deliveries} what="等我使用的交付" />
       <DeliveryList projectId={projectId} actorId={actorId} value={deliveries.data} />
-    </PageSection>
-    <PageSection title="待我决定" action={<span className={mutedText}>{countText(decisions, decide?.length)}</span>}
+    </PageSection> },
+    { key: "decisions", label: "待我决定", empty: settledEmpty(decisions, decide?.length), node: <PageSection key="decisions" title="待我决定" action={<span className={mutedText}>{countText(decisions, decide?.length)}</span>}
       description="等你决定的事：职责提案、阶段提案、任务讨论里指名问你的问题，以及被明确请你确认的事项。每项写明是什么、谁提的、什么时候；打开它的决定位置，或直接在这里答复，决定后从这里消失。">
       <ReadState read={decisions} what="待我决定" />
       {decide?.length === 0 && <p className="text-small text-text-secondary">当前没有等你决定的事项。</p>}
       {!!decide?.length && <ul aria-label="待我决定" className="flex flex-col">{decide.map(item => <li key={`${item.kind}:${item.id}`}><DecisionRow context={context} item={item} /></li>)}</ul>}
-    </PageSection>
-    <PageSection title="依据变化" action={<span className={mutedText}>{countText(impacts, pending?.length)}</span>}
+    </PageSection> },
+    { key: "impacts", label: "依据变化", empty: settledEmpty(impacts, pending?.length), node: <PageSection key="impacts" title="依据变化" action={<span className={mutedText}>{countText(impacts, pending?.length)}</span>}
       description="任务固定的依据出现新版。在任务的“依据与影响”里决定采用新版还是保留原依据。">
       <ReadState read={impacts} what="依据变化" />
       {pending?.length === 0 && <p className="text-small text-text-secondary">当前没有待复核的依据变化。</p>}
       {!!pending?.length && <ul aria-label="依据变化" className="flex flex-col">{pending.map(item => <li key={item.id}><ImpactRow projectId={projectId} actorId={actorId} item={item} /></li>)}</ul>}
-    </PageSection>
-    <PageSection title="用量与上下文告警" action={<span className={mutedText}>{countText(alerts, alerts.data?.length)}</span>}
+    </PageSection> },
+    { key: "usage", label: "用量与上下文告警", empty: settledEmpty(alerts, alerts.data?.length), node: <PageSection key="usage" title="用量与上下文告警" action={<span className={mutedText}>{countText(alerts, alerts.data?.length)}</span>}
       description="今日预算接近或达到上限，或某个智能体的上下文已满需要交接。这些告警发给你，不发给 Leader；处理方式在“智能体”页的用量与对话里。">
       <ReadState read={alerts} what="用量与上下文告警" />
       {alerts.data?.length === 0 && <p className="text-small text-text-secondary">当前没有用量或上下文告警。</p>}
@@ -86,9 +88,41 @@ export function InboxIndex({ context }: { context: MutationContext; refresh: num
         <p className={mutedText}>{item.text}</p>
         {item.sessionId && <a className="w-fit text-caption text-primary hover:underline" href={`/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${item.sessionId}`)}`}>打开这个智能体</a>}
       </li>)}</ul>}
-    </PageSection>
+    </PageSection> },
+  ];
+  const open = categories.filter(category => !category.empty);
+  const folded = categories.filter(category => category.empty);
+  return <div data-ui="" className="mx-auto flex w-full max-w-[880px] flex-col gap-6 px-4 py-5 compact:px-8 compact:py-7" data-inbox="">
+    <header className="flex flex-wrap items-start justify-between gap-3">
+      <div className="min-w-0">
+        <h1 tabIndex={-1} className="text-title font-semibold text-foreground outline-none">待我验收与判断</h1>
+        <p className="mt-1 text-small text-text-secondary">分配给我的验收安排、等我使用的交付、待复核的依据变化，以及只有你能办的运行问题。每项打开它的任务或会话，在那里核对并决定下一步。</p>
+      </div>
+      <Button variant="ghost" disabled={reading} onClick={context.onChanged}><RefreshCw aria-hidden="true" className={reading ? "animate-spin" : undefined} />重新读取</Button>
+    </header>
+    {open.map(category => category.node)}
+    {folded.length > 0 && <p className="text-small text-text-secondary" data-inbox-empty="">
+      {folded.length === categories.length ? "当前没有等你处理的事：" : "这些类别当前没有事项："}{folded.map(category => category.label).join("、")}。</p>}
     <p className={mutedText}>待办任务在任务表格里按“待办”筛选查看。<a className="ml-1 text-primary hover:underline" href={taskListRoute(projectId, { ...defaultTaskListView, filter: "todo" })}>打开待办任务</a></p>
   </div>;
+}
+
+/**
+ * 只有你能办的运行问题: a provider held for quota or authorization, which no Session can clear. The count the banner above every page states is the
+ * number of rows in the list below (each affected Session once, a Session under two holds not twice); the way to release is told in words.
+ */
+function RuntimeProblems({ projectId, read, summary }: { projectId: string; read: Read<unknown>; summary: HoldSummary | null }) {
+  return <PageSection title="只有你能办的运行问题" action={<span className={mutedText}>{read.data !== undefined ? `${summary?.holds.length ?? 0} 项` : read.error ? "暂不可读取" : "正在读取"}</span>}
+    description="模型服务额度用完或鉴权失败时，受影响的智能体停着，它们自己恢复不了：需要你充值或重新授权，再由复核者一次放行。与每页顶部的“运行受阻”一行指向同一处。">
+    <ReadState read={read} what="运行受阻状态" />
+    {summary && <div data-runtime-problems="" className="flex flex-col gap-2">
+      {summary.holds.map(hold => <p key={hold.id} className="m-0 text-small text-text-secondary">{holdFacts(hold)}</p>)}
+      {summary.sessionIds.length > 0 && <ul aria-label="受影响的智能体" className="flex flex-col">{summary.sessionIds.map(id => <li key={id}>
+        <ListRow href={`/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${id}`)}`} title={<SessionName projectId={projectId} sessionKey={`owned:${id}`} />}
+          meta="受运行受阻影响，停着或有消息排队" trailing={<span className="text-primary">打开这个智能体</span>} /></li>)}</ul>}
+      <FullIdentifiers rows={holdIdentifiers(summary)} />
+    </div>}
+  </PageSection>;
 }
 
 /** 2 项; when not every open task was read, the found ones are a floor, never the whole. */

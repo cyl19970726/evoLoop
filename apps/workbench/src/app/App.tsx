@@ -10,7 +10,8 @@ import { askConfirm, cancelConfirms, confirmHostFailed, currentConfirm, onConfir
 import { addReceipt, hasProjectReceipt, readReceipts, removeReceipt, visibleReceipts as forPrincipal, writeReceipts, type OperationReceipt } from "./recovery";
 import type { CheckedOrigin, OperationItem } from "../features/settings/operationsPresentation";
 import { checkedNoticeText } from "./operationNotice";
-import { providerHoldNotices, providerHoldReadFailure } from "./providerHoldNotice";
+import { providerHoldReadFailure } from "./providerHoldNotice";
+import { useProviderHolds } from "../shared/providerHolds";
 import { clearRecoveryIntents, forgetRecoveryIntent, isSpecialOperation, rememberRecoveryIntent } from "./recoveryIntent";
 
 import { readRoute, href, type Route } from "../shared/ui/shared";
@@ -211,7 +212,7 @@ export function App() {
   const drainRead = useProjectQuery(projectId ?? "", ["instance", "drain"], signal => client.instanceDrain(signal, projectId ?? undefined), { enabled: !!session && !!projectId, refetchInterval: 15_000, retry: false });
   const drain = drainNotice(drainRead.data, iso => new Date(iso).toLocaleString("zh-CN"));
   const projectTitle = projectRead.data?.title ?? "";
-  const holdsRead = useProjectQuery(projectId ?? "", ["provider-holds"], () => client.providerHolds(projectId!), { enabled: !!session && !!projectId, refetchInterval: 30_000 });
+  const holdsRead = useProviderHolds(projectId ?? "", !!session);
   // 待我处理 counts 验收安排, 依据变化 and 等我使用的交付 under the page's own keys; an unknown part is never counted as 0.
   const inbox = useInboxCount(projectId ?? "", session?.principal.actorId ?? "", !!session);
   const projectError = projectRead.error ? errorText(projectRead.error) : "";
@@ -293,7 +294,6 @@ export function App() {
     ...!receiptStorageAvailable ? [{ key: "storage", tone: "error" as const, text: "浏览器未能暂存操作回执。请保留原操作 ID，并在“结果未知的操作”中查询。" }] : [],
     ...operationNotice ? [{ key: "operation", tone: "info" as const, text: operationNotice, detail: operationDetail, ...operationLink ? { link: operationLink } : {},
       button: { label: "关闭", onClick: () => { setOperationNotice(""); setOperationDetail(null); setOperationLink(null); }, quiet: true } }] : [],
-    ...projectId ? providerHoldNotices(holdsRead.data, href(projectId, "sessions")) : [],
     ...projectId && holdsRead.isError ? [providerHoldReadFailure(holdsRead.error, href(projectId, "sessions"))] : [],
     ...hubOfflineNotice((projectRead.data as { machine?: { name: string; online: boolean; state: string } | null } | undefined)?.machine) ? [hubOfflineNotice((projectRead.data as { machine?: { name: string; online: boolean; state: string } | null }).machine)!] : [],
     ...projectError ? [{ key: "project", tone: "error" as const, text: `项目暂不可读取：${projectError}`, button: { label: "重试读取项目", onClick: context.onChanged } }] : [],
@@ -301,7 +301,7 @@ export function App() {
     ...route.section !== "inbox" && inbox.state === "unknown" ? [{ key: "inbox", tone: "waiting" as const, text: inbox.text, link: { href: href(projectId, "inbox"), label: "去待我处理核对" } }] : [],
   ];
   return <>{confirmHost}<Suspense fallback={<p className={opening} role="status">正在打开工作台…</p>}><AppShell route={route} projectId={projectId} projectTitle={projectTitle} actor={principal.actorId} permissions={principal.permissions}
-    receiptCount={projectReceipts.length} inboxCount={shellInboxCount(inbox)} token={token} logout={logout} notices={notices}>
+    receiptCount={projectReceipts.length} inboxCount={shellInboxCount(inbox)} token={token} logout={logout} notices={notices} providerHolds={holdsRead.data}>
     <WorkspacePages key={`${principal.actorId}:${projectId}`} route={route} context={context} refresh={refresh} operations={operationItems} />
   </AppShell></Suspense></>;
 }
