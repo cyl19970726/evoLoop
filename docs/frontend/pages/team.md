@@ -2,26 +2,19 @@
 
 团队页说明每项持续职责的目标、承载它的智能体、运行时与 skill，以及分工讨论与组织复盘。具体实例的对话与活动在 [Sessions](sessions.md)。
 
-## 团队不再是导航分组（Task 34f2a392 起）
-
-“团队”分组取消：职责、运行与接入在导航“运转”组里；统筹安排搬到智能体空间，没有选中智能体时就是该空间的页面；分工讨论、协作回执有记录时才出现在“运转”里；组织复盘变成“文档”页的“复盘”筛选。下面两个入口是 Task 0f8c7a15 的划分，页面和内容未变。
-
 ## 团队里的两个入口（Task 0f8c7a15）
 
 | 页面 | 只做什么 |
 | --- | --- |
-| 统筹安排（`/sessions` 未选智能体时；旧地址 `/arrangement` 仍是同一页） | 唯一的 Leader 首页：谁承接、谁空闲、队伍、冲突、动态，以及编排与队列（见 [Sessions](sessions.md)） |
+| 统筹安排（`/sessions`，旧 `/arrangement` 同页） | 唯一的 Leader 首页：谁承接、谁空闲、队伍、冲突、动态，以及编排与队列（见 [Sessions](sessions.md)） |
 | 运行与接入（`/runtime`，原“分工与运行”） | 执行服务、连接、恢复、受管智能体与运行记录；标题下一句“安排看统筹安排”，链到统筹安排 |
 
 | 旧地址 | 现在 |
 | --- | --- |
 | `/runtime`、`/runtime?session={UUID}` | 不变，仍是运行与接入，选中该受管智能体 |
 | `/runtime?session={含冒号的键}` | 跳到智能体对话 `/sessions?session=` |
-| `/sessions`（无参数） | 统筹安排（智能体空间的页面；目录在内层栏） |
-| `/sessions?view=flow` | 同一页的“动态”视图，地址不变 |
-| `/arrangement`、`/arrangement?view=flow` | 照旧打开，属智能体空间 |
-| `/reviews` | 跳到 `/documents?kind=organization_review`（“文档”的“复盘”筛选） |
-| `/repository` | 跳到 `/settings#settings-repository`（项目设置里的仓库规范） |
+| `/sessions`（无参数） | 统筹安排 |
+| `/reviews`、`/repository` | 跳到文档“复盘”筛选、设置里的仓库规范 |
 
 | 前后对照 | 改前 | 改后 |
 | --- | --- | --- |
