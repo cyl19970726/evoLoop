@@ -198,7 +198,9 @@ test("待我处理 lists what waits for my use and counts every part, or says it
   assert.doesNotMatch(await inbox.innerText(), /34000000-|Session|Run\b|consumer/);
   // How reading and use are recorded is said in words, never as the command line (N10).
   assert.match(await inbox.getByRole("region", { name: "待我验收" }).innerText(), /由验收人本人记录/);
-  assert.match(await inbox.getByRole("region", { name: "待我决定" }).innerText(), /当前没有等你决定的事项/);
+  // A category read and empty is folded into one line (Task 92ec6597) instead of a section of its own.
+  assert.equal(await inbox.getByRole("region", { name: "待我决定" }).count(), 0);
+  assert.match(await inbox.locator("[data-inbox-empty]").innerText(), /这些类别当前没有事项：.*待我决定/);
   assert.doesNotMatch(await inbox.innerText(), /work acceptance|acceptance read|\bobserve\b/);
   assert.match(await deliveries.innerText(), /记过“使用失败”的交付由执行者返工，不在这里列出/);
   // 待我验收 1 + 依据变化 1 + 等我使用 3.

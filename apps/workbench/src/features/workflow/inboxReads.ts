@@ -8,6 +8,8 @@ import { api, ApiError } from "../../shared/api";
 import { useProjectQuery } from "../../shared/query";
 import { inboxBadge, usageAlerts, usageWindow, type InboxBadge, type UsageAlert } from "./inboxModel";
 import type { DeliveriesForMe } from "./inboxDeliveries";
+import { useProviderHolds } from "../../shared/providerHolds";
+import { holdSummary } from "../../shared/providerHoldPresentation";
 
 export type { DeliveriesForMe } from "./inboxDeliveries";
 
@@ -63,17 +65,19 @@ export function useInboxReads(projectId: string, actorId: string, enabled = true
     { enabled: enabled && !!actorId });
   const decisions = useProjectQuery(projectId, inboxKeys.decisions(actorId), () => readDecisions(projectId), { enabled: enabled && !!actorId });
   const alerts = useProjectQuery(projectId, inboxKeys.usage, () => readUsageAlerts(projectId), { enabled });
-  return { acceptance, impacts, deliveries, decisions, alerts };
+  const holds = useProviderHolds(projectId, enabled);
+  return { acceptance, impacts, deliveries, decisions, alerts, holds };
 }
 
 /** The 待我处理 count: 验收安排 + 依据变化 + 等我使用的交付, or why it cannot be counted now. */
 export function useInboxCount(projectId: string, actorId: string, enabled = true): InboxBadge {
-  const { acceptance, impacts, deliveries, decisions, alerts } = useInboxReads(projectId, actorId, enabled);
+  const { acceptance, impacts, deliveries, decisions, alerts, holds } = useInboxReads(projectId, actorId, enabled);
   return inboxBadge([
     { label: "待我验收", count: acceptance.data?.items.length, failed: acceptance.isError },
     { label: "待我决定", count: decisions.data?.items.length, failed: decisions.isError },
     { label: "依据变化", count: impacts.data?.filter(item => item.state === "pending").length, failed: impacts.isError },
     { label: "等我使用的交付", count: deliveries.data?.items.length, failed: deliveries.isError, incomplete: deliveries.data ? !deliveries.data.complete : false },
     { label: "用量与上下文告警", count: alerts.data?.length, failed: alerts.isError },
+    { label: "只有你能办的运行问题", count: holds.data ? holdSummary(holds.data)?.holds.length ?? 0 : undefined, failed: holds.isError },
   ]);
 }
