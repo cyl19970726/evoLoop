@@ -3,6 +3,7 @@
 // useProjectQuery: the snapshot polls while a project-run agent is open, an external one checks the change feed, and
 // recovery follows each snapshot. A read that is running or failed is never shown as “none”, “idle” or 0; a failed
 // reread keeps the last answer and says so. The conversation's own long poll stays in useSessionTimeline.
+import { holdCauseLabel } from "../../shared/providerHoldPresentation";
 import { Suspense, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { FileText, Info, RefreshCw, X } from "lucide-react";
 import type { SessionSnapshot } from "@evoloop/contracts/session-observation";
@@ -365,7 +366,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
   const replyingTo: "me" | string | null = !answeringMessage ? null : answeringMessage.senderActorId === context.principal.actorId ? "me" : shortClassLabel(answeringMessage.senderClass);
   const held = session.runtime ? (holds.data?.items ?? []).find(hold => hold.state === "held" && hold.provider === session.runtime!.provider) : undefined;
   const workedRunTaskId = session.latestBusinessRun?.taskId ?? null;
-  const headerFacts: HeaderFacts = { replyingTo, holdReason: held ? (held.category === "authentication_failed" ? "模型服务鉴权失败" : "模型服务额度不足或欠费") : null,
+  const headerFacts: HeaderFacts = { replyingTo, holdReason: held ? holdCauseLabel(held) : null,
     taskTitle: workedRunTaskId ? titleOf(workedRunTaskId) : null,
     idleFor: session.lastProgressAt && Number.isFinite(Date.parse(session.lastProgressAt)) ? idleDuration(Date.now() - Date.parse(session.lastProgressAt)) : null };
   const statusLabel = agentHeaderStatus(session, observation.progress, nativeReadCurrent && !observation.error, runtimeAvailable, headerFacts);

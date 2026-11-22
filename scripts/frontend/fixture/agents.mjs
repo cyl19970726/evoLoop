@@ -100,6 +100,15 @@ export function timeline(name) {
     tool("tool-3", "截图 1024 宽度", "右栏收起，按钮在页首右侧", 12, "turn-2"),
     assistant("answer-2", "已核对：1024 下右栏默认收起，只有点“展开右栏”才会打开抽屉。", 10, "turn-2"),
   ];
+  // FIXTURE_LONG_TEXT: the long texts the chat has to show (Task b2daa3b1): a long message with an unbroken path and a code fence,
+  // a reply the source cut inside a code block, and a reply with complete web addresses.
+  if (name === "dev" && process.env.FIXTURE_LONG_TEXT === "1") {
+    const path = `/Users/shared/workspaces/evoloop/${"deep-directory-name-".repeat(12)}final.log`;
+    entries.push(
+      message("m-long", `请看这个日志：${path}\n再看下面的命令：\n\`\`\`sh\n${"npm run test:unit -- --reporter=spec --some-very-long-option=value ".repeat(3)}\n\`\`\`\n${Array.from({ length: 14 }, (_, index) => `补充第 ${index + 1} 行说明。`).join("\n")}`, 8),
+      assistant("answer-url", "参考：https://example.com/docs/chat-panel?tab=long#section 和 https://github.com/cyl19970726/evoLoop/pull/516，详见 www.example.org。\n\n```sh\nnpm run build && npm run test:unit\n```", 7, "turn-3"),
+      { ...assistant("answer-long", `## 逐项结果\n\n第一段说明，已经完整。\n\n第二段说明，也完整。\n\n| 项 | 结果 |\n| --- | --- |\n| 表格第一行 | 通过 |\n| 表格第二行 | 通过 |\n\n\`\`\`js\nconst a = 1;\n\nconst b = 2;\nconst c = comp`, 5, "turn-4"), truncated: true });
+  }
   return { sessionKey: key, sessionTitle: agents[name].title, entries, pending: [], turns: [], nextCursor: null, messagesCursor: null,
     observedAt: ago(1), partial: false, limitations: [], unsupportedKinds: [],
     live: { cursor: "3", resetRequired: false, entries: [], turns: [], freshness: "live", limitations: [], activeTurnId: null },

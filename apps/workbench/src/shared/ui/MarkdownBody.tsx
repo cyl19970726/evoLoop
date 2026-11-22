@@ -48,10 +48,12 @@ function Diagram({ source, id }: { source: string; id: string }) {
  * `markdown-body` class stays as the hook the document outline and tests find headings by. The page keeps its only
  * h1: the text's headings start at `topHeading` (2 right under the page title, one more under each section heading).
  */
-export function MarkdownBody({ source, identity, omitLeadingTitle, projectId, className, topHeading = 2 }: {
+export function MarkdownBody({ source, identity, omitLeadingTitle, projectId, className, topHeading = 2, linkify = false }: {
   source: string; identity: string; omitLeadingTitle?: string; projectId?: string; className?: string; topHeading?: 2 | 3 | 4 | 5;
+  /** Chat text: a complete http(s) address becomes a link. Documents keep their written links only. */
+  linkify?: boolean;
 }) {
-  const parts = useMemo(() => splitMarkdown(source, { omitLeadingTitle, projectId, topHeading }), [source, omitLeadingTitle, projectId, topHeading]);
+  const parts = useMemo(() => splitMarkdown(source, { omitLeadingTitle, projectId, topHeading, linkify }), [source, omitLeadingTitle, projectId, topHeading, linkify]);
   return <div className={cn("markdown-body min-w-0 [overflow-wrap:anywhere] [&>:first-child>:first-child]:mt-0", readingProse, className)}>
     {parts.map((part, index) => part.kind === "diagram"
       ? <Diagram key={`${identity}:${index}`} source={part.value} id={`${identity}-${index}`} />

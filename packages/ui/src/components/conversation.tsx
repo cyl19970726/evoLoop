@@ -21,8 +21,8 @@ export interface MessageBubbleProps {
 /** What a person sent: a dark bubble on the right. */
 export function MessageBubble({ children, footer, className }: MessageBubbleProps) {
   return (
-    <div className={cn("flex max-w-[86%] flex-col items-end gap-1.5 self-end", className)}>
-      <div className="max-w-full whitespace-pre-wrap break-words rounded-xl rounded-br-sm bg-user-bubble px-4 py-3 text-small leading-(--leading-body) text-on-user-bubble">{children}</div>
+    <div className={cn("flex min-w-0 max-w-[86%] flex-col items-end gap-1.5 self-end", className)}>
+      <div className="min-w-0 max-w-full whitespace-pre-wrap [overflow-wrap:anywhere] rounded-xl rounded-br-sm bg-user-bubble px-4 py-3 text-small leading-(--leading-body) text-on-user-bubble">{children}</div>
       {footer && <div className="flex items-center gap-1.5 text-caption text-muted-foreground">{footer}</div>}
     </div>
   );

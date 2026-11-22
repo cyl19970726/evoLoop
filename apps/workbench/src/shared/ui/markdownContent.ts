@@ -15,8 +15,10 @@ export function fixedWikiHref(value: string, projectId?: string): string | null 
   return knowledgeId && revision && uuid.test(knowledgeId) && uuid.test(revision) &&
     route === `/p/${projectId}/knowledge?knowledgeId=${knowledgeId}&knowledgeRevision=${revision}` ? route : null;
 }
-function markdownFor(projectId?: string) {
-  const markdown = new MarkdownIt({ html: false, linkify: false, breaks: false });
+function markdownFor(projectId?: string, linkify = false) {
+  const markdown = new MarkdownIt({ html: false, linkify, breaks: false });
+  // Only a complete http(s) address becomes a link: no bare domain, address or e-mail is guessed into one.
+  if (linkify) markdown.linkify.set({ fuzzyLink: false, fuzzyEmail: false, fuzzyIP: false });
   markdown.disable("image");
   markdown.validateLink = value => {
     if (value.startsWith("#/p/") || value.startsWith("/p/")) return !!fixedWikiHref(value, projectId) ||
@@ -40,8 +42,8 @@ export type MarkdownPart = { kind: "html"; value: string } | { kind: "diagram"; 
 interface ParsedTokenView { type: string; tag?: string; level?: number; content?: string; children?: ParsedTokenView[] | null }
 function escapeHtml(value: string): string { return value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!); }
 
-export function splitMarkdown(source: string, options: { omitLeadingTitle?: string; projectId?: string; topHeading?: number } = {}): MarkdownPart[] {
-  const markdown = markdownFor(options.projectId);
+export function splitMarkdown(source: string, options: { omitLeadingTitle?: string; projectId?: string; topHeading?: number; linkify?: boolean } = {}): MarkdownPart[] {
+  const markdown = markdownFor(options.projectId, options.linkify === true);
   const tokens = markdown.parse(source, {});
   const TokenCtor = (MarkdownIt as unknown as {Token: new (type: string, tag: string, nesting: number) =>
     {type: string; content: string; attrGet(name: string): string | null; attrSet(name: string, value: string): void}}).Token;
@@ -83,6 +85,12 @@ export function splitMarkdown(source: string, options: { omitLeadingTitle?: stri
       const target = child.type === "link_open" ? child.attrGet("href") : null;
       const path = target?.startsWith("#/") ? appPath(target) : null;
       if (path) child.attrSet("href", path);
+    }
+  }
+  // An address in a chat text leaves the workbench: it opens in a new tab and sends no referrer or window handle.
+  if (options.linkify) for (const inline of tokens.filter(token => token.type === "inline") as unknown as ParsedTokenView[]) {
+    for (const child of (inline.children ?? []) as unknown as Array<InstanceType<typeof TokenCtor>>) {
+      if (child.type === "link_open" && /^https?:\/\//i.test(child.attrGet("href") ?? "")) { child.attrSet("target", "_blank"); child.attrSet("rel", "noopener noreferrer"); }
     }
   }
   const expectedTitle = options.omitLeadingTitle?.replace(/\s+/gu, " ").trim();

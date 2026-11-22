@@ -1,6 +1,6 @@
 // The fixture API: each read the screenshot pages make, answered from the synthetic project. Returns
 // { status, value }, or undefined for a read the fixture does not know (the server answers an empty page and reports it).
-import { actorId, ago, otherProject, page, project, projectId, root } from "./common.mjs";
+import { actorId, ago, id, otherProject, page, project, projectId, root } from "./common.mjs";
 import * as work from "./work.mjs";
 import * as agents from "./agents.mjs";
 import * as team from "./team.mjs";
@@ -37,7 +37,8 @@ function projectRoutes(params) {
     "/resident-queues": agents.residentQueues(),
     "/session-lines": agents.sessionLines(),
     "/runtime/usage": agents.usage(),
-    "/runtime/provider-holds": { items: [], observedAtUtc: ago(1) },
+    "/runtime/provider-holds": { items: process.env.FIXTURE_HOLD === "1" ? [{ projectId, id: id(990), provider: "codex", state: "held", category: process.env.FIXTURE_HOLD_CATEGORY ?? "quota_exhausted", causeSessionId: null, causeMessageId: null,
+      reason: "额度用完", version: 1, openedAt: ago(30), releasedAt: null, releasedBy: null, releaseReason: null, releaseSummary: null, impact: [], queuedMessages: 0 }] : [], observedAtUtc: ago(1) },
     "/runtime/sessions": agents.runtimeSessions(),
     "/runtime/models": agents.runtimeModels,
     "/runtime": team.runtime(),
