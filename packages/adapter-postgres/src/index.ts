@@ -1,4 +1,5 @@
 import { PgReferenceStore } from "./references.js";
+import { readTaskStageFacts } from "./work-index.js";
 import type { FormalSourceDecision, TaskExternalReferenceRecord, TaskExternalReferenceHead } from "@evoloop/contracts/references";
 import { fileURLToPath } from "node:url";
 import { runner } from "node-pg-migrate";
@@ -294,6 +295,8 @@ class PgReader implements Reader {
   }
   async getStageMilestone(stageId:string):Promise<StageMilestone|null> {const r=await this.client.query("SELECT *,to_char(due_on,'YYYY-MM-DD') AS due_on_text FROM stage_milestone WHERE project_id=$1 AND stage_id=$2",[this.projectId,stageId]);return r.rows[0]?rowMilestone(r.rows[0]):null;}
   async listStageMilestoneHistory(stageId:string):Promise<StageMilestone[]> {const r=await this.client.query("SELECT *,to_char(due_on,'YYYY-MM-DD') AS due_on_text FROM stage_milestone_history WHERE project_id=$1 AND stage_id=$2 ORDER BY version LIMIT $3",[this.projectId,stageId,maxDetailRows+1]);return bounded(r.rows.map(rowMilestone),"stage milestone history");}
+  async listStageMilestones():Promise<StageMilestone[]> {const r=await this.client.query("SELECT *,to_char(due_on,'YYYY-MM-DD') AS due_on_text FROM stage_milestone WHERE project_id=$1 ORDER BY stage_id LIMIT $2",[this.projectId,maxDetailRows+1]);return bounded(r.rows.map(rowMilestone),"stage milestones");}
+  listTaskStageFacts() {return readTaskStageFacts(this.client,this.projectId);}
   async getTaskStage(taskId:string):Promise<TaskStageLink|null> {const r=await this.client.query("SELECT * FROM task_stage WHERE project_id=$1 AND task_id=$2",[this.projectId,taskId]);return r.rows[0]?rowTaskStage(r.rows[0]):null;}
   async getStage(id:string):Promise<Stage|null> { const r=await this.client.query("SELECT * FROM project_stage WHERE project_id=$1 AND stage_id=$2",[this.projectId,id]);return r.rows[0]?rowStage(r.rows[0]):null; }
   async listStages(goalId?:string):Promise<Stage[]> { const r=await this.client.query("SELECT * FROM project_stage WHERE project_id=$1 AND ($2::uuid IS NULL OR goal_id=$2::uuid) ORDER BY created_at,stage_id LIMIT $3",[this.projectId,goalId??null,maxDetailRows+1]);return bounded(r.rows.map(rowStage),"stages"); }

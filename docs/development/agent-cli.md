@@ -101,6 +101,8 @@ npm run --silent cli -- operation "$OPERATION_ID" --project "$PROJECT_ID"
 
 **验证阶梯。** 读回用 HTTP 的 `GET /api/projects/PROJECT/ladder`（项目读权限）：`{ available, source:{commit}, levels:[{ key, name, status, evidenceStages:[{id, shortName}] }] }`。路线图读的是**该项目登记的仓库**，不是协调器部署目录：对登记仓库用只读 `git`（不联网、不 fetch）读 `refs/remotes/origin/main`，没有就取 `refs/heads/main`，上面的 `docs/roadmap.md`，`source.commit` 写读到的提交；登记了多个仓库时按登记顺序取第一个读得到且有“阶段／要交付什么”表头的。每级的 `status` 是路线图“各阶段现在在哪”表里同级“现在的状态”的第一句；`evidenceStages` 是 `ladder_keys` 含这一级的阶段，按到期日排（没有到期日的在后），没有短名的写 deliverable 首行。没有登记仓库、仓库里没有这份文件、或没有表头，返回 `available:false, levels:[]`，这是“没有”，不是错误；仓库没有 main 分支引用或读文件出错回 409 `LADDER_UNREADABLE`（“阶梯读不到”）。路线图提交到仓库后下一次读就跟上，不用重启；裸仓库由同步更新，所以到页面的延迟等于仓库同步间隔。旧的 `/milestones` 不变。
 
+**阶段的里程碑投影。** 读回用 HTTP 的 `GET /api/projects/PROJECT/stages/milestones`，可加 `?timeZone=Asia/Tashkent`（IANA 名，缺省 UTC，未知名字回 400 INVALID_INPUT）；返回 `stages`（每个阶段的 `status`、`statusLabel`、`dueOn`、`tasks` 个数、`latestReview`、`inMainTable`）、`tasksNoStage`（`unowned`、`declared`）、`currentStageId` 与 `currentNote`。这是只读接口，改阶段仍用 `stage.*` 命令；旧的 `/milestones` 不变。
+
 原 Task 关联的阶段已经回看时，`task.start` 会明确拒绝。需要同一任务承接新一轮工作，先读取 Task/阶段与 `command schema task.update`，核对正文、验收和权限，再以当前 expectedVersion、完整任务字段和理由提交 `task.update`：省略 `stageId` 保留原关联，显式 `stageId: null` 解除关联，或指定本项目的 active 阶段。显式调整要求 write＋review；实际变更限 todo，无在途或结果未知运行，新非空关联须有 consumer/evidence/stopCondition。旧阶段与旧关联保留。已确认 rejected 的启动记录不改写；范围或关联调整后的新启动是新意图，使用新 operationId，不能把它当作未知结果重试。
 
 任务类型可选实施、调研、验证，四态为 todo/in_progress/done/cancelled。交付与约定检查默认留在进行中的原任务内，标准通过后才 close；只有明确要求的消费者或真人使用才等待对应证据。受阻或暂缓说明原因、责任与下一步，不另开状态或默认验收子 Task。需要改变执行中的正文或验收时先核清在途，再 reopen→update→start；旧交付不可自动算新一轮通过。Task 主正文不能从通用 Document 编辑入口旁路改变。Document 用途、格式、发布/归档及正文写作见[任务与过程文档](../product/tasks-and-documents.md)。
