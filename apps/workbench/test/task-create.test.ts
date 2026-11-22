@@ -3,14 +3,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { commandSchema } from "@evoloop/contracts";
-import { draftFieldLabels, emptyTaskDraft, hiddenFields, taskCreateCommand, taskDraftProblems, zonedInstant, type TaskDraft } from "../src/features/workflow/taskCreate.ts";
+import { draftFieldLabels, emptyTaskDraft, hiddenFields, NO_STAGE, taskCreateCommand, taskDraftProblems, zonedInstant, type TaskDraft } from "../src/features/workflow/taskCreate.ts";
 
 const taskId = "41000001-0000-4000-8000-000000000001";
 const roleId = "41000002-0000-4000-8000-000000000002";
 const stageId = "41000003-0000-4000-8000-000000000003";
 const documentId = "41000004-0000-4000-8000-000000000004";
 const draft = (patch: Partial<TaskDraft>): TaskDraft => ({ ...emptyTaskDraft("Asia/Taipei"), title: "整理验收清单", why: "上次验收漏了截图。",
-  outcome: "一份可复用的验收清单", acceptance: "另一位智能体按清单独立核对", owner: roleId, ...patch });
+  outcome: "一份可复用的验收清单", acceptance: "另一位智能体按清单独立核对", owner: roleId, stageId: NO_STAGE, noStageReason: "不属于任何阶段", ...patch });
 const parse = (command: Record<string, unknown>) =>
   commandSchema.parse({ ...command, projectId: "41000000-0000-4000-8000-000000000000", operationId: "41000005-0000-4000-8000-000000000005" });
 
@@ -22,7 +22,7 @@ test("the create page's fields: content with 期望结果, acceptance mode, use 
   assert.deepEqual(command, {
     type: "task.create", taskId, title: "整理验收清单", kind: "validation",
     content: "上次验收漏了截图。\n\n期望结果\n一份可复用的验收清单", acceptance: "另一位智能体按清单独立核对", owner: roleId,
-    acceptanceMode: "independent_agent", completionBoundary: "delivered", useRequired: true, consumer: "reviewer-actor",
+    acceptanceMode: "independent_agent", completionBoundary: "delivered", useRequired: true, consumer: "reviewer-actor", noStage: true, noStageReason: "不属于任何阶段",
     timing: { executeAtUtc: "2026-11-12T01:30:00.000Z", timezone: "Asia/Taipei", repeat: "daily" },
     evidence: "上次验收记录", stopCondition: "清单超过一页",
   });
@@ -34,7 +34,7 @@ test("optional fields are left out when empty, as main's create page did; kind f
   assert.deepEqual(command, {
     type: "task.create", taskId, title: "整理验收清单", kind: null,
     content: "上次验收漏了截图。\n\n期望结果\n一份可复用的验收清单", acceptance: "另一位智能体按清单独立核对", owner: roleId,
-    acceptanceMode: "human_required", completionBoundary: "delivered", useRequired: true, consumer: "owner-actor",
+    acceptanceMode: "human_required", completionBoundary: "delivered", useRequired: true, consumer: "owner-actor", noStage: true, noStageReason: "不属于任何阶段",
   });
   const once = taskCreateCommand(draft({ executeAt: "2026-11-12T09:30", repeat: "none" }), taskId);
   assert.deepEqual(once.timing, { executeAtUtc: "2026-11-12T01:30:00.000Z", timezone: "Asia/Taipei", repeat: "none" });
@@ -80,7 +80,13 @@ test("a problem is never reported for a field the form hides", () => {
 });
 
 test("the draft names each missing or contradictory field before anything is sent", () => {
-  assert.deepEqual(Object.keys(taskDraftProblems(emptyTaskDraft("Asia/Taipei"), { canReview: true })).sort(), ["acceptance", "outcome", "owner", "title", "why"]);
+  assert.deepEqual(Object.keys(taskDraftProblems(emptyTaskDraft("Asia/Taipei"), { canReview: true })).sort(), ["acceptance", "outcome", "owner", "stageId", "title", "why"]);
+  // A stage must be chosen: empty and "不属于阶段" without a reason are both refused, each with a hint saying what to choose.
+  assert.match(taskDraftProblems(draft({ stageId: "" }), { canReview: true }).stageId ?? "", /不属于阶段/);
+  assert.ok(taskDraftProblems(draft({ noStageReason: "" }), { canReview: true }).noStageReason);
+  const none = taskCreateCommand(draft({}), taskId);
+  assert.equal(none.noStage, true); assert.equal(none.noStageReason, "不属于任何阶段"); assert.equal(none.stageId, undefined);
+  assert.doesNotThrow(() => parse(none));
   assert.deepEqual(taskDraftProblems(draft({}), { canReview: false }), {});
   assert.deepEqual(Object.keys(taskDraftProblems(draft({ stageId }), { canReview: true })).sort(), ["consumer", "evidence", "stopCondition"]);
   assert.match(taskDraftProblems(draft({ acceptanceMode: "human_required" }), { canReview: true }).consumer ?? "", /本人验收/);

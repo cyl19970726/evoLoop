@@ -88,6 +88,10 @@ export async function readPublishedDocuments(projectId: string): Promise<{ items
 export function useGoals(projectId: string) {
   return useProjectQuery(projectId, [journeyKey, "goals"], () => readGoals(projectId));
 }
+/** The stages as milestones (short name, due date), for the labels in the new-task stage select. A failed read leaves the plain deliverable line. */
+export function useStageProjection(projectId: string) {
+  return useProjectQuery(projectId, [journeyKey, "stage-projection"], signal => api().stageProjection(projectId, signal));
+}
 export function useStages(projectId: string) {
   return useProjectQuery(projectId, [journeyKey, "stages"], () => readStages(projectId));
 }

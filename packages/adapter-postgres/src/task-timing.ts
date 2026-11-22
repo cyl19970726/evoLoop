@@ -555,6 +555,14 @@ export class PgTaskTimingStore {
             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
             [projectId,taskId,taskRevisionId,t.stageId,t.consumer,t.useRequired,t.acceptanceMode,t.evidence,t.stopCondition,
               t.acceptanceTarget,t.acceptancePrecondition,nowUtc,t.completionBoundary]);
+          // Ownership side table: a series-made Task is "not part of any stage (schedule routine)" unless its template names a stage.
+          {
+            const reasonText = t.stageId ? `Task timing series ${row.series_id} template stage` : "不属于阶段（日程例行）";
+            await client.query(`INSERT INTO task_stage(project_id,task_id,version,stage_id,no_stage_reason,actor_id,reason,updated_at)
+              VALUES($1,$2,1,$3,$4,$5,$6,$7)`,[projectId,taskId,t.stageId ?? null,t.stageId ? null : reasonText,actorId,reasonText,nowUtc]);
+            await client.query(`INSERT INTO task_stage_history(project_id,task_id,version,stage_id,no_stage_reason,actor_id,reason,created_at)
+              VALUES($1,$2,1,$3,$4,$5,$6,$7)`,[projectId,taskId,t.stageId ?? null,t.stageId ? null : reasonText,actorId,reasonText,nowUtc]);
+          }
           for (const document of t.documentIds) await client.query(`INSERT INTO task_document_link(project_id,link_id,
             task_id,document_id,actor_id,created_at) VALUES($1,$2,$3,$4,$5,$6)`,
             [projectId,randomUUID(),taskId,document,actorId,nowUtc]);

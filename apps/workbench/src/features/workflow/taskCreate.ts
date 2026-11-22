@@ -10,6 +10,11 @@ import { dailyScheduledInstant, scheduledInstant, scheduledTimezone } from "./ta
 export const taskKinds: Record<TaskKind, string> = taskTypeLabel;
 export const maxLinkedDocuments = 20;
 
+/** The stage select's value for "不属于阶段" (a stage id is a UUID, so it cannot collide). */
+export const NO_STAGE = "none";
+/** A stage was chosen (not empty, not "不属于阶段"). */
+export const inStage = (draft: Pick<TaskDraft, "stageId">) => draft.stageId !== "" && draft.stageId !== NO_STAGE;
+
 export interface TaskDraft {
   title: string;
   /** Why the work exists and what it covers (Markdown). */
@@ -18,7 +23,10 @@ export interface TaskDraft {
   acceptance: string;
   /** The responsible role. */
   owner: string;
+  /** A stage id, `NO_STAGE`, or empty (nothing chosen yet: the form will not send). */
   stageId: string;
+  /** Required with `NO_STAGE`: why this task is not part of any stage. */
+  noStageReason: string;
   kind: TaskKind | "";
   acceptanceMode: "independent_agent" | "human_required";
   /** When the Task may close (Task b5993311): on the used Delivery alone, or only once its PR is merged. The service requires one for every new delivery Task. */
@@ -40,7 +48,7 @@ export function browserTimezone(): string {
 }
 
 export function emptyTaskDraft(timezone = browserTimezone(), stageId = ""): TaskDraft {
-  return { title: "", why: "", outcome: "", acceptance: "", owner: "", stageId, kind: "", acceptanceMode: "independent_agent", completionBoundary: "delivered", consumer: "",
+  return { title: "", why: "", outcome: "", acceptance: "", owner: "", stageId, noStageReason: "", kind: "", acceptanceMode: "independent_agent", completionBoundary: "delivered", consumer: "",
     closeRule: "use", executeAt: "", timezone, repeat: "none", evidence: "", stopCondition: "", documentIds: [] };
 }
 
@@ -62,7 +70,7 @@ export type DraftProblems = Partial<Record<keyof TaskDraft, string>>;
 
 /** The form's label for each field, so a summary can say where the problems are. */
 export const draftFieldLabels: Record<keyof TaskDraft, string> = {
-  title: "任务名称", why: "为什么要做", outcome: "期望结果", acceptance: "怎样独立验收", owner: "负责职责", stageId: "所属阶段",
+  title: "任务名称", why: "为什么要做", outcome: "期望结果", acceptance: "怎样独立验收", owner: "负责职责", stageId: "所属阶段", noStageReason: "不属于阶段的理由",
   kind: "任务类型", acceptanceMode: "验收方式", completionBoundary: "完成边界", consumer: "实际使用成果的身份", closeRule: "关闭条件", executeAt: "执行时间",
   timezone: "时区", repeat: "是否重复", evidence: "来源或反馈证据", stopCondition: "停止条件", documentIds: "关联已发布的文档",
 };
@@ -84,7 +92,9 @@ export function taskDraftProblems(draft: TaskDraft, options: { canReview: boolea
   missing("outcome", "写明做完后应得到什么。");
   missing("acceptance", "写明独立验收要看的证据。");
   missing("owner", "选择负责这项任务的职责。");
-  if (draft.stageId) {
+  if (!draft.stageId) problems.stageId = "请选一个阶段；这项任务不属于任何阶段时，选“不属于阶段”并写理由。";
+  if (draft.stageId === NO_STAGE) missing("noStageReason", "选了“不属于阶段”，要写明为什么这项任务不属于任何阶段。");
+  if (inStage(draft)) {
     if (draft.closeRule === "use") missing("consumer", "属于阶段的任务要写明实际使用成果的身份。");
     missing("evidence", "属于阶段的任务要写明来源或反馈证据。");
     missing("stopCondition", "属于阶段的任务要写明在什么情况下停止。");
@@ -92,7 +102,7 @@ export function taskDraftProblems(draft: TaskDraft, options: { canReview: boolea
   if (draft.closeRule === "use" && draft.acceptanceMode === "human_required" && !draft.consumer.trim())
     problems.consumer = "必须本人验收时，填写验收人的受信身份。";
   if (draft.closeRule === "decision") {
-    if (!draft.stageId) problems.stageId = "只作判断记录的任务必须属于一个推进中的阶段。";
+    if (!inStage(draft)) problems.stageId = "只作判断记录的任务必须属于一个推进中的阶段。";
     if (draft.kind !== "research") problems.kind = "只作判断记录的任务类型须是调研。";
   }
   if (draft.repeat === "daily") {
@@ -116,6 +126,7 @@ export function taskDraftProblems(draft: TaskDraft, options: { canReview: boolea
   limit("consumer", draft.consumer.trim(), 4000);
   limit("evidence", draft.evidence.trim(), 4000);
   limit("stopCondition", draft.stopCondition.trim(), 4000);
+  limit("noStageReason", draft.noStageReason.trim(), 4000);
   limit("timezone", draft.timezone.trim(), 80);
   // 为什么要做 and 期望结果 become one text (taskContent): its limit is said under both.
   const content = taskContent(draft);
@@ -150,10 +161,17 @@ export function taskCreateCommand(draft: TaskDraft, taskId: string): Record<stri
     // A decision-only task names no acceptance mode: the service accepts `useRequired: false` only then.
     ...(decision ? {} : { acceptanceMode: draft.acceptanceMode, completionBoundary: draft.completionBoundary ?? "delivered" }), useRequired: !decision,
     ...(consumer ? { consumer } : {}),
-    ...(draft.stageId ? { stageId: draft.stageId } : {}),
+    ...(inStage(draft) ? { stageId: draft.stageId } : draft.stageId === NO_STAGE ? { noStage: true, noStageReason: text(draft.noStageReason) } : {}),
     ...(draft.documentIds.length ? { documentIds: [...draft.documentIds] } : {}),
     ...(timing ? { timing } : {}),
     ...(text(draft.evidence) ? { evidence: text(draft.evidence) } : {}),
     ...(text(draft.stopCondition) ? { stopCondition: text(draft.stopCondition) } : {}),
   };
+}
+
+/** A stage in the select: its short name (the first line of its deliverable while none is registered) and its due date when it has one. */
+export function stageLabel(stage: { id: string; deliverable: string }, projection: { stages: ReadonlyArray<{ id: string; shortName: string | null; dueOn: string | null }> } | undefined): string {
+  const milestone = projection?.stages.find(item => item.id === stage.id);
+  const name = milestone?.shortName?.trim() || stage.deliverable.split("\n").map(line => line.trim()).find(Boolean) || "未命名阶段";
+  return milestone?.dueOn ? `${name} · 到期 ${milestone.dueOn}` : name;
 }

@@ -221,7 +221,7 @@ const service = new WorkflowService({
   ...(integrations.runtime?.enabled ? { runtimeProvider: integrations.runtime.provider,
     runtimeProviders: drivenRuntimeProviders(integrations.runtime) } : {}),
   // Task b5993311: a Task that declares the `merged` boundary closes only on the repository's own merge fact, and a new delivery Task must declare a boundary.
-  mergeFacts: gitMergeFacts(() => integrations.repositories), requireCompletionBoundary: true,
+  mergeFacts: gitMergeFacts(() => integrations.repositories), requireCompletionBoundary: true, requireTaskStage: true,
   taskTimingAuthority: async (projectId, actorId, roleId, scopeId) => {
     const current = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).scheduling;
     return hasTaskTimingGrant(current, projectId, actorId, roleId, scopeId) &&
