@@ -5,6 +5,11 @@ import type { ProviderHoldListing } from "@evoloop/contracts/provider-hold";
 const providerName = { codex: "Codex", claude: "Claude" } as const;
 const causeText = (category: string) => category === "authentication_failed" ? "鉴权失败" : "额度用完";
 
+/** The cause of one hold in the banner's own words ("Claude 额度用完"): the agent's own page says the same thing in its header. */
+export function holdCauseLabel(hold: { provider: "codex" | "claude"; category: string }): string {
+  return `${providerName[hold.provider]} ${causeText(hold.category)}`;
+}
+
 /** One held provider, as the banner and 待我处理 both tell it. */
 export interface HeldProvider {
   id: string; provider: "codex" | "claude"; version: number; category: string; queuedMessages: number;
@@ -29,7 +34,7 @@ export function holdSummary(listing: ProviderHoldListing | undefined): HoldSumma
  * (those are the source layer, holdIdentifiers). `firstName` is the name of the first affected Session when the page knows it.
  */
 export function holdLine(summary: HoldSummary, firstName?: string | null): string {
-  const causes = summary.holds.map(hold => `${providerName[hold.provider]} ${causeText(hold.category)}`).join("、");
+  const causes = summary.holds.map(holdCauseLabel).join("、");
   const count = summary.sessionIds.length;
   const who = count === 0 ? "新的运行已暂停" : count === 1 ? `${firstName ? `${firstName} ` : "1 个智能体"}停着` : `${firstName ? `${firstName} 等` : ""} ${count} 个智能体停着`.trim();
   return `模型服务 ${causes}，${who}：需要你充值或重新授权`;

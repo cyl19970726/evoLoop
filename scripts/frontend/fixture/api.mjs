@@ -1,6 +1,6 @@
 // The fixture API: each read the screenshot pages make, answered from the synthetic project. Returns
 // { status, value }, or undefined for a read the fixture does not know (the server answers an empty page and reports it).
-import { actorId, ago, otherProject, page, project, projectId, root } from "./common.mjs";
+import { actorId, ago, id, otherProject, page, project, projectId, root } from "./common.mjs";
 import * as work from "./work.mjs";
 import * as agents from "./agents.mjs";
 import * as team from "./team.mjs";
@@ -39,7 +39,8 @@ function projectRoutes(params) {
     "/resident-queues": agents.residentQueues(),
     "/session-lines": agents.sessionLines(),
     "/runtime/usage": agents.usage(),
-    "/runtime/provider-holds": { items: [], observedAtUtc: ago(1) },
+    "/runtime/provider-holds": { items: process.env.FIXTURE_HOLD === "1" ? [{ projectId, id: id(990), provider: "codex", state: "held", category: process.env.FIXTURE_HOLD_CATEGORY ?? "quota_exhausted", causeSessionId: null, causeMessageId: null,
+      reason: "额度用完", version: 1, openedAt: ago(30), releasedAt: null, releasedBy: null, releaseReason: null, releaseSummary: null, impact: [], queuedMessages: 0 }] : [], observedAtUtc: ago(1) },
     "/runtime/sessions": agents.runtimeSessions(),
     "/runtime/models": agents.runtimeModels,
     "/runtime": team.runtime(),
@@ -146,6 +147,8 @@ export function answer(path, params) {
     const sub = match[2];
     if (!sub) return ok(agents.snapshot(name));
     if (sub === "/timeline") return ok(agents.timeline(name));
+    const itemRead = /^\/timeline\/items\/([^/]+)$/.exec(sub ?? "");
+    if (itemRead) { const found = agents.timelineItem(name, params.get("turnId"), decodeURIComponent(itemRead[1])); return found ? ok(found) : missing("没有这条内容"); }
     if (sub === "/timeline/updates") return ok({ cursor: "3", resetRequired: false, entries: [], turns: [], freshness: "live", limitations: [] });
     if (sub === "/messages") return ok({ items: [], nextCursor: null, metadata: agents.directory().metadata });
     if (sub === "/profile") return ok(agents.observedSession(name).profile);

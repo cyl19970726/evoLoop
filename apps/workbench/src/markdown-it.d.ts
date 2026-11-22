@@ -6,6 +6,7 @@ declare module "markdown-it" {
     validateLink: (url: string) => boolean;
     renderer: { render(tokens: Token[], options: Record<string, unknown>, env: object): string };
     parse(source: string, env: object): Token[];
+    linkify: { set(options: { fuzzyLink?: boolean; fuzzyEmail?: boolean; fuzzyIP?: boolean }): unknown };
     disable(name: string): this;
   }
 }

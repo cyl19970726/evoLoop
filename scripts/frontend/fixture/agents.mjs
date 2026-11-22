@@ -90,7 +90,12 @@ export function snapshot(name) {
 }
 
 const at = minutes => ago(minutes);
-
+// The whole of the reply the source cut inside a code block (Task b2daa3b1): the item read returns it, so 读取完整回复 can expand it.
+const fullLongReply = `## 逐项结果\n\n第一段说明，已经完整。\n\n第二段说明，也完整。\n\n| 项 | 结果 |\n| --- | --- |\n| 表格第一行 | 通过 |\n| 表格第二行 | 通过 |\n\n\`\`\`js\nconst a = 1;\n\nconst b = 2;\nconst c = compute(a, b);\nconsole.log(c);\n\`\`\`\n\n${Array.from({ length: 8 }, (_, index) => `后续第 ${index + 1} 段说明，在被截断的位置之后。`).join("\n\n")}\n`;
+export const timelineItem = (name, turnId, itemId) => {
+  const item = timeline(name).entries.find(entry => entry.nativeItemId === itemId && entry.turnId === turnId);
+  return item?.id === "answer-long" ? { ...item, body: fullLongReply, truncated: false } : item ?? null;
+};
 const message = (key, body, minutes, extra = {}) => ({ id: `message:${key}`, kind: "message", role: "input", phase: "unknown", body, clientId: key,
   state: "completed", turnId: null, nativeItemId: null, nativeKind: null, author: { kind: "actor", id: actorId, label: actorId },
   origin: { kind: "message", id: key, taskId: null, taskRevisionId: null, initiatingActorId: actorId },
@@ -123,6 +128,16 @@ export function timeline(name) {
     tool("tool-3", "截图 1024 宽度", "右栏收起，按钮在页首右侧", 12, "turn-2"),
     assistant("answer-2", "已核对：1024 下右栏默认收起，只有点“展开右栏”才会打开抽屉。", 10, "turn-2"),
   ];
+  // FIXTURE_LONG_TEXT: the long texts the chat has to show (Task b2daa3b1): a long message with an unbroken path and a code fence,
+  // a reply the source cut inside a code block, and a reply with complete web addresses.
+  if (name === "dev" && process.env.FIXTURE_LONG_TEXT === "1") {
+    const longReply = fullLongReply;
+    const path = `/Users/shared/workspaces/evoloop/${"deep-directory-name-".repeat(12)}final.log`;
+    entries.push(
+      message("m-long", `请看这个日志：${path}\n再看下面的命令：\n\`\`\`sh\n${"npm run test:unit -- --reporter=spec --some-very-long-option=value ".repeat(3)}\n\`\`\`\n${Array.from({ length: 14 }, (_, index) => `补充第 ${index + 1} 行说明。`).join("\n")}`, 8),
+      assistant("answer-url", "参考：https://example.com/docs/chat-panel?tab=long#section 和 https://github.com/cyl19970726/evoLoop/pull/516，详见 www.example.org。\n\n```sh\nnpm run build && npm run test:unit\n```", 7, "turn-3"),
+      { ...assistant("answer-long", longReply.slice(0, longReply.indexOf("const c = comp") + "const c = comp".length), 5, "turn-4"), truncated: true });
+  }
   return { sessionKey: key, sessionTitle: agents[name].title, entries, pending: [], turns: process.env.FIXTURE_ROUND_SOURCES ? sourceRounds.filter(item => item.kind === "message" && item.role === "input").map(item => ({ id: item.turnId, state: "completed", startedAt: item.occurredAt, completedAt: item.occurredAt, origin: item.origin })) : [], nextCursor: null, messagesCursor: null,
     observedAt: ago(1), partial: false, limitations: [], unsupportedKinds: [],
     live: { cursor: "3", resetRequired: false, entries: [], turns: [], freshness: "live", limitations: [], activeTurnId: null },
