@@ -46,10 +46,10 @@ test("manual discussion handoff freezes baselines and appends corrigible decisio
   const goalId = randomUUID(), stageId = randomUUID(), otherStageId = randomUUID(), taskId = randomUUID(), sourceId = randomUUID();
   applied(await issue(reviewer, { type: "goal.create", goalId, outcome: "Usable direction", constraints: "Project scope",
     consumer: "owner", authority: "reviewer", scope: "current project", owner: reviewer.actorId }));
-  applied(await issue(reviewer, { type: "stage.propose", stageId, goalId, deliverable: "Decision",
+  applied(await issue(reviewer, { type: "stage.propose", shortName: "S", checkMethod: "Check", stageId, goalId, deliverable: "Decision",
     learningQuestion: "Which direction?", reason: "Need direction" }));
   applied(await issue(reviewer, { type: "stage.accept", stageId, expectedVersion: 1, reason: "Current stage" }));
-  applied(await issue(reviewer, { type: "stage.propose", stageId: otherStageId, goalId, deliverable: "Other decision",
+  applied(await issue(reviewer, { type: "stage.propose", shortName: "S", checkMethod: "Check", stageId: otherStageId, goalId, deliverable: "Other decision",
     learningQuestion: "What else?", reason: "Parallel stage" }));
   applied(await issue(reviewer, { type: "stage.accept", stageId: otherStageId, expectedVersion: 1, reason: "Other active stage" }));
   const source = applied(await issue(reviewer, { type: "document.create", documentId: sourceId,

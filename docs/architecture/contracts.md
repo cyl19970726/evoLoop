@@ -48,6 +48,7 @@
 | `goal.revise` | `task` | 否 |
 | `observation.record` | `task` | 否 |
 | `stage.propose` | `task` | 否 |
+| `stage.milestone.set` | `task` | 否（改已接受阶段的到期日、检查办法另需 Task 决定权） |
 | `task.assignment.acknowledge` | `task` | 否 |
 | `task.create` | `task` | 否 |
 | `task.timing.set` | `task` | 否 |

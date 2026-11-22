@@ -273,6 +273,12 @@ node scripts/restore.mjs --from /absolute/private-backups/evoloop-20261020 \
 - 发布脚本在 `build` 步骤（构建和 carry-assets 之后）把 `build-info.json` 写进源码目录根（`commit` 是该目录 `HEAD` 的完整哈希，`builtAt` 是写入时的 UTC 时间）；写不出来（取不到提交哈希、目录不可写）这一步失败，此时还没有停服务，什么都没有变。`post-check` 钩子通过后，发布脚本自己再请求配置里的 `versionUrl`（`GET /api/version`），`commit` 必须与本次发布的提交一致（互为前缀，7–40 位）；服务还没起来会按 `versionCheck.retries`（默认 10）、`intervalMs`（默认 3000）重试，最后仍不一致或读不到提交就**判发布失败**，按现有规则停掉并恢复旧服务，发布记录里 `acceptance.versionCheck` 写 `failed` 与原因，成功时写 `passed` 与读到的提交。`versionUrl` 是必填的（私有配置里写服务自己的地址）；确实不检查要显式写 `skipVersionCheck: true`，发布记录会写 `skipped by config` 并打警告。回滚（`rollback`）不做这个检查。私有发布钩子里原来临时补写 `build-info.json` 的部分在这个版本生效后可以去掉（由需求 Session 处理）。
 - `/milestones` 读已部署的 `docs/roadmap.md` 阶段表；阶段与路线图阶段的关联存在 `stage_phase_key`（迁移 101），用 `stage.phaseKey.set`（Task 决定权）设置；未关联显示“未登记”。
 
+### 迁移 118：阶段里程碑与任务归属旁表
+
+迁移 118（`schema/118_stage_milestone_task_stage.sql`）新建 `stage_milestone`、`stage_milestone_history`、`task_stage`、`task_stage_history` 四张表，并在同一个迁移里回填（见[项目数据](../architecture/project-data.md)）；不改任何已有表的行。运行前照常停写备份。回填计数可以先后各数一遍：`stage_milestone` 行数等于 `stage_phase_key` 行数，`task_stage` 行数等于最新提议带阶段的任务数（含已关闭），两张历史表各自同数；`project_stage`、`stage_revision`、`stage_review`、`stage_phase_key`、任务与任务修订各表的行和内容不变。
+
+**回退用前向迁移**（项目迁移 `down=false`）：先发布上一版代码（它从不读这四张表，`/milestones` 与 `stage.phaseKey.set` 照常），再把 `packages/adapter-postgres/rollback/118_drop_stage_milestone_task_stage.sql` 的四条 `DROP TABLE` 抄进下一个编号的迁移执行。它只删这四张表，原有各表不变；删掉的是迁移后新写的里程碑字段和归属，回填的内容可由迁移重新产生。`tests/integration/stage-milestone.test.ts` 在真实 PostgreSQL 上演练了迁移、回填计数、各表内容哈希不变和这条回退。
+
 ### 开放 PR 抢同一个迁移号
 
 `npm run check:migrations` 只看一棵合并后的树，看不到两个**都还开着**的 PR 各自占了同一个迁移号（#442 与 #448 都用了 110，合并前验收才发现）。`npm run check:open-pr-migrations -- --pr N`（`scripts/check-open-pr-migrations.mjs`）读开放 PR 的文件列表（`gh pr list --json files`）和基线分支（默认 `origin/main`）上的迁移文件：一个 PR 在某个号上有基线没有的迁移文件就算占了这个号，两个不同的 PR 占同一个号（不管文件名是否相同）就报，**指名两个 PR**（草稿也算并标出），并给一个没人用的号；只有一个 PR 用某个号、或某个 PR 只是改基线上已有的迁移，都不报。给了 `--pr` 只报牵涉该 PR 的冲突，不给则报所有冲突。读不到 PR 列表时退出码为 2（检查没有运行），不当作通过。两个地方运行：CI 的单元切片在 pull request 上运行它（用 `github.token`，工作流已加 `pull-requests: read`）；合并门 `merge-gate.mjs` 在放行一个改了迁移文件的 PR 前再查一次，有冲突就拒绝并指名，读不到开放 PR 也拒绝。限制：`gh` 对每个 PR 只给前 100 个文件，改动极大的 PR 里的迁移文件可能看不到；CI 只在 PR 有新推送时运行，所以后开的冲突 PR 要靠合并门拦。

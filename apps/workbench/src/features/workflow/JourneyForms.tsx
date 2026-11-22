@@ -82,12 +82,20 @@ export function GoalReviseForm({ context, goal, paused }: { context: MutationCon
 
 export function StageProposeForm({ context, goal, paused }: { context: MutationContext; goal: Goal; paused?: string | null }) {
   const fields: FormField[] = [
+    { name: "shortName", label: "短名", kind: "text", maxLength: 40, hint: "里程碑表里这一行的名称，40 字以内。" },
     { name: "deliverable", label: "阶段交付", kind: "textarea", maxLength: 4000, hint: "这一阶段要交出什么。" },
+    { name: "checkMethod", label: "怎样算到了", kind: "textarea", maxLength: 4000, hint: "谁来查、用什么样本、什么算没到。" },
+    { name: "dueOn", label: "到期日", kind: "text", optional: true, placeholder: "2026-12-31", hint: "可不填（写“未定”）。格式：年-月-日。" },
+    { name: "ladderKeys", label: "补验证阶梯的哪一级", kind: "text", optional: true, placeholder: "M1, M4", hint: "可不填；多个用逗号隔开。" },
     { name: "learningQuestion", label: "学习问题", kind: "textarea", maxLength: 4000, hint: "这一阶段想弄清什么。" }, reason,
   ];
   return <RecordForm context={context} label="提出阶段" submitLabel="提出阶段" permission="task" paused={paused} draftKey={draftKeys.stageNew(goal.id)}
-    fields={fields} initial={{ deliverable: "", learningQuestion: "", reason: "" }}
-    build={values => ({ type: "stage.propose", stageId: crypto.randomUUID(), goalId: goal.id, ...pick(values, ["deliverable", "learningQuestion", "reason"]) })} />;
+    fields={fields} initial={{ shortName: "", deliverable: "", checkMethod: "", dueOn: "", ladderKeys: "", learningQuestion: "", reason: "" }}
+    build={values => {
+      const keys = (values.ladderKeys ?? "").split(/[,，\s]+/).map(key => key.trim()).filter(Boolean);
+      return { type: "stage.propose", stageId: crypto.randomUUID(), goalId: goal.id, ...pick(values, ["shortName", "deliverable", "checkMethod", "learningQuestion", "reason"]),
+        ...(values.dueOn?.trim() ? { dueOn: values.dueOn.trim() } : {}), ...(keys.length ? { ladderKeys: keys } : {}) };
+    }} />;
 }
 
 export function StageAcceptForm({ context, stage, paused }: { context: MutationContext; stage: Stage; paused?: string | null }) {

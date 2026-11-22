@@ -51,7 +51,7 @@ test("worker PG facts bind fixed Run sources and current Goal/Stage scope",async
   const goalId=randomUUID(),otherGoalId=randomUUID(),stageId=randomUUID(),otherStageId=randomUUID(),foreignStageId=randomUUID();
   for(const id of [goalId,otherGoalId]) await issue({type:"goal.create",goalId:id,outcome:"Bounded fact verification",constraints:"Local",consumer:"owner",authority:"reviewer",scope:"test",owner});
   for(const [id,goal] of [[stageId,goalId],[otherStageId,goalId],[foreignStageId,otherGoalId]]){
-    await issue({type:"stage.propose",stageId:id,goalId:goal,deliverable:"One fact",learningQuestion:"Is the boundary correct?",reason:"Test scope"});
+    await issue({type:"stage.propose", shortName: "S", checkMethod: "Check",stageId:id,goalId:goal,deliverable:"One fact",learningQuestion:"Is the boundary correct?",reason:"Test scope"});
     await issue({type:"stage.accept",stageId:id,expectedVersion:1,reason:"Use active stage"});
   }
   const basisId=randomUUID(),otherDocId=randomUUID();

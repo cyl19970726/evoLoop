@@ -53,7 +53,7 @@ test("reviewed-stage Task can be explicitly detached and rebound without changin
     outcome: "One checked result", constraints: "Keep historical decisions", consumer: "owner",
     authority: "Local review", scope: "This test project", owner: "owner" }, token, scopedProjectId));
   const proposeStage = async (stageId: string, goal: string, scopedProjectId = projectId) => applied(await send({
-    type: "stage.propose", stageId, goalId: goal, deliverable: "Checked work", learningQuestion: "Was it useful?",
+    type: "stage.propose", shortName: "S", checkMethod: "Check", stageId, goalId: goal, deliverable: "Checked work", learningQuestion: "Was it useful?",
     reason: "Plan a bounded stage" }, token, scopedProjectId));
   const acceptStage = async (stageId: string, scopedProjectId = projectId) => applied(await send({
     type: "stage.accept", stageId, expectedVersion: 1, reason: "Authorize stage" }, token, scopedProjectId));

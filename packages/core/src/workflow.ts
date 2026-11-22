@@ -32,6 +32,7 @@ type WorkflowCommand = Extract<
       | "stage.propose"
       | "stage.accept"
       | "stage.phaseKey.set"
+      | "stage.milestone.set"
       | "stage.review"
       | "stage.review.correct"
       | "task.cancel"
@@ -260,7 +261,25 @@ export async function applyWorkflow({
         createdAt: now,
       };
       await tx.insertStage(stage, revision);
+      // The milestone fields live in the side table; a store without it (an old in-memory fixture) keeps the stage alone.
+      await tx.putStageMilestone?.({ projectId: c.projectId, stageId: stage.id, version: 1, shortName: c.shortName, dueOn: c.dueOn ?? null,
+        checkMethod: c.checkMethod, ladderKeys: c.ladderKeys ?? [], actorId, reason: c.reason, updatedAt: now }, 0);
       return result(c.operationId, stage.id, revision.id, 1);
+    }
+    case "stage.milestone.set": {
+      const stage = found(await tx.getStage(c.stageId), "stage");
+      if (!tx.getStageMilestone || !tx.putStageMilestone) throw new DomainError("MILESTONE_UNAVAILABLE", "stage milestone fields are not available in this store");
+      const current = await tx.getStageMilestone(c.stageId);
+      version(current?.version ?? 0, c.expectedVersion);
+      if (stage.state === "reviewed" && (current?.dueOn ?? null) !== c.dueOn)
+        throw new DomainError("STAGE_REVIEWED", "a reviewed stage keeps the due date it was reviewed with");
+      // dueOn and checkMethod are what acceptance agreed to, so once the stage is no longer only proposed they need decision authority; shortName and ladderKeys do not.
+      if (stage.state !== "proposed" && ((current?.dueOn ?? null) !== c.dueOn || (current?.checkMethod ?? null) !== c.checkMethod) &&
+        !hasDecisionAuthority(principal, c.projectId, "task"))
+        throw new DomainError("FORBIDDEN", "changing the due date or the check method of an accepted stage requires Task decision authority");
+      await tx.putStageMilestone({ projectId: c.projectId, stageId: c.stageId, version: (current?.version ?? 0) + 1, shortName: c.shortName, dueOn: c.dueOn,
+        checkMethod: c.checkMethod, ladderKeys: c.ladderKeys, actorId, reason: c.reason, updatedAt: now }, current?.version ?? 0);
+      return result(c.operationId, c.stageId, undefined, (current?.version ?? 0) + 1);
     }
     case "stage.phaseKey.set": {
       found(await tx.getStage(c.stageId), "stage");

@@ -812,7 +812,7 @@ test("explicit stage reassignment needs review and a complete active-stage propo
   await f.service.execute(principal, { type: "goal.create", projectId, operationId: f.operation(), goalId,
     outcome: "Checked result", constraints: "Keep history", consumer: "owner", authority: "local",
     scope: "project", owner: "owner" });
-  await f.service.execute(principal, { type: "stage.propose", projectId, operationId: f.operation(), stageId,
+  await f.service.execute(principal, { type: "stage.propose", shortName: "S", checkMethod: "Check", projectId, operationId: f.operation(), stageId,
     goalId, deliverable: "Result", learningQuestion: "Useful?", reason: "Plan" });
   await f.service.execute(principal, { type: "stage.accept", projectId, operationId: f.operation(), stageId,
     expectedVersion: 1, reason: "Approve" });

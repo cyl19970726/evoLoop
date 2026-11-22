@@ -85,7 +85,7 @@ test("PG bounded division reserves, transfers by Task CAS, starts once, and rece
   for (const roleId of [cognitiveRole,fixtureRoleId("prior-role")]) await seedFixtureRole(pool,pid,roleId);
   await wf(owner,{type:"goal.create",goalId,outcome:"Bounded result",constraints:"Local",
     consumer:"owner",authority:"reviewer",scope:"fixture",owner});
-  await wf(owner,{type:"stage.propose",stageId,goalId,deliverable:"One result",learningQuestion:"What changed?",reason:"Fixture"});
+  await wf(owner,{type:"stage.propose", shortName: "S", checkMethod: "Check",stageId,goalId,deliverable:"One result",learningQuestion:"What changed?",reason:"Fixture"});
   await wf(owner,{type:"stage.accept",stageId,expectedVersion:1,reason:"Start"});
   await wf(owner,{type:"task.create",taskId:parentTaskId,stageId,title:"Cognition",content:"# Decide",acceptance:"Waiting intent",
     owner:cognitiveRole,consumer:"owner",evidence:"Fixture",stopCondition:"One decision"});

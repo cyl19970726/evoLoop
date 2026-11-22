@@ -117,7 +117,7 @@ await section("目标与阶段（场景 10、总览）", async () => {
   await command({ type: "goal.create", goalId: ids.goalId, outcome: "负责人能在工作台看清每项工作的承接、交付与使用结果。",
     constraints: "只用合成数据；不连接真实运行时。", consumer: "项目负责人", authority: "测试身份 test-owner", scope: "工作台改版走查", owner: "test-owner" });
   ids.stageId = randomUUID();
-  const stage = await command({ type: "stage.propose", stageId: ids.stageId, goalId: ids.goalId,
+  const stage = await command({ type: "stage.propose", shortName: "S", checkMethod: "Check", stageId: ids.stageId, goalId: ids.goalId,
     deliverable: "新外壳与任务页可用于日常对账。", learningQuestion: "双左栏加右侧信息栏能否减少来回跳转？", reason: "合成阶段，用于走查总览。" });
   await command({ type: "stage.accept", stageId: ids.stageId, expectedVersion: stage.version ?? 1, reason: "合成阶段接受。" });
   return { goalId: ids.goalId, stageId: ids.stageId };

@@ -46,7 +46,7 @@ test("task history exposes persisted states and reviewed-stage correction append
   applied(await issue(reviewer, { type: "goal.create", goalId, outcome: "One verified outcome", constraints: "Small scope",
     consumer: "reader", authority: "project owner", scope: "single stage", owner: reviewer.actorId }));
   const prepareStage = async (stageId: string) => {
-    applied(await issue(reviewer, { type: "stage.propose", stageId, goalId, deliverable: "One artifact",
+    applied(await issue(reviewer, { type: "stage.propose", shortName: "S", checkMethod: "Check", stageId, goalId, deliverable: "One artifact",
       learningQuestion: "What changed?", reason: "Proposed" }));
     applied(await issue(reviewer, { type: "stage.accept", stageId, expectedVersion: 1, reason: "Accepted" }));
     return applied(await issue(reviewer, { type: "stage.review", stageId, expectedVersion: 2,
