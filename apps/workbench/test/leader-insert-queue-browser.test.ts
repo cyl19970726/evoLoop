@@ -31,7 +31,7 @@ function agent(sessionId: string, title: string, roles: ReturnType<typeof role>[
     source: { kind: "session", id: sessionId, revision: null, evidence: "project-record", href: "" }, metadata };
 }
 
-test("the Leader's page offers 插入当前这一轮 and 排队 while it works, tells each result, and keeps one 发送 when idle", {
+test("the Leader's page offers 排到这一轮之后 and 插入当前这一轮 while it works, tells each result, and keeps one 发送 when idle", {
   skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE after building the workbench",
 }, async t => {
   const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
@@ -120,7 +120,7 @@ test("the Leader's page offers 插入当前这一轮 and 排队 while it works, 
     const way = page.getByRole("group", { name: "发送方式" });
     // Working, insert open: two named buttons, no hidden arrow.
     await way.getByRole("button", { name: "插入当前这一轮" }).waitFor();
-    await way.getByRole("button", { name: "排队", exact: true }).waitFor();
+    await way.getByRole("button", { name: "排到这一轮之后", exact: true }).waitFor();
     assert.equal(await way.getByRole("button").count(), 2);
     assert.equal(await page.locator("[data-send-way]").count(), 2);
     const sizes = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, width: innerWidth,
@@ -130,7 +130,7 @@ test("the Leader's page offers 插入当前这一轮 and 排队 while it works, 
     // 插入当前这一轮: goes to the running Turn, and says 已插入.
     await box.fill("补充：先看 PR 346");
     await way.getByRole("button", { name: "插入当前这一轮" }).click();
-    await page.locator("[data-sent-result=inserted]").getByText("已插入当前这一轮").waitFor();
+    await page.locator("[data-sent-result=inserted]").waitFor();   // while its turn runs the one receipt says 处理中; idle it says 已插入
     assert.equal(directInputs.size, 1);
     const inserted = [...directInputs.values()][0]!;
     assert.equal(inserted.expectedTurnId, "turn-2"); assert.equal(inserted.state, "accepted");
@@ -138,7 +138,7 @@ test("the Leader's page offers 插入当前这一轮 and 排队 while it works, 
     if (shots) await page.screenshot({ path: join(shots, `leader-inserted-${viewport.width}.png`) });
     // 排队: an ordinary message, and says 已排队.
     await box.fill("这一轮之后再看文档");
-    await way.getByRole("button", { name: "排队", exact: true }).click();
+    await way.getByRole("button", { name: "排到这一轮之后", exact: true }).click();
     await page.locator("[data-sent-result=queued]").getByText("已排队").waitFor();
     const posts = commands.filter(command => command.type === "session.message.post");
     assert.equal(posts.length, 1); assert.equal(posts[0]!.content, "这一轮之后再看文档");
@@ -158,12 +158,13 @@ test("the Leader's page offers 插入当前这一轮 and 排队 while it works, 
     await open(leaderId, "统筹");
     await page.getByRole("button", { name: "发送", exact: true }).waitFor();
     assert.equal(await page.locator("[data-send-way]").count(), 0, "idle: no insert/queue pair");
-    // Another agent's page keeps the keys: no pair even while it works.
+    // Another agent's page works the same way: the default is to queue behind the turn, inserting is the explicit second button.
     running = true; capability = "steer";
     await open(workerId, "前端实现");
     await page.getByRole("combobox", { name: "消息" }).fill("补一句");
-    await page.getByRole("button", { name: "补充到这一轮" }).waitFor();
-    assert.equal(await page.locator("[data-send-way]").count(), 0, "a business agent's page is unchanged");
+    await page.getByRole("group", { name: "发送方式" }).getByRole("button", { name: "插入当前这一轮" }).waitFor();
+    assert.equal(await page.locator("[data-send-way]").count(), 2, "every agent's page has the same two ways");
+    assert.equal(await page.locator("[data-send-way=queue]").first().innerText(), "排到这一轮之后", "the first (Enter) button is the safe default");
     assert.deepEqual(errors, [], `${viewport.width}: no page errors`);
     await context.close();
   }

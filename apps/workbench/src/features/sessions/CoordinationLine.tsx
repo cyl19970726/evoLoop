@@ -40,7 +40,7 @@ export function CoordinationLine({ round, projectId, titleOf, taskHref, onMessag
 
 export function CoordinationGroup({ rounds, ...rest }: Omit<LineProps, "round"> & { rounds: Round[] }) {
   return <article aria-label="统筹的协调消息组" className="workspace-coordination-group min-w-0 pl-[38px] text-small" data-workspace-entry={rounds[0]!.input?.id ?? rounds[0]!.key} data-coordination-group="">
-    <CollapsibleRow summary={<span>Leader 的 {rounds.length} 条协调消息</span>}>
+    <CollapsibleRow summary={<span>统筹的 {rounds.length} 条协调消息</span>}>
       <div className="flex min-w-0 flex-col gap-1.5">
         {rounds.map(round => <CoordinationLine key={round.key} round={round} nested {...rest} />)}
       </div>

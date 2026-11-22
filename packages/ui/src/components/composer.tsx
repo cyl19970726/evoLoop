@@ -100,7 +100,7 @@ export interface ComposerProps {
    * Two named send buttons instead of the one arrow: the first runs `onSend` (Enter), the second `onQueue` (Cmd/Ctrl+Enter).
    * Used where the person must see which of two ways the message goes; the keys stay as they are.
    */
-  splitSend?: { sendLabel: string; queueLabel: string } | undefined;
+  splitSend?: { sendLabel: string; queueLabel: string; sendWay?: "insert" | "queue"; queueWay?: "insert" | "queue" } | undefined;
 }
 
 type MenuItem = { type: "command"; item: ComposerCommand } | { type: "agent"; item: ComposerAgent };
@@ -309,8 +309,8 @@ export function Composer({
             </button>}
           {splitSend && onQueue ? (
             <div role="group" aria-label="发送方式" className="flex shrink-0 items-center gap-1.5">
-              <button type="button" data-send-way="insert" onClick={send} disabled={!value.trim() || disabled || busy} className="inline-flex h-9 cursor-pointer items-center justify-center whitespace-nowrap rounded-full border-0 bg-brand px-3.5 text-small font-medium text-on-brand outline-none hover:bg-brand-hover active:bg-brand-pressed focus-visible:shadow-[var(--focus-ring)] disabled:cursor-default disabled:opacity-50">{splitSend.sendLabel}</button>
-              <button type="button" data-send-way="queue" onClick={queue} disabled={!value.trim() || disabled || busy} className="inline-flex h-9 cursor-pointer items-center justify-center whitespace-nowrap rounded-full border border-border bg-transparent px-3.5 text-small font-medium text-foreground outline-none hover:bg-field focus-visible:shadow-[var(--focus-ring)] disabled:cursor-default disabled:text-muted-foreground disabled:opacity-100">{splitSend.queueLabel}</button>
+              <button type="button" data-send-way={splitSend.sendWay ?? "insert"} onClick={send} disabled={!value.trim() || disabled || busy} className="inline-flex h-9 cursor-pointer items-center justify-center whitespace-nowrap rounded-full border-0 bg-brand px-3.5 text-small font-medium text-on-brand outline-none hover:bg-brand-hover active:bg-brand-pressed focus-visible:shadow-[var(--focus-ring)] disabled:cursor-default disabled:opacity-50">{splitSend.sendLabel}</button>
+              <button type="button" data-send-way={splitSend.queueWay ?? "queue"} onClick={queue} disabled={!value.trim() || disabled || busy} className="inline-flex h-9 cursor-pointer items-center justify-center whitespace-nowrap rounded-full border border-border bg-transparent px-3.5 text-small font-medium text-foreground outline-none hover:bg-field focus-visible:shadow-[var(--focus-ring)] disabled:cursor-default disabled:text-muted-foreground disabled:opacity-100">{splitSend.queueLabel}</button>
             </div>
           ) : !showStop && (
             <button type="button" aria-label={sendLabels[mode]} title={sendLabels[mode]} onClick={send} disabled={!value.trim() || disabled || busy} className="inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-brand text-on-brand outline-none hover:bg-brand-hover active:bg-brand-pressed focus-visible:shadow-[var(--focus-ring)] disabled:cursor-default disabled:opacity-50">

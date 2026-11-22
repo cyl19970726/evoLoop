@@ -170,7 +170,8 @@ test("the composer sends, adds, queues, stops, lists skills and agents, and says
     await page.locator(".workspace-turn-state").getByText("正在执行命令").waitFor();
     await page.getByRole("region", { name: "排队消息" }).getByText("顺便看一下 390 宽。").waitFor();
     await page.getByRole("button", { name: "停止这一轮" }).waitFor();
-    await page.getByText("Enter 补充到这一轮 · ⌘/Ctrl+Enter 排到下一轮").waitFor();
+    await page.getByText("Enter 排到这一轮之后 · ⌘/Ctrl+Enter 插入当前这一轮").waitFor();
+    await page.locator("[data-destination]").getByText("排在这一轮之后，不打断").waitFor();
     // Layout: the whole composer is on screen (above the bottom tabs on a phone) and nothing scrolls sideways.
     const layout = await page.evaluate(() => {
       const composer = document.querySelector<HTMLElement>(".session-composer-host")!.getBoundingClientRect();
@@ -205,26 +206,25 @@ test("the composer sends, adds, queues, stops, lists skills and agents, and says
     if (viewport.width < 1100) await page.getByRole("button", { name: "关闭右栏" }).click();
     assert.doesNotMatch(await page.locator(".unified-session-timeline").innerText(), internalWords, `${viewport.width}: no internal words in the flow`);
 
-    // Enter while a turn runs and the runtime takes additions: the text goes into this turn.
+    // While a turn runs and the runtime takes additions, Enter queues behind the turn (never interrupts); inserting is the explicit second way.
     itemRecorded = false;   // each width starts with a supplement whose Item is not recorded yet
     const before = { direct: directInputs.length, posts: posted("session.message.post").length };
     await box.fill("把颜色改成 token");
-    await page.getByRole("button", { name: "补充到这一轮" }).waitFor();
-    await box.press("Enter");
+    await page.getByRole("button", { name: "插入当前这一轮" }).waitFor();
+    await box.press("Control+Enter");
     await page.waitForFunction(count => document.querySelector<HTMLTextAreaElement>("[aria-label='消息']")?.value === "" , before.direct);
-    assert.equal(directInputs.length, before.direct + 1, "Enter adds to the running turn");
+    assert.equal(directInputs.length, before.direct + 1, "the explicit second way adds to the running turn");
     assert.deepEqual([directInputs.at(-1)!.content, directInputs.at(-1)!.expectedTurnId], ["把颜色改成 token", "turn-2"]);
-    await page.locator(".session-direct-receipt").getByText("运行时已接收；不代表智能体已阅读或采用").waitFor();
-    itemRecorded = true;
-    // The turn ends and the service reads the Item back: the page looks again and now says it was read (never "adopted").
-    await page.locator(".session-direct-receipt").getByText("已读到：运行时已记录这条输入的原生条目；不代表智能体已采用").waitFor({ timeout: 20_000 });
-    assert.doesNotMatch(await page.locator(".session-direct-receipt").innerText(), /(?<!不代表智能体)已采用/, "never claims adoption");
-    // One status for one input (Task 3c6973c5): the earlier "已插入当前这一轮" line is replaced by the receipt that now says 已读到, not left beside it.
-    assert.equal(await page.locator("[data-sent-result=inserted]").count(), 0, `${viewport.width}: the stale 已插入 line is gone once the receipt reads 已读到`);
+    // One receipt for one input: an accepted input is told by it alone, never also by a second notice or the 已读到 line.
+    await page.locator("[data-receipt-phase]").waitFor();
+    assert.equal(await page.locator("[data-receipt-phase]").count(), 1, `${viewport.width}: exactly one receipt`);
+    assert.equal(await page.locator(".session-direct-receipt").count(), 0, `${viewport.width}: no second receipt for an accepted input`);
+    assert.doesNotMatch(await page.locator("[data-receipt-phase]").innerText(), /(?<!不代表智能体)已采用/, "never claims adoption");
     // Cmd/Ctrl+Enter: an ordinary message for the next turn, tied to the current task.
     await box.fill("下一轮再处理窄屏");
-    await box.press(process.platform === "darwin" ? "Meta+Enter" : "Control+Enter");
-    await page.getByText("已保存，正在读取持久记录。").waitFor();
+    await box.press("Enter");
+    await page.getByText("已发出，已排队", { exact: false }).waitFor();
+    assert.equal(await page.locator("[data-receipt-phase]").count(), 1, `${viewport.width}: the receipt is replaced in place, not added to`);
     const queuedPost = posted("session.message.post").at(-1)!;
     assert.equal(posted("session.message.post").length, before.posts + 1);
     assert.deepEqual([queuedPost.content, queuedPost.context], ["下一轮再处理窄屏", { taskId, taskRevisionId: currentTask.revisionId }]);
@@ -240,7 +240,7 @@ test("the composer sends, adds, queues, stops, lists skills and agents, and says
     await commandMenu.getByText("frontend-design").click();
     await page.getByText("技能 · frontend-design").waitFor();
     await box.fill("按设计方向检查右栏");
-    await box.press("Control+Enter");
+    await box.press("Enter");
     await page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>("[aria-label='消息']")?.value === "");
     assert.equal(posted("session.message.post").at(-1)!.content, "使用技能：frontend-design（项目）\n按设计方向检查右栏");
 
@@ -257,7 +257,7 @@ test("the composer sends, adds, queues, stops, lists skills and agents, and says
     await box.press("End");
     await box.type("看一下右栏的数据");
     const postsBeforeMention = posted("session.message.post").length;
-    await box.press("Control+Enter");
+    await box.press("Enter");
     await page.getByText("已另发一份给 架构。", { exact: false }).waitFor();
     assert.equal(posted("session.message.post").length - postsBeforeMention, 2, "exactly one message and one copy");
     const [mine, copy] = posted("session.message.post").slice(postsBeforeMention);
@@ -266,7 +266,7 @@ test("the composer sends, adds, queues, stops, lists skills and agents, and says
 
     // Withdraw the queued message from above the composer.
     await page.getByRole("region", { name: "排队消息" }).getByRole("button", { name: "撤回" }).click();
-    await page.getByText("已撤回，正在读取消息记录。").waitFor();
+    await page.getByText("已撤回，原文放回了输入框。").waitFor();
     assert.deepEqual([posted("session.message.cancel").at(-1)?.messageId, posted("session.message.cancel").at(-1)?.expectedVersion], [queuedId, 3]);
 
     // Stop: with an empty box the send button becomes 停止这一轮; confirming interrupts this turn's message processing.
@@ -282,7 +282,7 @@ test("the composer sends, adds, queues, stops, lists skills and agents, and says
     // A runtime that cannot take additions: Enter queues for the next turn, and the page says why.
     steer = false;
     await page.getByRole("button", { name: "重新读取", exact: true }).click();
-    await page.getByText("这个智能体的即时输入授权不包含补入这一轮，需要在私有配置里为它开启补入；Enter 排到下一轮").waitFor({ timeout: 8000 });
+    await page.getByText("它正在工作，这条消息只能排在这一轮之后 · Enter 排队").waitFor({ timeout: 8000 });
     await box.fill("没法补充时排队");
     await page.getByRole("button", { name: "发送，排到下一轮" }).waitFor();
     const directBefore = directInputs.length;
@@ -364,7 +364,7 @@ test("the composer sends, adds, queues, stops, lists skills and agents, and says
       await page.getByText("Enter 保存，保存后需人工转交").waitFor();
       await page.getByRole("combobox", { name: "消息" }).fill("请转交给外部协作者");
       await page.getByRole("combobox", { name: "消息" }).press("Enter");
-      await page.getByText("已保存，正在读取持久记录。").waitFor();
+      await page.getByText("已发出，已排队", { exact: false }).waitFor();
       assert.deepEqual([posted("session.message.post").at(-1)?.target, posted("session.message.post").at(-1)?.content],
         [{ kind: "external", linkId: id(50) }, "请转交给外部协作者"]);
 
@@ -382,7 +382,7 @@ test("the composer sends, adds, queues, stops, lists skills and agents, and says
       await mention.press("End");
       await mention.type("结果会丢的一份");
       const postsBefore = posted("session.message.post").length;
-      await mention.press("Control+Enter");
+      await mention.press("Enter");
       await page.getByText("另发给 架构 的结果未确认", { exact: false }).waitFor();
       assert.equal(await page.getByText("没有成功", { exact: false }).count(), 0, "an unknown copy is not called a failure");
       assert.equal(await page.getByRole("link", { name: "按原操作核对" }).count(), 1);
@@ -482,7 +482,7 @@ test("a send whose answer was lost, once checked as received or applied, clears 
   assert.equal(await page.getByRole("button", { name: "发送", exact: true }).isDisabled(), true);
   // Checked by its original input: received, so the box and its kept draft are cleared.
   await page.getByRole("button", { name: "核对结果（不会重发）" }).click();
-  await page.getByText("已读到：运行时已记录这条输入的原生条目；不代表智能体已采用").waitFor();   // the checked receipt carries its Item
+  await page.locator("[data-receipt-phase]").waitFor();   // the checked input is told by the one receipt
   await page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>("[aria-label='消息']")?.value === "");
   await box.press("Enter");
   await page.getByRole("link", { name: "统筹安排" }).first().click();
@@ -503,7 +503,7 @@ test("a send whose answer was lost, once checked as received or applied, clears 
   await page.getByRole("button", { name: "按操作 ID 核对" }).click();
   await page.getByText(/已应用；正在回读当前数据/).waitFor();
   await page.goBack();
-  await page.getByText("原操作已核对为已应用，这份草稿已清除。").waitFor();
+  await page.waitForFunction(() => (document.querySelector("[role=combobox]") as HTMLElement | null)?.textContent === "");   // the applied outcome is no longer a second line; the draft just clears
   assert.equal(await boxValue(), "", "the applied message leaves the composer");
   await box.press("Control+Enter");
   await page.waitForTimeout(300);

@@ -2,7 +2,7 @@
 // session-messages/sender.ts), so the page and the Session never say different things (Task bedd0ef3). A class this build does not know is shown as received.
 const labels: Record<string, string> = {
   user: "使用者本人",
-  leader: "Leader",
+  leader: "统筹",
   requirements: "需求 Session",
   session: "其他受管 Session",
   system: "系统通知（不是人）",

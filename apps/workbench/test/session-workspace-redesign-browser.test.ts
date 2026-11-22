@@ -300,7 +300,7 @@ test("Sessions is the sole directory and renders conversation, source, reply and
   await page.getByRole("button", { name: "会话详情" }).click();
   await page.getByRole("combobox", { name: "消息" }).fill("键盘发送");
   await page.getByRole("combobox", { name: "消息" }).press("Control+Enter");
-  await page.getByText("已保存，正在读取持久记录。", { exact: true }).waitFor();
+  await page.locator("[data-receipt-phase]").waitFor();   // the one receipt line; the applied outcome is no longer a second line
   const postedMessage = posted.find(command => command.type === "session.message.post");
   assert.equal(posted.filter(command => command.type === "session.message.post").length, 1);
   assert.deepEqual(postedMessage?.context, { taskId, taskRevisionId: currentTask.revisionId });

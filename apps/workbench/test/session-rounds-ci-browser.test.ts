@@ -161,7 +161,7 @@ test("the timeline reads as rounds: last reply on open, times, task-named source
     }
     // 4: the Run's source line names the dispatcher and the task and links to it.
     const source = timeline.locator("[data-round-source]").first();
-    assert.match(await source.innerText(), /Leader 派发 · 任务「/);
+    assert.match(await source.innerText(), /统筹派发 · 任务「/);
     assert.ok((await source.getByRole("link").first().getAttribute("href"))?.includes("70000000-0000-4000-8000-000000000011"), "the source links to the specific task");
     assert.deepEqual(errors, [], `${width}: no page error`);
     await context.close();

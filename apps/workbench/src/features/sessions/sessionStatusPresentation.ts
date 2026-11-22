@@ -117,7 +117,7 @@ export function agentHeaderStatus(session: StatusSource, progress: NativeProgres
     if (session.busy !== true) return "运行记录不一致，待核对";
     if (turn.source?.kind === "message") return replyingPhrase(facts.replyingTo ?? null);
     if (turn.source?.kind === "run") return turn.source.id === session.latestBusinessRun?.id && session.latestBusinessRun.state === "running"
-      ? facts.taskTitle ? `正在做任务「${facts.taskTitle}」（Leader 派发）` : "正在执行任务" : "正在执行 · 任务记录待核对";
+      ? facts.taskTitle ? `正在做任务「${facts.taskTitle}」（统筹派发）` : "正在执行任务" : "正在执行 · 任务记录待核对";
     return "正在运行 · 来源待核对";
   }
   if (session.busy === true) return "有在途工作 · 执行待核对";
