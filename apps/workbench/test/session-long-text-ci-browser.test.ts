@@ -90,3 +90,22 @@ test("a paused provider is named in the header and above the composer in the ban
     }
   }
 });
+
+test("读取完整回复 expands a cut reply to its whole text, with no mismatch error, light and dark", { skip }, async t => {
+  process.env.FIXTURE_LONG_TEXT = "1"; t.after(() => { delete process.env.FIXTURE_LONG_TEXT; });
+  const { open } = await setup(t);
+  for (const scheme of ["light", "dark"] as const) {
+    const page = await open(1440, 900, scheme);
+    const cut = page.locator('[data-workspace-entry="answer-long"]');
+    await cut.locator("[data-reply-cut]").waitFor();
+    assert.doesNotMatch(await cut.innerText(), /const a = 1/, `${scheme}: the cut text hides the code block`);
+    await cut.getByRole("button", { name: "读取完整回复" }).click();
+    await cut.locator("[data-reply-full]").waitFor();
+    assert.match(await cut.locator("[data-reply-full]").innerText(), /已读取完整回复，共 \d+ 字/);
+    assert.match(await cut.innerText(), /const c = compute\(a, b\)/, `${scheme}: the code block after the cut point is shown`);
+    assert.match(await cut.innerText(), /后续第 8 段说明/, `${scheme}: the last paragraph is shown`);
+    assert.equal(await page.getByText("正文与所选消息不符").count(), 0);
+    assert.equal(await cut.locator("[data-reply-cut]").count(), 0);
+    await page.context().close();
+  }
+});
