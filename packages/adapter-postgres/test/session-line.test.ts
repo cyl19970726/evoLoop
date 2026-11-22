@@ -235,6 +235,14 @@ test("a busy Session makes entries wait; on its Run's end the first entry is con
   assert.equal(entryA.state, "started", JSON.stringify(entryA));
   const runA = (await uow.read(p, r => r.listRuntimeRuns(a)))[0]!;
   assert.equal(runA.id, entryA.runId); assert.equal((await task(a)).state, "in_progress");
+  // Task 586504eb: an ordinary entry's texts carry no rework wording and no Task revision (the Run is bound to a revision made after the text).
+  const requestA = (await workflow.getSessionMessageRecord(lead, p, entryA.messageId!))!;
+  const revisionsA = (await workflow.listTaskRevisions(lead, p, a)).map(item => item.revision.id);
+  for (const text of [requestA.content, runA.input]) {
+    assert.doesNotMatch(text, /返工|观察/);
+    for (const id of revisionsA) assert.ok(!text.includes(id), `revision ${id} written in: ${text}`);
+  }
+  assert.ok(runA.input.includes("taskRevisionId") && revisionsA.includes(runA.taskRevisionId));
   assert.equal((await entryOf(b)).state, "queued", "B waits while A's Run is live");
 
   await finishRun(runA.id);
