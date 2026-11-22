@@ -1,4 +1,4 @@
-// CI browser test (Task 0f8c7a15): one Leader home. Who is free, the queues and the conflicts are on 团队 › 统筹安排 and nowhere else; 运行与接入 and the
+// CI browser test (Task 0f8c7a15): one Leader home. Who is free, the queues and the conflicts are on 智能体空间的统筹安排 and nowhere else; 运行与接入 and the
 // agent directory say so in one sentence with a link; every old address still opens somewhere sensible. At 1440x900 and 390x844.
 import assert from "node:assert/strict";
 import { test } from "node:test";
