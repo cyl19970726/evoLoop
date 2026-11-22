@@ -99,7 +99,7 @@ test("login, project list and settings pages use the new layout and keep their b
     await page.getByText("没有结果未知的操作").waitFor();
     if (shots) await page.screenshot({ path: `${shots}/operations-1440.png` });
 
-    await go(`/p/${projectId}/repository`);
+    await go(`/p/${projectId}/settings`);
     await page.getByRole("heading", { name: "仓库规范" }).waitFor();
     assert.equal(await page.getByRole("list", { name: "按问题查阅" }).getByRole("link").count(), 3);
     assert.equal(await page.getByRole("link", { name: /贡献与变更入口/ }).getAttribute("target"), "_blank");

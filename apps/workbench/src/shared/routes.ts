@@ -47,13 +47,17 @@ export function parseRoute(path: string): Route {
 export function legacyTeamAddress(path: string): string | null {
   const [pathname = "", query = ""] = path.split("?");
   const parts = pathname.split("/");
+  // The navigation cleanup (Task 34f2a392): 组织复盘 is the 复盘 filter of 文档, 仓库规范 is a part of 项目设置. Both old addresses go there.
+  if ((parts.length === 4 || parts.length === 5 && parts[4] === "") && parts[1] === "p" && parts[2]) {
+    if (parts[3] === "reviews") return `/p/${parts[2]}/documents?kind=organization_review`;
+    if (parts[3] === "repository") return `/p/${parts[2]}/settings#settings-repository`;
+  }
   // `/p/{project}/runtime` or `/p/{project}/sessions`, or the same with a trailing slash.
   if (!(parts.length === 4 || parts.length === 5 && parts[4] === "") || parts[1] !== "p" || !parts[2] || parts[3] !== "runtime" && parts[3] !== "sessions") return null;
   const params = new URLSearchParams(query);
   const rest = (section: string) => { const text = params.toString(); return `/p/${parts[2]}/${section}${text ? `?${text}` : ""}`; };
-  // The agent directory no longer carries the arrangement board: its 动态 view (`/sessions?view=flow`) lives on 统筹安排 (`/arrangement?view=flow`).
-  // Every other `/sessions` address (the directory, `?session=`) stays where it is.
-  if (parts[3] === "sessions") return !params.get("session") && params.get("view") === "flow" ? rest("arrangement") : null;
+  // `/sessions` (also with `?view=flow`) is where 统筹安排 now opens while no agent is selected; `?session=` opens that agent. Nothing to rewrite.
+  if (parts[3] === "sessions") return null;
   if (params.get("session")?.includes(":")) { params.delete("view"); return rest("sessions"); }
   const view = params.get("view");
   if (!params.has("view")) return null;
@@ -65,7 +69,7 @@ export function legacyTeamAddress(path: string): string | null {
 export function redirectLegacyTeam(): boolean {
   const target = legacyTeamAddress(currentPath());
   if (!target) return false;
-  appHistory().replace(`${target}${appHistory().location.hash}`, undefined, { ignoreBlocker: true });
+  appHistory().replace(target.includes("#") ? target : `${target}${appHistory().location.hash}`, undefined, { ignoreBlocker: true });
   return true;
 }
 

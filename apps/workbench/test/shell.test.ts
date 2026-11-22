@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseRoute } from "../src/shared/routes.ts";
 import { projectPaths } from "../src/app/routePaths.ts";
-import { leafOf, projectInitial, rememberSpace, sectionLabels, spaceHref, spaceOf, workNavigation, workSectionOf } from "../src/app/shell/spaces.ts";
+import { leafOf, listedEntries, operationsGroupKey, operationsNavigation, projectInitial, rememberSpace, sectionLabels, spaceHref, spaceOf, workNavigation, workSectionOf } from "../src/app/shell/spaces.ts";
 import { addObjectTab, afterCenterMoved, afterTaskChanged, clampWidth, maxObjectTabs, panelPlace, panelWidth, readPanelState, type PanelObject } from "../src/shared/ui/ContextPanel.tsx";
 
 const p = "11111111-1111-4111-8111-111111111111";
@@ -14,21 +14,28 @@ test("every address belongs to one space, and every work page is reachable from 
   assert.equal(spaceOf(parseRoute(`/p/${p}/sessions?session=owned:${id}`)), "agents");
   assert.equal(spaceOf(parseRoute(`/p/${p}/runtime?session=owned:${id}`)), "agents", "an old runtime Session link opens the agents space");
   assert.equal(spaceOf(parseRoute(`/p/${p}/runtime`)), "work");
+  assert.equal(spaceOf(parseRoute(`/p/${p}/arrangement`)), "agents", "统筹安排 moved to the agents space");
   assert.equal(spaceOf(parseRoute(`/p/${p}/inbox`)), "inbox");
   assert.equal(spaceOf(parseRoute(`/p/${p}/operations`)), "inbox");
-  const reachable = new Set(workNavigation.flatMap(item => [item.section, ...(item.children ?? []).map(child => child.section)]));
+  assert.deepEqual(workNavigation.filter(item => !item.optional).map(item => item.label), ["总览", "目标与阶段", "任务", "文档"], "the work space's top level");
+  assert.deepEqual(operationsNavigation.filter(item => !item.optional).map(item => item.label), ["日程", "职责", "运行与接入"], "运转 holds three entries");
+  assert.deepEqual([...workNavigation, ...operationsNavigation].filter(item => item.optional).map(item => item.section), ["knowledge", "discussions", "collaboration"], "only these are listed on records or configuration");
+  const reachable = new Set([...workNavigation, ...operationsNavigation].map(item => item.section));
   for (const path of projectPaths) {
     const route = parseRoute(`/p/${p}/${path.replace(/\$\w+/, id)}`);
     assert.ok(sectionLabels[route.section], `${path} has a label`);
-    if (spaceOf(route) !== "work" || ["settings", "connectors"].includes(route.section)) continue;
+    // 评价与后果 opens from a task that has an evaluation, 组织复盘 from the 文档 filter (its address redirects), 仓库规范 from 项目设置: none has its own entry.
+    if (spaceOf(route) !== "work" || ["settings", "connectors", "repository", "reviews"].includes(route.section)) continue;
     assert.ok(reachable.has(leafOf(route.section)), `${path} is reachable from the work navigation`);
-    assert.ok(workSectionOf(route.section), `${path} highlights a section`);
+    assert.ok(workSectionOf(route.section), `${path} highlights an entry`);
   }
   assert.equal(leafOf("task"), "work");
   assert.equal(workSectionOf("document"), "documents");
-  assert.equal(workSectionOf("roles"), "arrangement");
-  assert.equal(workSectionOf("runtime"), "arrangement");
-  assert.equal(workSectionOf("arrangement"), "arrangement");
+  assert.equal(workSectionOf("roles"), operationsGroupKey);
+  assert.equal(workSectionOf("runtime"), operationsGroupKey);
+  assert.equal(workSectionOf("schedules"), operationsGroupKey);
+  assert.equal(workSectionOf("journey"), "journey");
+  assert.equal(leafOf("evaluations"), "work", "an evaluation opened from a task belongs to 任务");
 });
 
 test("each space reopens where the reader left it, only inside the same project", () => {
@@ -102,4 +109,17 @@ test("the project mark skips brackets and punctuation", () => {
   assert.equal(projectInitial("【合成示例】工作台"), "合");
   assert.equal(projectInitial("evoLoop"), "E");
   assert.equal(projectInitial("  "), "E");
+});
+
+test("optional entries are listed only with records or a configured backend, or while the reader is on that page", () => {
+  const labels = (items: readonly { label: string }[]) => items.map(item => item.label);
+  // An empty project: none of 知识空间, 分工讨论, 协作回执 is listed (their addresses still open).
+  assert.deepEqual(labels(listedEntries(workNavigation, new Set(), "overview")), ["总览", "目标与阶段", "任务", "文档"]);
+  assert.deepEqual(labels(listedEntries(operationsNavigation, new Set(), "overview")), ["日程", "职责", "运行与接入"]);
+  assert.deepEqual(labels(listedEntries(operationsNavigation, undefined, "overview")), ["日程", "职责", "运行与接入"], "a read that has not finished lists nothing extra");
+  // Records appear: the entry joins 运转 (a configured knowledge backend joins the top level).
+  assert.deepEqual(labels(listedEntries(operationsNavigation, new Set(["discussions"]), "overview")), ["日程", "职责", "运行与接入", "分工讨论"]);
+  assert.deepEqual(labels(listedEntries(workNavigation, new Set(["knowledge"]), "overview")), ["总览", "目标与阶段", "任务", "文档", "知识空间"]);
+  // The page the reader is on stays listed.
+  assert.deepEqual(labels(listedEntries(operationsNavigation, new Set(), "collaboration")), ["日程", "职责", "运行与接入", "协作回执"]);
 });

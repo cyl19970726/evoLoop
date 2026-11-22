@@ -1,6 +1,7 @@
 // 项目设置: the project, the signed-in identity and its permissions, and where each kind of record lives. 重新读取
 // reads the project and the identity again; each says when it was read, and a failed reread keeps what was there.
-import { BookOpen, ClipboardCheck, FileText, ListChecks, RefreshCw, Users } from "lucide-react";
+import type { ReactNode } from "react";
+import { BookOpen, ClipboardCheck, ListChecks, RefreshCw, Users } from "lucide-react";
 import { Button, Notice } from "@evoloop/ui";
 import { api, errorText } from "../../shared/api";
 import type { MutationContext } from "../../shared/ActionForm";
@@ -11,10 +12,11 @@ import { Facts, LinkList, SettingsPage, SettingsSection } from "../../shared/ui/
 import { operationsTitle } from "./operationsPresentation";
 import { identityChanges, identityLabel, identityReadText, permissionLabel } from "./settingsPresentation";
 import { readSession, sessionKey } from "./sessionRead";
+import { RepositorySections } from "./RepositoryPage";
 
 const readTime = (at: number) => at ? date(new Date(at).toISOString()) : "";
 
-export function ProjectSettings({ context }: { context: MutationContext; refresh: number }) {
+export function ProjectSettings({ context, reference }: { context: MutationContext; refresh: number; reference: ReactNode }) {
   const { projectId, principal: login } = context;
   const project = useProjectQuery(projectId, ["project"], async () => {
     const value = await api().project(projectId);
@@ -62,11 +64,15 @@ export function ProjectSettings({ context }: { context: MutationContext; refresh
     <SettingsSection id="settings-sources" title="各类记录在哪里">
       <LinkList label="各类记录的入口" items={[
         { href: href(projectId, "work"), title: "工作记录", detail: "任务、交付与使用", icon: <ListChecks /> },
-        { href: href(projectId, "repository"), title: "仓库规范", detail: "规范文档、已配置的能力与固定 Git 来源", icon: <FileText /> },
         { href: href(projectId, "knowledge"), title: "知识空间", detail: "外置认识与固定来源", icon: <BookOpen /> },
         { href: href(projectId, "runtime"), title: "团队与智能体", detail: "职责、承接与实际执行", icon: <Users /> },
         { href: href(projectId, "operations"), title: operationsTitle, detail: "当前身份保存的操作回执", icon: <ClipboardCheck /> },
       ]} />
     </SettingsSection>
+    <div id="settings-repository" className="flex flex-col gap-5 scroll-mt-4">
+      <h2 className="text-heading font-semibold text-foreground">仓库规范</h2>
+      <p className="text-small text-text-secondary">本项目有哪些能力和仓库，怎样登记固定 Git 来源；产品、架构与开发规范在仓库 docs 维护，与项目的过程文档分开。</p>
+      <RepositorySections projectId={projectId} reference={reference} />
+    </div>
   </SettingsPage>;
 }

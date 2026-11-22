@@ -94,7 +94,7 @@ export function OperationsPage({ projectId, items }: { projectId: string; items:
     <SettingsSection title="其他操作回执">
       <LinkList label="其他操作回执" items={[
         { href: href(projectId, "sessions"), title: "发给智能体的消息", detail: "送达、待人工转交和回复写在各智能体的对话里：打开智能体列表，选中发过消息的那一个核对。", icon: <MessageSquare /> },
-        { href: href(projectId, "collaboration"), title: "协作回执", detail: "任务同步到飞书的写入回执在 团队 › 协作回执，按原标识读回。", icon: <Share2 /> },
+        { href: href(projectId, "collaboration"), title: "协作回执", detail: "任务同步到飞书的写入回执在 运转 › 协作回执（有记录时出现），按原标识读回。", icon: <Share2 /> },
         { href: href(projectId, "knowledge"), title: "知识发布与撤回", detail: "专用回执在知识空间，按原操作查回。", icon: <BookOpen /> },
       ]} />
     </SettingsSection>

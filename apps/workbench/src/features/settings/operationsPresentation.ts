@@ -38,8 +38,8 @@ export type ReceiptOrigin =
 
 export const originKindLabel: Record<OriginKind, string> = { task: "任务", document: "文档", goal: "目标", stage: "阶段", discussion: "分工讨论" };
 export const originAreaLabel: Record<OriginArea, string> = {
-  agents: "智能体", runtime: "团队 › 运行与接入", roles: "团队 › 职责", schedules: "日程", evaluations: "评价与后果",
-  repository: "仓库规范", work: "任务列表", documents: "过程文档", journey: "目标与阶段", discussions: "团队 › 分工讨论",
+  agents: "智能体", runtime: "运转 › 运行与接入", roles: "运转 › 职责", schedules: "日程", evaluations: "评价与后果",
+  repository: "仓库规范", work: "任务列表", documents: "过程文档", journey: "目标与阶段", discussions: "运转 › 分工讨论",
 };
 /** The kind of thing an area holds, for “回执没有记下是哪个…”. */
 const areaThing: Record<OriginArea, string> = {

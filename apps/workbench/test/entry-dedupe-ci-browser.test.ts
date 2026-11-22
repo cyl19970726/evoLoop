@@ -45,7 +45,7 @@ test("one 新建任务 action, one name per level, one 文档 / 知识 switch, t
     {
       const { page, context, errors } = await open(width, height, scene("tasks").path, scene("tasks").ready);
       assert.equal(await visibleCount(page, "新建任务"), 1, `${width}: one 新建任务 on the task list`);
-      assert.equal(await visibleCount(page, "任务列表", "a, button, h1, h2, [role=tab]"), width >= 1100 ? 1 : 0, `${width}: 任务列表 is said once (the section's entry), not again as the rail's heading`);
+      assert.equal(await visibleCount(page, "任务列表", "a, button, h1, h2, [role=tab]"), 0, `${width}: 任务 has no child entry called 任务列表`);
       if (shots) await page.screenshot({ path: `${shots}/tasks-${width}.png` });
       assert.deepEqual(errors, []); await context.close();
     }
@@ -62,8 +62,8 @@ test("one 新建任务 action, one name per level, one 文档 / 知识 switch, t
       if (width >= 1100) assert.equal(switches, 0, `${width} ${name}: the rail has no second 文档/知识 switch`); else assert.ok(switches <= 1, `${width} ${name}: at most one 文档/知识 switch in the page (${switches})`);
       if (width >= 1100) {
         const nav = page.getByRole("navigation", { name: "工作分区" });
-        for (const [label, hint] of [["过程文档", "工作依据与报告"], ["知识空间", "长期的知识页"], ["仓库规范", "固定 Git 来源"]])
-          assert.ok(await nav.getByRole("link", { name: new RegExp(`^${label}`) }).filter({ hasText: hint }).count() === 1, `${width} ${name}: ${label} says "${hint}"`);
+        assert.deepEqual(await nav.locator("ul > li > a").evaluateAll(links => links.map(link => link.textContent?.trim()).filter(text => ["总览", "目标与阶段", "任务", "文档"].includes(text ?? ""))), ["总览", "目标与阶段", "任务", "文档"], `${width} ${name}: the work navigation's top level`);
+        assert.equal(await nav.getByRole("link", { name: "过程文档" }).count(), 0, `${width} ${name}: 文档 is one entry, not 文档与知识 with children`);
       }
       if (shots) await page.screenshot({ path: `${shots}/${name}-${width}.png` });
       await context.close();
@@ -102,8 +102,8 @@ test("one 新建任务 action, one name per level, one 文档 / 知识 switch, t
   {
     const { page, context } = await open(1440, 900, scene("documents").path, scene("documents").ready);
     const nav = page.getByRole("navigation", { name: "工作分区" });
-    await nav.getByRole("link", { name: /^知识空间/ }).click(); await page.waitForURL(/\/knowledge/);
-    await nav.getByRole("link", { name: /^过程文档/ }).click(); await page.waitForURL(/\/documents/);
+    await nav.getByRole("link", { name: "任务", exact: true }).click(); await page.waitForURL(/\/work/);
+    await nav.getByRole("link", { name: "文档", exact: true }).click(); await page.waitForURL(/\/documents/);
     await context.close();
   }
 });

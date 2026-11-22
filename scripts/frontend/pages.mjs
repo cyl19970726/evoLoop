@@ -38,8 +38,9 @@ export const scenes = [
     ready: both(heading("结果未知的操作", 1), text("提交结果待核对"), text(`原操作所在：任务 · ${tasks.t1.title}`)),
     before: page => page.addInitScript(receipt => sessionStorage.setItem("evoloop.unconfirmed-operations.v1", JSON.stringify([receipt])), unconfirmedReceipt) },
   // The capabilities judged for the project (one changes after a restart) and its two repositories (fixture/configuration.mjs).
-  { name: "repository", path: p("repository"), widths: plainThree, prepare: restPointer,
-    ready: both(heading("仓库规范", 1), text("登记 Git 固定来源"), text("重启后会变为未配置"), text("design-notes")) },
+  // 仓库规范 is a part of 项目设置 now; the old address redirects there.
+  { name: "repository", path: p("settings"), widths: plainThree, prepare: restPointer,
+    ready: both(heading("项目设置", 1), text("登记 Git 固定来源"), text("重启后会变为未配置"), text("design-notes")) },
   { name: "overview", path: p("overview"), drawer: true, ready: both(heading("项目总览"), text(tasks.t2.title)) },
 
   // Tasks: the table view, one task and its five other tabs, a new task.

@@ -6,10 +6,10 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 
 | 地址 | 现在 |
 | --- | --- |
-| `/arrangement`（团队导航第一项） | 统筹安排：下面写的看板、冲突与动态，并带编排与执行队列；`?view=flow` 是动态 |
-| `/sessions`（无参数） | 只做智能体目录：标题“智能体”，一句“谁空闲、队伍与冲突不在这里，看统筹安排”，加“统筹安排”入口；目录是内层栏，窄屏在“打开项目导航”里 |
+| `/arrangement`（旧地址，现与 `/sessions` 未选智能体时相同，属智能体空间） | 统筹安排：下面写的看板、冲突与动态，并带编排与执行队列；`?view=flow` 是动态 |
+| `/sessions`（无参数） | Task 34f2a392 起显示统筹安排（原统筹安排页整体搬来，不重排）；智能体目录是内层栏，窄屏在“打开项目导航”里 |
 | `/sessions?session=` | 照旧打开具体智能体，保存的链接不变；“接下来”里的“在统筹安排中查看”链到统筹安排 |
-| `/sessions?view=flow` | 跳到 `/arrangement?view=flow` |
+| `/sessions?view=flow` | 同一页的“动态”视图，地址不变 |
 | 改后截图 | [统筹安排 1440](../../assets/frontend-pages/team-arrangement-after-1440.png)、[智能体目录 1440](../../assets/frontend-pages/agents-directory-after-1440.png)、[智能体目录 390](../../assets/frontend-pages/agents-directory-after-390.png) |
 
 ## 这一页回答什么

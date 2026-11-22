@@ -1,4 +1,4 @@
-// 统筹安排 (`/arrangement`, under 团队; Task 0f8c7a15): the one Leader home — the only page that shows who is free, the queues and the conflicts. The center shows the board (each agent with what it is
+// 统筹安排 (`/arrangement`, in the 智能体 space; Task 0f8c7a15): the one Leader home — the only page that shows who is free, the queues and the conflicts. The center shows the board (each agent with what it is
 // doing, what is assigned and what is queued; unassigned Tasks apart), the right column the conflicts the records
 // prove. The Leader's own overview document has no marker yet, so the page says so instead of guessing one.
 // A read that is still running or failed is never shown as "free", "no conflict" or 0; a failed reread that keeps

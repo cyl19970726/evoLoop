@@ -208,6 +208,9 @@ function VersionFacts({ projectId, detail, linkForTab }: { projectId: string; de
   const { task, revision } = detail;
   const pending = detail.impacts.filter(impact => impact.state === "pending").length;
   const origin = useRevisionOrigin(projectId, revision, task.id);
+  // 评价与后果 is not in the navigation; this task's page links to it only when the task has an evaluation.
+  const evaluations = useProjectQuery(projectId, ["task-evaluations", task.id], () => api().evaluations(projectId, undefined, task.id), { retry: false });
+  const evaluated = (evaluations.data?.items.length ?? 0) > 0;
   return <div className="flex flex-col gap-2">
     <div className="flex flex-col gap-2.5">
       <Fact label="当前版本">第 {task.version} 版 · {date(revision.createdAt)}<span className="mt-0.5 block text-caption text-muted-foreground" data-revision-origin="">{origin.line}</span></Fact>
@@ -216,7 +219,7 @@ function VersionFacts({ projectId, detail, linkForTab }: { projectId: string; de
     <div className="flex flex-wrap gap-x-3 gap-y-1 text-label">
       <a className="text-primary hover:underline" href={linkForTab("history")}>历史修订与决定</a>
       <a className="text-primary hover:underline" href={linkForTab("basis")}>依据与影响</a>
-      <a className="text-primary hover:underline" href={`${href(projectId, "evaluations")}?taskId=${encodeURIComponent(task.id)}`}>评价与后果</a>
+      {evaluated && <a className="text-primary hover:underline" href={`${href(projectId, "evaluations")}?taskId=${encodeURIComponent(task.id)}`}>评价与后果</a>}
     </div>
     <FullIdentifiers rows={[{ label: "任务", value: task.id }, { label: "任务修订", value: revision.id },
       { label: "正文文档", value: task.contentDocumentId }, { label: "正文修订", value: task.contentRevisionId }, ...origin.identifiers]} />

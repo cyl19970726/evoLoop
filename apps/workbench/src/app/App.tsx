@@ -12,8 +12,8 @@ import type { CheckedOrigin, OperationItem } from "../features/settings/operatio
 import { checkedNoticeText } from "./operationNotice";
 import { providerHoldReadFailure } from "./providerHoldNotice";
 import { useProviderHolds } from "../shared/providerHolds";
-import { useEmptySections } from "../shared/emptySections";
-import { useKnowledgeMenuEmpty } from "../features/knowledge/knowledgeNav";
+import { usePresentSections } from "../shared/emptySections";
+import { useKnowledgeConfigured } from "../features/knowledge/knowledgeNav";
 import { clearRecoveryIntents, forgetRecoveryIntent, isSpecialOperation, rememberRecoveryIntent } from "./recoveryIntent";
 
 import { readRoute, href, type Route } from "../shared/ui/shared";
@@ -54,7 +54,6 @@ const SessionWorkspace = named(() => import("../features/sessions/SessionWorkspa
 const FlowPage = named(() => import("../features/sessions/flow/FlowPage"), "FlowPage");
 const FlowGlance = named(() => import("../features/sessions/flow/FlowGlance"), "FlowGlance");
 const ArrangementPage = named(() => import("../features/sessions/ArrangementPage"), "ArrangementPage");
-const AgentDirectory = named(() => import("../features/sessions/AgentDirectory"), "AgentDirectory");
 const ArrangementOperations = named(() => import("../features/team/ArrangementOperations"), "ArrangementOperations");
 // The execution queue (features/workflow) shown in an agent's right column; passed in so the two features do not import each other.
 const ResidentQueuePanel = named(() => import("../features/workflow"), "ResidentQueuePanel");
@@ -215,9 +214,9 @@ export function App() {
   const drain = drainNotice(drainRead.data, iso => new Date(iso).toLocaleString("zh-CN"));
   const projectTitle = projectRead.data?.title ?? "";
   const holdsRead = useProviderHolds(projectId ?? "", !!session);
-  const emptyShared = useEmptySections(projectId ?? "", token, !!session);
-  const knowledgeEmpty = useKnowledgeMenuEmpty(projectId ?? "", !!session);
-  const emptySections = useMemo(() => knowledgeEmpty ? new Set([...emptyShared, "knowledge" as const]) : emptyShared, [emptyShared, knowledgeEmpty]);
+  const presentShared = usePresentSections(projectId ?? "", token, !!session);
+  const knowledgeConfigured = useKnowledgeConfigured(projectId ?? "", !!session);
+  const presentSections = useMemo(() => knowledgeConfigured ? new Set([...presentShared, "knowledge" as const]) : presentShared, [presentShared, knowledgeConfigured]);
   // 待我处理 counts 验收安排, 依据变化 and 等我使用的交付 under the page's own keys; an unknown part is never counted as 0.
   const inbox = useInboxCount(projectId ?? "", session?.principal.actorId ?? "", !!session);
   const projectError = projectRead.error ? errorText(projectRead.error) : "";
@@ -306,7 +305,7 @@ export function App() {
     ...route.section !== "inbox" && inbox.state === "unknown" ? [{ key: "inbox", tone: "waiting" as const, text: inbox.text, link: { href: href(projectId, "inbox"), label: "去待我处理核对" } }] : [],
   ];
   return <>{confirmHost}<Suspense fallback={<p className={opening} role="status">正在打开工作台…</p>}><AppShell route={route} projectId={projectId} projectTitle={projectTitle} actor={principal.actorId} permissions={principal.permissions}
-    receiptCount={projectReceipts.length} inboxCount={shellInboxCount(inbox)} token={token} logout={logout} notices={notices} providerHolds={holdsRead.data} emptySections={emptySections}>
+    receiptCount={projectReceipts.length} inboxCount={shellInboxCount(inbox)} token={token} logout={logout} notices={notices} providerHolds={holdsRead.data} presentSections={presentSections}>
     <WorkspacePages key={`${principal.actorId}:${projectId}`} route={route} context={context} refresh={refresh} operations={operationItems} />
   </AppShell></Suspense></>;
 }
@@ -361,6 +360,8 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
     return () => { document.removeEventListener("click", beforeLink, true); window.removeEventListener("scroll", onScroll); window.removeEventListener("pagehide", remember); };
   }, [key, positionKey]);
   const { projectId, token } = context;
+  // 统筹安排 is the agents space's page while no agent is selected: the same content at `/sessions` and at its older address `/arrangement`.
+  const arrangementPage = () => <ArrangementPage context={context} refresh={refresh} flow={({ leaderSessionId, active: shown }) => <FlowPage token={token} projectId={projectId} leaderSessionId={leaderSessionId} active={shown} />} operations={<ArrangementOperations context={context} refresh={refresh} />} />;
   function page(r: Route, active: boolean) {
     if (r.section === "not-found") return <NotFoundPage projectId={projectId} path={currentPath()} />;
     if (r.section === "documents") return <DocumentIndex context={context} />;
@@ -380,12 +381,12 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
     if (r.section === "repository") return <RepositoryPage projectId={projectId} reference={<ReferencePanel context={context} />} />;
     if (r.section === "sessions") return r.session
       ? <SessionWorkspace context={context} refresh={refresh} sessionKey={r.session} active={active} queue={queue => <ResidentQueuePanel context={context} titled={false} {...queue} />} />
-      : <AgentDirectory projectId={projectId} />;
-    if (r.section === "arrangement") return <ArrangementPage context={context} refresh={refresh} flow={({ leaderSessionId, active: shown }) => <FlowPage token={token} projectId={projectId} leaderSessionId={leaderSessionId} active={shown} />} operations={<ArrangementOperations context={context} refresh={refresh} />} />;
+      : arrangementPage();
+    if (r.section === "arrangement") return arrangementPage();
     if (r.section === "schedules") return <SchedulingPanel context={context} refresh={refresh} />;
     if (r.section === "overview") return <ProjectSummary token={token} projectId={projectId} refresh={refresh} active={active}
       flowGlance={<Suspense fallback={null}><FlowGlance token={token} projectId={projectId} active={active} /></Suspense>} />;
-    if (r.section === "settings") return <ProjectSettings context={context} refresh={refresh} />;
+    if (r.section === "settings") return <ProjectSettings context={context} refresh={refresh} reference={<ReferencePanel context={context} />} />;
     if (r.section === "connectors") return <ConnectorPage context={context} />;
     if (r.section === "collaboration") return <CollaborationPanel context={context} refresh={refresh} />;
     const components = { reviews: <TeamWorkspace context={context} refresh={refresh} section="reviews" />, discussions: <TeamWorkspace context={context} refresh={refresh} section="discussions" />, runtime: r.session?.includes(":") ? <SessionWorkspace context={context} refresh={refresh} sessionKey={r.session} active={active} queue={queue => <ResidentQueuePanel context={context} titled={false} {...queue} />} /> : <TeamWorkspace context={context} refresh={refresh} section="runtime" sessionId={r.session} />, roles: <TeamWorkspace context={context} refresh={refresh} section="roles" />, collaboration: <CollaborationPanel context={context} refresh={refresh} /> };
