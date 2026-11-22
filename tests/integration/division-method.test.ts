@@ -73,7 +73,7 @@ test("PG method records a choice, then permits only its original todo Task throu
   await wf({type:"project.create",title:"Method continuation"});
   for (const roleId of [cognition,business,other]) await seedFixtureRole(pool,projectId,roleId);
   await wf({type:"goal.create",goalId,outcome:"One bounded result",constraints:"Local",consumer:owner,authority:owner,scope:"fixture",owner});
-  await wf({type:"stage.propose",stageId,goalId,deliverable:"One result",learningQuestion:"What changed?",reason:"Fixture"});
+  await wf({type:"stage.propose", shortName: "S", checkMethod: "Check",stageId,goalId,deliverable:"One result",learningQuestion:"What changed?",reason:"Fixture"});
   await wf({type:"stage.accept",stageId,expectedVersion:1,reason:"Start"});
   for(const [taskId,role] of [[parentTaskId,cognition],[firstTaskId,business],[otherTaskId,other]] as const)
     await wf({type:"task.create",taskId,stageId,title:"Task",content:"# Bounded task",acceptance:"Report",owner:role,
@@ -300,7 +300,7 @@ test("PG final cognition decision prevents a late method child before budget or 
   await wf({type:"project.create",title:"Method late-child boundary"});
   for (const roleId of [cognition,business]) await seedFixtureRole(pool,projectId,roleId);
   await wf({type:"goal.create",goalId,outcome:"One bounded result",constraints:"Local",consumer:owner,authority:owner,scope:"fixture",owner});
-  await wf({type:"stage.propose",stageId,goalId,deliverable:"One result",learningQuestion:"What changed?",reason:"Fixture"});
+  await wf({type:"stage.propose", shortName: "S", checkMethod: "Check",stageId,goalId,deliverable:"One result",learningQuestion:"What changed?",reason:"Fixture"});
   await wf({type:"stage.accept",stageId,expectedVersion:1,reason:"Start"});
   for(const [taskId,role] of [[parentTaskId,cognition],[firstTaskId,business]] as const)
     await wf({type:"task.create",taskId,stageId,title:"Task",content:"# Bounded task",acceptance:"Report",owner:role,

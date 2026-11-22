@@ -248,12 +248,12 @@ test("跨空间返回: task → agent → task (same tab), table → agent, 统�
   const board = page.getByRole("list", { name: "各智能体的安排" });
   const staleLine = board.locator("[data-stale-assignment]");
   await staleLine.waitFor({ timeout: 8000 }).catch(() => fail("stale assignment not marked on the board"));
-  assert.match(await staleLine.innerText(), new RegExp(`${titleB}[\\s\\S]*分派属于旧修订 · 要重新指定`));
+  assert.match(await staleLine.innerText(), new RegExp(`${titleB}[\\s\\S]*分派是按旧版任务做的 · 要重新指定`));
   assert.doesNotMatch(await staleLine.innerText(), /待接手/);
   assert.equal(await staleLine.count(), 1, "only the assignment that would stop the next dispatch");
   assert.match(await board.locator("li", { hasText: titleD }).last().innerText(), /待验收/, "a delivered task waiting for acceptance is not stale");
   const risks = page.getByRole("region", { name: "冲突与风险" });
-  await risks.getByRole("link", { name: `「${titleB}」的分派属于旧修订，要重新指定` }).waitFor();
+  await risks.getByRole("link", { name: `「${titleB}」的分派是按旧版任务做的，要重新指定` }).waitFor();
   assert.match(await page.getByLabel("概况").innerText(), /1\s*个冲突与风险/);
   await shoot("arrangement-stale-1440");
   await board.getByRole("link", { name: titleA }).click();

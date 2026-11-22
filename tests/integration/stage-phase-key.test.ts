@@ -29,7 +29,7 @@ test("a stage is linked to a roadmap phase by task decision authority only; the 
   const owner = fixtureRoleId("phase-owner"); await seedFixtureRole(pool, projectId, owner);
   const goalId = randomUUID();
   await applied(reviewer, { type: "goal.create", goalId, outcome: "One goal", constraints: "none", consumer: owner, authority: owner, scope: "test", owner });
-  const stage = async () => { const stageId = randomUUID(); await applied(reviewer, { type: "stage.propose", stageId, goalId, deliverable: "Deliver", learningQuestion: "Learn", reason: "propose" }); return stageId; };
+  const stage = async () => { const stageId = randomUUID(); await applied(reviewer, { type: "stage.propose", shortName: "S", checkMethod: "Check", stageId, goalId, deliverable: "Deliver", learningQuestion: "Learn", reason: "propose" }); return stageId; };
   const first = await stage(), second = await stage();
   assert.deepEqual(await workflow.listStagePhaseLinks(reviewer, projectId), [], "day one: nothing is linked");
 

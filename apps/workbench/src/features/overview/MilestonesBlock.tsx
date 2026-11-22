@@ -1,9 +1,11 @@
 // The overview's version and milestone blocks (docs/frontend/overview-top-design.md): the deployed version on the left, the six roadmap phases
 // on the right, only the current one highlighted. The version comes from GET /api/version, the phases from GET /projects/:id/milestones.
+import * as React from "react";
 import { api, errorText } from "../../shared/api";
 import { useProjectQuery } from "../../shared/query";
 import { href } from "../../shared/ui/shared";
 import { NOT_REGISTERED, milestoneRows, versionView } from "./milestonesPresentation";
+import { readOverviewParam, writeOverviewParam } from "./overviewAddress";
 
 const card = "flex min-w-0 flex-col gap-1.5 rounded-xl bg-raised px-4 py-2.5 shadow-sm compact:px-5";
 const muted = "text-caption text-muted-foreground";
@@ -15,6 +17,7 @@ export function MilestonesBlock({ projectId, active }: { projectId: string; acti
   const milestones = useProjectQuery(projectId, ["overview", "milestones"], signal => api().milestones(projectId, signal), { enabled: active, retry: false });
   const v = versionView(version.data ?? null);
   const rows = milestoneRows(milestones.data ?? null);
+  const [open, setOpen] = React.useState(() => readOverviewParam("milestones") === "open");
   const unreadable = milestones.isError || (milestones.data && milestones.data.source.roadmap === "unavailable");
   return <div className="@container" data-overview-top="">
     <div className="grid gap-3 @2xl:grid-cols-[14rem_minmax(0,1fr)]">
@@ -34,7 +37,7 @@ export function MilestonesBlock({ projectId, active }: { projectId: string; acti
           {milestones.data && !unreadable && <span className={muted} data-current-note="">{milestones.data.currentNote ?? ""}</span>}</div>
         {milestones.isPending && <p className={muted} role="status">正在读取里程碑…</p>}
         {unreadable && <p className={muted} role="status">{milestones.isError ? `里程碑这次没有读到（${errorText(milestones.error)}）。` : "路线图读不到，里程碑无法显示。"}</p>}
-        {!unreadable && rows.length > 0 && <details data-milestones-detail="" className="group">
+        {!unreadable && rows.length > 0 && <details data-milestones-detail="" className="group" open={open} onToggle={event => { const next = event.currentTarget.open; if (next === open) return; setOpen(next); if (active) writeOverviewParam("milestones", next ? "open" : null); }}>
           <summary className="cursor-pointer text-small text-text-secondary" data-milestones-summary="">{(() => { const cur = rows.find(row => row.current); return cur ? `当前：${cur.id} ${cur.title} · ${cur.status}` : "没有单一的当前阶段"; })()} · 展开全部 {rows.length} 个阶段</summary>
           <div aria-hidden="true" className="hidden gap-x-3 px-2 text-caption text-muted-foreground @3xl:grid @3xl:grid-cols-[9rem_minmax(0,1.2fr)_minmax(0,1.5fr)_6rem_7rem]">
             <span>阶段</span><span>要交付什么</span><span>退出证据</span><span>状态</span><span>节点日期</span></div>
@@ -42,7 +45,7 @@ export function MilestonesBlock({ projectId, active }: { projectId: string; acti
             {rows.map(row => <li key={row.id} data-phase={row.id} data-current={row.current ? "true" : undefined} aria-current={row.current ? "step" : undefined}
               className={`grid grid-cols-[minmax(0,1fr)_auto] items-center @sm:grid-cols-[minmax(0,1fr)_auto_7.5rem] gap-x-2 border-t border-border px-2 py-1 first:border-t-0 @3xl:grid-cols-[9rem_minmax(0,1.2fr)_minmax(0,1.5fr)_6rem_7rem] @3xl:gap-x-3 ${row.current ? "bg-accent shadow-[inset_3px_0_0_var(--accent)]" : ""}`}>
               <span className="col-start-1 row-start-1 min-w-0 text-small font-medium @3xl:col-start-1 @3xl:row-start-1">
-                <a className="text-primary hover:underline" href={href(projectId, "journey")}>{row.id} {row.title}</a>
+                {row.stageId ? <a className="text-primary hover:underline" href={`${href(projectId, "journey")}?stage=${row.stageId}`}>{row.id} {row.title}</a> : <span>{row.id} {row.title}</span>}
                 {row.current && <span className="ml-1 text-caption font-semibold text-primary">当前</span>}</span>
               <span className={`${row.current ? "hidden @sm:block " : "hidden @3xl:block "}col-start-1 row-start-2 line-clamp-1 text-caption text-text-secondary @3xl:col-start-2 @3xl:row-start-1 @3xl:line-clamp-2 @3xl:text-small`}><span className="@3xl:hidden">交付：</span>{row.deliver}</span>
               <span className={`${row.current ? "hidden @sm:block " : "hidden @3xl:block "}col-span-2 @sm:col-span-3 col-start-1 row-start-3 line-clamp-1 text-caption text-text-secondary @3xl:col-span-1 @3xl:col-start-3 @3xl:row-start-1 @3xl:line-clamp-2 @3xl:text-small`}><span className="@3xl:hidden">退出证据：</span>{row.exit}</span>

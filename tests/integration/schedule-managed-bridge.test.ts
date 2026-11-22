@@ -94,7 +94,7 @@ test("a targeted Schedule occurrence creates one Stage Task and enters only its 
   await seedFixtureRole(pool,projectId,business);
   await write({ type: "goal.create", goalId, outcome: "Recurring check", constraints: "Local fixture",
     consumer: owner, authority: owner, scope: "Bounded", owner });
-  await write({ type: "stage.propose", stageId, goalId, deliverable: "Check", learningQuestion: "What changed?", reason: "Trial" });
+  await write({ type: "stage.propose", shortName: "S", checkMethod: "Check", stageId, goalId, deliverable: "Check", learningQuestion: "What changed?", reason: "Trial" });
   await write({ type: "stage.accept", stageId, expectedVersion: 1, reason: "Start" });
   const sourceAfter = { createdAtUtc: now, eventId: null };
   await issue({ type: "loop.enroll", loopId, goalId, stageId, cognitiveRoleId: cognition,

@@ -127,7 +127,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   await seedFixtureRole(pool,projectId,cognitiveRole,{templateKey:"cognition"});
   await seedFixtureRole(pool,projectId,businessRole);
   await issue({type:"goal.create",goalId,outcome:"Check one fixed source",constraints:"Fixture only",consumer:"owner",authority:"controller",scope:"isolated",owner:controller});
-  await issue({type:"stage.propose",stageId,goalId,deliverable:"One bounded action",learningQuestion:"Can worker read and act?",reason:"Fixture stage"});
+  await issue({type:"stage.propose", shortName: "S", checkMethod: "Check",stageId,goalId,deliverable:"One bounded action",learningQuestion:"Can worker read and act?",reason:"Fixture stage"});
   await issue({type:"stage.accept",stageId,expectedVersion:1,reason:"Active fixture stage"});
   const basisId=randomUUID(),source="# Frozen basis\nExact original.";
   const basis=await issue({type:"document.create",documentId:basisId,title:"Frozen basis",body:source});
@@ -188,7 +188,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   const outsideGoalId=randomUUID(),outsideStageId=randomUUID(),outsideDocumentId=randomUUID();
   await issue({type:"goal.create",goalId:outsideGoalId,outcome:"Separate goal",constraints:"Fixture only",
     consumer:"owner",authority:"controller",scope:"isolated",owner:controller});
-  await issue({type:"stage.propose",stageId:outsideStageId,goalId:outsideGoalId,deliverable:"Separate work",
+  await issue({type:"stage.propose", shortName: "S", checkMethod: "Check",stageId:outsideStageId,goalId:outsideGoalId,deliverable:"Separate work",
     learningQuestion:"Should scope isolate?",reason:"Outside loop"});
   await issue({type:"stage.accept",stageId:outsideStageId,expectedVersion:1,reason:"Active outside stage"});
   const outsideDocument=await issue({type:"document.create",documentId:outsideDocumentId,kind:"report",

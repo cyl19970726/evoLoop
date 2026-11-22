@@ -63,7 +63,7 @@ test("PG new Role creation commits with binding, rolls back on failure, and seri
   await wf(controller,{type:"project.create",title:"Isolated trial creation"});
   for (const roleId of [cognitionRole,fixtureRoleId("prior-owner")]) await seedFixtureRole(pool,projectId,roleId);
   await wf(controller,{type:"goal.create",goalId,outcome:"One trial",constraints:"Finite",consumer:"controller",authority:"reviewer",scope:"fixture",owner:controller});
-  await wf(controller,{type:"stage.propose",stageId,goalId,deliverable:"One result",learningQuestion:"Useful?",reason:"Fixture"});
+  await wf(controller,{type:"stage.propose", shortName: "S", checkMethod: "Check",stageId,goalId,deliverable:"One result",learningQuestion:"Useful?",reason:"Fixture"});
   await wf(controller,{type:"stage.accept",stageId,expectedVersion:1,reason:"Start"});
   await wf(controller,{type:"task.create",taskId:parentTaskId,stageId,title:"Research",content:"# Decide",acceptance:"Decision",owner:cognitionRole,consumer:controller,evidence:"Fixture",stopCondition:"One choice"});
   await wf(controller,{type:"task.start",taskId:parentTaskId,expectedVersion:1,reason:"Freeze"});

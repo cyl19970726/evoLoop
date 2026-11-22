@@ -58,7 +58,7 @@ test("PG waiting resume keeps signed history and exposes only verified fixed Iss
   await official(reviewer,{type:"project.create",title:"Waiting resume fixture"});
   for (const roleId of [cognitiveRole,businessRole]) await seedFixtureRole(pool,projectId,roleId);
   await official(reviewer,{type:"goal.create",goalId,outcome:"One bounded review",constraints:"Fixed Issue",consumer:"owner",authority:"reviewer",scope:"local",owner:reviewer});
-  await official(reviewer,{type:"stage.propose",stageId,goalId,deliverable:"Fixed decision",learningQuestion:"What next?",reason:"Fixture"});
+  await official(reviewer,{type:"stage.propose", shortName: "S", checkMethod: "Check",stageId,goalId,deliverable:"Fixed decision",learningQuestion:"What next?",reason:"Fixture"});
   await official(reviewer,{type:"stage.accept",stageId,expectedVersion:1,reason:"Activate"});
   await official(reviewer,{type:"task.create",taskId:businessTask,stageId,title:"Original work",content:"# Original",acceptance:"One Issue",owner:businessRole,consumer:"owner",evidence:"Pending",stopCondition:"One report"});
   await official(reviewer,{type:"task.start",taskId:businessTask,expectedVersion:1,reason:"Fix input"});

@@ -48,7 +48,7 @@ test("the way back says where it goes and names it once, without nested brackets
   assert.equal(returnText({ kind: "page", section: "documents" }), "返回文档列表");
   assert.equal(returnText({ kind: "page", section: "overview" }), "返回总览");
   assert.equal(returnText({ kind: "page", section: "inbox" }, "待我处理"), "返回待我处理", "a link may name the page it came from");
-  assert.equal(returnText({ kind: "page", section: "inbox" }), "返回待我验收与判断", "without a name the page keeps its canonical name");
+  assert.equal(returnText({ kind: "page", section: "inbox" }), "返回待我处理", "without a name the page keeps its canonical name");
   // A schedule is named (N2): “返回日程：<名称>”; without its name, “返回日程”.
   assert.equal(returnText({ kind: "page", section: "schedules" }, "季度巡检"), "返回日程：季度巡检");
   assert.equal(returnText({ kind: "page", section: "schedules" }), "返回日程");
@@ -101,8 +101,8 @@ test("a task page comes back to an agent, 统筹安排 or a document, and keeps 
   assert.equal(taskSessionReturn(fromAgent, project, task, "me")?.label, "返回智能体", "without a name the agent page's link names the place only");
   const fromDocument = withReturn(taskPath, { href: `${p}/documents/${other}`, actorId: "me", title: "需求总图" });
   assert.equal(taskSessionReturn(fromDocument, project, task, "me")?.label, "返回文档：需求总图");
-  const fromInbox = `${taskPath}?${new URLSearchParams({ tab: "delivery", return: `${p}/inbox`, actor: "me", returnTitle: "待我验收与判断" })}`;
-  assert.equal(taskSessionReturn(fromInbox, project, task, "me")?.label, "返回待我验收与判断", "the link 待我处理 writes (inboxModel.deliveryLink)");
+  const fromInbox = `${taskPath}?${new URLSearchParams({ tab: "delivery", return: `${p}/inbox`, actor: "me", returnTitle: "待我处理" })}`;
+  assert.equal(taskSessionReturn(fromInbox, project, task, "me")?.label, "返回待我处理", "the link 待我处理 writes (inboxModel.deliveryLink)");
   assert.equal(taskSessionReturn(withReturn(taskPath, { href: taskPath, actorId: "me" }), project, task, "me"), null, "never to itself");
   const next = new URLSearchParams(taskTabHref(fromArrangement, project, task, "runtime", "me").split("?")[1]);
   assert.equal(next.get("return"), `${p}/arrangement`);

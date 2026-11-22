@@ -1,4 +1,5 @@
 import { reviewMetadata, validatePreviousReview } from "./documents/organization-review.js";
+import { deriveStageProjection } from "@evoloop/contracts/stage-projection";
 import { commandSchema, hasDecisionAuthority, hasPermission, isProjectMember, mayAccessSession } from "@evoloop/contracts";
 import { commandPermissionPolicy, commandPolicy } from "./command-policy.js";
 export { commandPermissionPolicy, commandPolicy } from "./command-policy.js";
@@ -509,6 +510,9 @@ export class WorkflowService {
           acceptancePrecondition: command.acceptancePrecondition ?? null,
           completionBoundary: decisionOnly ? null : command.completionBoundary ?? null,
           evidence: command.evidence ?? "", stopCondition: command.stopCondition ?? "", createdAt: now });
+        // The ownership side table (migration 118) is written with the proposal, never separately, so the two cannot disagree.
+        if (command.stageId) await tx.putTaskStage?.({ projectId: command.projectId, taskId: task.id, version: 1, stageId: command.stageId, noStageReason: null,
+          actorId, reason: "task.create", updatedAt: now }, 0);
         for (const linkedId of documentIds) await tx.insertLink({ projectId: command.projectId, id: this.deps.ids.next(),
           taskId: task.id, documentId: linkedId, actorId, createdAt: now });
         if (command.timing) {
@@ -657,6 +661,12 @@ export class WorkflowService {
             acceptanceMode,
             acceptanceTarget, acceptancePrecondition, completionBoundary: priorProposal?.completionBoundary ?? null,
             evidence, stopCondition, createdAt: now });
+        }
+        if (stageChanged && tx.getTaskStage) {
+          const owned = await tx.getTaskStage(task.id);
+          if (stageId !== null) await tx.putTaskStage?.({ projectId: task.projectId, taskId: task.id, version: (owned?.version ?? 0) + 1, stageId, noStageReason: null,
+            actorId, reason: command.reason, updatedAt: now }, owned?.version ?? 0);
+          else if (owned && owned.stageId !== null) await tx.clearTaskStage?.(task.id, owned.version, actorId, command.reason, now);
         }
         for (const id of documentIds.filter(id => !linked.includes(id))) await tx.insertLink({ projectId: task.projectId,
           id: this.deps.ids.next(), taskId: task.id, documentId: id, actorId, createdAt: now });
@@ -1189,6 +1199,29 @@ export class WorkflowService {
   /** The stages linked to a roadmap phase, each with its latest review (the overview's milestones read these). */
   listStagePhaseLinks(principal: Principal, projectId: string) {
     return this.read(principal, projectId, reader => reader.listStagePhaseLinks?.() ?? Promise.resolve([]));
+  }
+  /** The stage's milestone fields (null: not registered) with every change made to them, newest last. */
+  getStageMilestone(principal: Principal, projectId: string, stageId: string) {
+    return this.read(principal, projectId, async reader => { required(await reader.getStage(stageId), "Stage");
+      return { milestone: await reader.getStageMilestone?.(stageId) ?? null, history: await reader.listStageMilestoneHistory?.(stageId) ?? [] }; });
+  }
+  /** A Task's stage ownership row (null: unassigned) as the side table records it. */
+  getTaskStage(principal: Principal, projectId: string, taskId: string) {
+    return this.read(principal, projectId, async reader => { required(await reader.getTask(taskId), "Task"); return { taskStage: await reader.getTaskStage?.(taskId) ?? null }; });
+  }
+  /**
+   * The project's stages as milestones: milestone fields, state words, latest review, Task counts by the Task page's own phases, and the current stage.
+   * Read-only; `timeZone` (IANA, default UTC) only decides what day it is. Design: docs/frontend/milestones-design.md §2 and §5.
+   */
+  getStageProjection(principal: Principal, projectId: string, timeZone = "UTC") {
+    return this.read(principal, projectId, async reader => {
+      const stages = await reader.listStages();
+      const reviews = new Map<string, import("@evoloop/contracts").StageReview[]>();
+      for (const stage of stages) reviews.set(stage.id, await reader.listStageReviews(stage.id));
+      return deriveStageProjection({ asOf: this.deps.clock.now(), timeZone, stages,
+        milestones: new Map((await reader.listStageMilestones?.() ?? []).map(milestone => [milestone.stageId, milestone])),
+        reviews, tasks: await reader.listTaskStageFacts?.() ?? [] });
+    });
   }
   listStages(principal: Principal, projectId: string, goalId?: string) { return this.read(principal, projectId, reader => reader.listStages(goalId)); }
   listStageRevisions(principal: Principal, projectId: string, stageId: string) { return this.read(principal, projectId, async reader => { required(await reader.getStage(stageId),"Stage"); return reader.listStageRevisions(stageId); }); }

@@ -9,6 +9,8 @@ import { agentDisplayName, agentNameCollisions, agentNameIsGenerated } from "../
 import { agentNameKey, readAgent } from "../../shared/agentRead";
 import { currentStageText, leaderWorkItemPresentation, loadLeaderWorkStatuses } from "../../shared/leaderWorkLoad";
 import { queryKeys, useProjectQuery } from "../../shared/query";
+import { capabilityGapText } from "../../shared/capabilityPresentation";
+import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { tableOrigin } from "./taskOrigin";
 import { phaseOrder, phaseStatus } from "../../shared/taskStatus";
 import { timingDate, timingDuration, timingStageLabel } from "../../shared/taskTiming";
@@ -23,8 +25,8 @@ export function PhaseCounts({ counts, label = "对账阶段计数" }: { counts: 
   const shown = phaseOrder.filter(phase => counts[phase]);
   return <div className="flex flex-wrap items-center gap-1.5" aria-label={label}>
     {shown.map(phase => <StatusTag key={phase} tone={phaseStatus[phase].tone} label={phaseStatus[phase].label} detail={String(counts[phase])} />)}
-    {!!counts.review_acknowledged && <Badge>统筹已核对 {counts.review_acknowledged}</Badge>}
-    {!!counts.review_deferred && <Badge>统筹已暂缓 {counts.review_deferred}</Badge>}
+    {!!counts.review_acknowledged && <Badge>Leader 已核对 {counts.review_acknowledged}</Badge>}
+    {!!counts.review_deferred && <Badge>Leader 已暂缓 {counts.review_deferred}</Badge>}
     {!shown.length && <span className="text-label text-muted-foreground">当前没有未关闭的工作。</span>}
   </div>;
 }
@@ -72,12 +74,12 @@ export function LeaderOverview({ projectId, page, statuses, roleNames, actorId }
   const names = useAgentNames(projectId, keys);
   const visible = [...page.items].sort((a, b) => phaseOrder.indexOf(a.phase) - phaseOrder.indexOf(b.phase));
   const unnamed = Object.values(names).filter(value => value.problem).length;
-  return <section aria-label="全项目统筹对账" data-leader-overview="" className="flex flex-col gap-3">
+  return <section aria-label="全项目的 Leader 对账" data-leader-overview="" className="flex flex-col gap-3">
     <p className="text-caption text-muted-foreground">{page.observedAt ? `读于 ${new Date(page.observedAt).toLocaleString("zh-CN")}` : "尚未读回"} · 变更序号 {page.changeSequence}
       {page.partial ? " · 服务只返回了部分工作，结果不完整" : ""}{page.nextCursor ? ` · 只读到前 ${page.items.length} 项（共 ${page.total} 项）` : ""}</p>
-    {extra.isFetching && <p role="status" className="text-caption text-muted-foreground">正在核对统筹行的来源与责任名称…</p>}
-    {extra.error && <p role="status" className="text-caption text-muted-foreground">统筹行来源状态暂不可读：{errorText(extra.error)}。未读回的行只显示待核对。</p>}
-    {!!extra.data?.missing.length && <p role="status" className="text-caption text-muted-foreground">统筹行来源状态仅读回 {extra.data.statuses.length}/{missing.length} 项；未读回的行不用原始标题推定来源。</p>}
+    {extra.isFetching && <p role="status" className="text-caption text-muted-foreground">正在核对 Leader 行的来源与责任名称…</p>}
+    {extra.error && <p role="status" className="text-caption text-muted-foreground">Leader 行来源状态暂不可读：{errorText(extra.error)}。未读回的行只显示待核对。</p>}
+    {!!extra.data?.missing.length && <p role="status" className="text-caption text-muted-foreground">Leader 行来源状态仅读回 {extra.data.statuses.length}/{missing.length} 项；未读回的行不用原始标题推定来源。</p>}
     {unnamed > 0 && <p role="status" className="text-caption text-muted-foreground">{unnamed} 个智能体的名称暂不可读；名称待核对，入口仍保留。</p>}
     {visible.length ? <ol className="flex flex-col divide-y divide-border">{visible.map(item => {
       const key = item.responsible.kind === "session" && item.responsible.id
@@ -96,7 +98,7 @@ export function LeaderOverview({ projectId, page, statuses, roleNames, actorId }
           {item.plan?.priority ? ` · P${item.plan.priority}` : ""}{item.dependencies.length ? ` · ${item.dependencies.length} 项依赖` : ""}
           {item.plan?.dueAt ? ` · 截止 ${new Date(item.plan.dueAt).toLocaleString("zh-CN")}` : " · 截止未设置"}</p>
         <p className="text-caption text-muted-foreground">创建 {timingDate(item.timing?.createdAt)} · 当前阶段 {item.timing ? currentStageText(item.timing.current.stage, item.phase, timingStageLabel[item.timing.current.stage]) : "未知"} · 已历时 {timingDuration(item.timing?.current.elapsedMs)}</p>
-        {item.review && <p className="text-caption text-muted-foreground">统筹{item.review.decision === "deferred" ? "已暂缓" : "已核对"}：{item.review.reason} · {new Date(item.review.at).toLocaleString("zh-CN")}</p>}
+        {item.review && <p className="text-caption text-muted-foreground">Leader {item.review.decision === "deferred" ? "已暂缓" : "已核对"}：{item.review.reason} · {new Date(item.review.at).toLocaleString("zh-CN")}</p>}
       </li>;
     })}</ol> : <p className="text-label text-muted-foreground">当前没有未关闭的工作。</p>}
     <p className="text-caption text-muted-foreground">按当前任务版本、分派、运行、交付、使用记录、依据复核和依赖得出；运行结束不等于验收。</p>
@@ -125,9 +127,10 @@ export function CapacitySummary({ projectId, overview, error, actorId }: {
         : read?.problem ? { state: "failed" } : { state: "reading" };
       const name = nameOnly("智能体", nameRead);
       return <li key={item.sessionId} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 py-2 text-label">
-        <a className="font-medium text-foreground hover:underline" href={sessionHref(projectId, `owned:${item.sessionId}`, actorId ? tableOrigin(projectId, actorId) : null)}>{item.isLeader ? "统筹" : name}</a>
+        <a className="font-medium text-foreground hover:underline" href={sessionHref(projectId, `owned:${item.sessionId}`, actorId ? tableOrigin(projectId, actorId) : null)}>{item.isLeader ? "Leader" : name}</a>
         <span className="text-caption text-muted-foreground">{item.tenure === "temporary" ? "临时" : "常驻"} · {item.persistedWorkIdle ? "已登记工作已清" : "仍在工作"} · 验收 {item.openAcceptance} · 消息 {item.pendingMessages} · 队列 {item.queueEntries}</span>
-        <span className="text-caption">{item.readyForAcceptance ? "可接验收" : item.missingCapabilities.length ? `缺：${item.missingCapabilities.join("、")}` : "不可接验收"}</span>
+        {item.missingCapabilities.length > 0 && <FullIdentifiers rows={[{ label: "缺项原文", value: item.missingCapabilities.join("、"), text: true }]} />}
+        <span className="text-caption">{item.readyForAcceptance ? "可接验收" : item.missingCapabilities.length ? `缺：${item.missingCapabilities.map(capabilityGapText).join("、")}` : "不可接验收"}</span>
       </li>;
     })}</ul> : <p className="text-label text-muted-foreground">当前没有可读取的智能体。</p>}
     <p className="text-caption text-muted-foreground">容量只说明已登记的工作已清；执行配置和消息授权仍按缺项单独核对。这里不会自动创建授权。</p>
@@ -141,8 +144,8 @@ export function ReconciliationDetails({ projectId, page, statuses, roleNames, er
   const overview = useProjectQuery(projectId, ["tasks", "acceptance-overview"], () => api().acceptanceOverview(projectId));
   return <div className="flex flex-col gap-4">
     <CapacitySummary projectId={projectId} overview={overview.data} error={overview.error ? errorText(overview.error) : ""} actorId={actorId} />
-    {page ? <CollapsibleRow summary={`查看全项目统筹对账 · ${page.items.length} 项未关闭工作`}>
+    {page ? <CollapsibleRow summary={`查看全项目的 Leader 对账 · ${page.items.length} 项未关闭工作`}>
       <LeaderOverview projectId={projectId} page={page} statuses={statuses} roleNames={roleNames} actorId={actorId} />
-    </CollapsibleRow> : error ? <p role="status" className="text-label text-muted-foreground">统筹对账暂未读回：{error}</p> : null}
+    </CollapsibleRow> : error ? <p role="status" className="text-label text-muted-foreground">Leader 对账暂未读回：{error}</p> : null}
   </div>;
 }
