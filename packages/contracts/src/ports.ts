@@ -70,6 +70,10 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
   listStageMilestoneHistory?(stageId: string): Promise<import("./workflow.js").StageMilestone[]>;
   /** A Task's stage ownership (migration 118); null when it has no row (unassigned). */
   getTaskStage?(taskId: string): Promise<import("./workflow.js").TaskStageLink | null>;
+  /** Every stage's milestone row in this project (migration 118); stages without one are absent. */
+  listStageMilestones?(): Promise<import("./workflow.js").StageMilestone[]>;
+  /** Every Task of the project with its work-index phase and its `task_stage` row (null: none), for the stage projection. */
+  listTaskStageFacts?(): Promise<import("./stage-projection.js").StageProjectionTask[]>;
   listStageReviews(stageId: string): Promise<StageReview[]>;
   /** Latest policy at or before the selected revision; omit revision for the current Task. */
   getTaskProposal(taskId: string, taskRevisionId?: string): Promise<TaskProposal | null>;

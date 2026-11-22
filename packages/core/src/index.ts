@@ -1,4 +1,5 @@
 import { reviewMetadata, validatePreviousReview } from "./documents/organization-review.js";
+import { deriveStageProjection } from "@evoloop/contracts/stage-projection";
 import { commandSchema, hasDecisionAuthority, hasPermission, isProjectMember, mayAccessSession } from "@evoloop/contracts";
 import { commandPermissionPolicy, commandPolicy } from "./command-policy.js";
 export { commandPermissionPolicy, commandPolicy } from "./command-policy.js";
@@ -1207,6 +1208,20 @@ export class WorkflowService {
   /** A Task's stage ownership row (null: unassigned) as the side table records it. */
   getTaskStage(principal: Principal, projectId: string, taskId: string) {
     return this.read(principal, projectId, async reader => { required(await reader.getTask(taskId), "Task"); return { taskStage: await reader.getTaskStage?.(taskId) ?? null }; });
+  }
+  /**
+   * The project's stages as milestones: milestone fields, state words, latest review, Task counts by the Task page's own phases, and the current stage.
+   * Read-only; `timeZone` (IANA, default UTC) only decides what day it is. Design: docs/frontend/milestones-design.md §2 and §5.
+   */
+  getStageProjection(principal: Principal, projectId: string, timeZone = "UTC") {
+    return this.read(principal, projectId, async reader => {
+      const stages = await reader.listStages();
+      const reviews = new Map<string, import("@evoloop/contracts").StageReview[]>();
+      for (const stage of stages) reviews.set(stage.id, await reader.listStageReviews(stage.id));
+      return deriveStageProjection({ asOf: this.deps.clock.now(), timeZone, stages,
+        milestones: new Map((await reader.listStageMilestones?.() ?? []).map(milestone => [milestone.stageId, milestone])),
+        reviews, tasks: await reader.listTaskStageFacts?.() ?? [] });
+    });
   }
   listStages(principal: Principal, projectId: string, goalId?: string) { return this.read(principal, projectId, reader => reader.listStages(goalId)); }
   listStageRevisions(principal: Principal, projectId: string, stageId: string) { return this.read(principal, projectId, async reader => { required(await reader.getStage(stageId),"Stage"); return reader.listStageRevisions(stageId); }); }

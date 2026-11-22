@@ -12,6 +12,7 @@ import { authenticate, authConfigSchema, type AuthConfig } from "./auth.js";
 import { HUB_IDENTITY_HEADER } from "@evoloop/contracts";
 import { HubIdentityError, type HubIdentityVerifier } from "./hub/identity.js";
 import { z } from "zod";
+import { stageProjectionQuerySchema } from "@evoloop/contracts/stage-projection";
 import type { RuntimeRunner } from "./runtime/runner.js";
 import { runInputPage } from "./runtime/input-read.js";
 import type { NativeInputBridge } from "./runtime/native-input.js";
@@ -860,6 +861,11 @@ export async function buildServer(options: {
     const p = params(request.params); return options.service.listStageRevisions(who(request.principal), p.projectId!, p.id!);
   });
   app.get("/api/projects/:projectId/stages", async request => options.service.listStages(who(request.principal), params(request.params).projectId!));
+  // The stages as milestones (docs/frontend/milestones-design.md §2). A static path, so it is never read as a stage id.
+  app.get("/api/projects/:projectId/stages/milestones", async request => {
+    const query = stageProjectionQuerySchema.parse(request.query ?? {});
+    return options.service.getStageProjection(who(request.principal), params(request.params).projectId!, query.timeZone);
+  });
   app.get("/api/projects/:projectId/stages/:id", async request => {
     const p = params(request.params); return options.service.getStage(who(request.principal), p.projectId!, p.id!);
   });
