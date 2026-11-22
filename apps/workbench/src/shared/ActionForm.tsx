@@ -74,7 +74,7 @@ export function ActionForm({ context, title, fields, build, baseline, decision =
     options={{ validate: validateCommand, send: sendCommand, draft: draftKey ? { store: commandDrafts, key: draftKey } : undefined }}
     surface="plain" copyable />;
   if (embedded) return form;
-  return <details data-ui="" open={startOpen || undefined} className="my-3 min-w-0 rounded-xl bg-raised shadow-sm">
+  return <details data-ui="" open={startOpen || undefined} className="my-3 min-w-0 rounded-xl bg-raised border border-border">
     <summary className="cursor-pointer rounded-xl px-4 py-3 text-small font-medium text-foreground outline-none focus-visible:shadow-[var(--focus-ring)]">{title}</summary>
     <div className="border-t border-border px-4 pb-4 pt-3">{form}</div>
   </details>;

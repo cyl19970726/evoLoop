@@ -118,16 +118,16 @@ export function ProjectContext({ token, projectId, refresh, active }: { token: s
   const goal = stage ? value?.goals.find(item => item.id === stage.goalId) : value?.goals.length === 1 ? value.goals[0] : undefined;
   const attention = value ? selectAttention(value.rows, value.statuses) : null;
   const use = value?.outcomes[0];
-  const card = "flex min-w-0 flex-col gap-2 rounded-xl bg-raised p-4 shadow-sm compact:p-5";
+  const card = "flex min-w-0 flex-col gap-2 rounded-xl bg-raised p-4 border border-border compact:p-5";
   const muted = "text-caption text-muted-foreground";
-  const pill = "w-fit rounded-full bg-field px-2.5 py-0.5 text-caption text-foreground";
+  const pill = "w-fit text-caption font-medium text-text-secondary";
   const problem = "rounded-lg bg-warning-soft px-3 py-2 text-caption text-text-secondary";
   const title = (icon: React.ReactNode, text: string, link?: React.ReactNode) => <div className="flex items-center gap-2 text-text-secondary">
     <span aria-hidden="true" className="[&_svg]:size-4">{icon}</span><h2 className="text-label font-semibold text-foreground">{text}</h2>{link}
   </div>;
   const choose = (id: string) => { setSelection({ scope, id }); if (active) writeOverviewParam("stage", id); };
   const stageButton = (item: Stage) => <Button variant="row" key={item.id} aria-pressed={stage?.id === item.id} onClick={() => choose(item.id)}
-    className="rounded-lg px-3 py-2 text-small aria-pressed:bg-accent aria-pressed:text-accent-strong">
+    className="rounded-lg px-3 py-2 text-small aria-pressed:bg-accent aria-pressed:font-semibold aria-pressed:text-foreground">
     <span className="line-clamp-2">{item.deliverable}</span>
   </Button>;
   return <section data-ui="" className="project-context flex flex-col gap-3" aria-label="目标、当前取舍与使用反馈" aria-busy={reading}>

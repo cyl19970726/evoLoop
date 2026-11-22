@@ -29,7 +29,7 @@ import { defaultSelection, goalTree, groupByStage, nextChoiceLabel, orderReviews
 import { journeyKey, useGoals, useStageWork, useStages } from "./journeyRead";
 
 const muted = "text-caption text-muted-foreground";
-const card = "flex flex-col gap-3 rounded-xl bg-raised p-4 shadow-sm compact:p-5";
+const card = "flex flex-col gap-3 rounded-xl bg-raised p-4 border border-border compact:p-5";
 type Selection = { stageId: string } | { goalId: string };
 
 function selectionFrom(path: string): Selection | null {

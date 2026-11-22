@@ -24,7 +24,7 @@ import { formatScheduled } from "./taskTimingPresentation";
 import { timezoneOptions } from "../../shared/zonedTime";
 
 const muted = "text-caption text-muted-foreground";
-const section = "flex flex-col gap-4 rounded-xl bg-raised p-4 shadow-sm compact:p-5";
+const section = "flex flex-col gap-4 rounded-xl bg-raised p-4 border border-border compact:p-5";
 
 /** `?stage=` of the current address, when it is this page's. */
 function stageFromAddress(pathname: string): string {

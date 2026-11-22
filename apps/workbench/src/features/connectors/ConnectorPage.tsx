@@ -221,7 +221,7 @@ export function ConnectorPage({ context }: { context: MutationContext }) {
       {list.stale && <ErrorState title="重新读取失败" happened="这次没有读到最新的路由。" previousContentKept
         next="下面是上次读回的内容，当前待核对；稍后点“重新读取”再试。" diagnostics={current.error} />}
       {list.view === "empty" && <EmptyState title={list.stale ? "上次读回时没有路由" : "还没有路由"} reason="当前项目没有已读回的微信路由。" />}
-      {list.view === "list" && <ul className="flex flex-col gap-3">{current.routes!.map(route => <li key={route.bindingId} className="connector-card flex min-w-0 flex-col gap-2 rounded-xl bg-raised p-4 shadow-sm">
+      {list.view === "list" && <ul className="flex flex-col gap-3">{current.routes!.map(route => <li key={route.bindingId} className="connector-card flex min-w-0 flex-col gap-2 rounded-xl bg-raised p-4 border border-border">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className={cn("min-w-0 text-body font-semibold text-foreground", wrap)}>{route.conversationLabel}</h3>
             <StatusTag tone={routeStateTone[route.state]} label={routeStateLabel[route.state]} />
@@ -247,7 +247,7 @@ export function ConnectorPage({ context }: { context: MutationContext }) {
         </li>)}</ul>}
       {current.routes && current.cursor && <Button size="compact" variant="ghost" className="w-fit" disabled={busy} onClick={() => void more()}>读取更多路由</Button>}
     </SettingsSection>
-    {canReview && <details className="connector-create rounded-xl bg-raised p-4 shadow-sm">
+    {canReview && <details className="connector-create rounded-xl bg-raised p-4 border border-border">
       <summary className="cursor-pointer text-small font-medium text-foreground">创建标准模式路由</summary>
       <p className={cn(muted, "mt-2")}>先固定并审核来源、接收的智能体和策略；新路由保存为停用，启用另行核验。</p>
       <form onSubmit={event => void create(event)} className="mt-3 flex flex-col gap-3">

@@ -98,7 +98,7 @@ export function OperationsPage({ projectId, items }: { projectId: string; items:
         { href: href(projectId, "knowledge"), title: "知识发布与撤回", detail: "专用回执在知识空间，按原操作查回。", icon: <BookOpen /> },
       ]} />
     </SettingsSection>
-    <details className="rounded-xl bg-raised px-4 py-3 text-small shadow-sm">
+    <details className="rounded-xl bg-raised px-4 py-3 text-small border border-border">
       <summary className="cursor-pointer font-medium text-foreground">遇到结果未知时怎样处理</summary>
       <p className="mt-2 text-text-secondary">保留原操作 ID，先查回结果，再决定下一步；确认前不创建新操作重复提交。核清后从“打开原对象”回到原处看当前内容。</p>
     </details>

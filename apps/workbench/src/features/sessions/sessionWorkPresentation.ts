@@ -158,7 +158,8 @@ const lineSuspendCodes: Record<string, string> = {
   RETRY_LIMIT: "这一步多次被拒绝，已停止重试，等 Leader 处理",
   MESSAGE_MISSING: "执行确认的请求没有记录下来，等 Leader 处理",
   MESSAGE_UNDELIVERED: "执行确认的请求没有送达这个智能体",
-  CONFIRMATION_TIMEOUT: "这个智能体没有按时确认执行",
+  CONFIRMATION_TIMEOUT: "确认请求已送到这个智能体，但它没有按时确认执行",
+  CONFIRMATION_NOT_DELIVERED: "这个智能体一直在忙，确认请求排了很久没送到它手里",
   CONFIRMATION_STALE: "确认之后任务又改了，需要重新确认",
 };
 const chinese = /[㐀-鿿]/;

@@ -381,7 +381,7 @@ function ReconcileRun({ context, run }: { context: MutationContext; run: Runtime
     } catch (cause) { setAttempted(true); setMessage(`${errorText(cause)}。请先回读当前状态和运行回执，确认结果后再操作。`); }
     finally { setBusy(false); }
   }
-  return <form onSubmit={submit} aria-label="核对已绑定运行的最终状态" className="flex flex-col gap-3 rounded-lg bg-muted p-4">
+  return <form onSubmit={submit} aria-label="核对已绑定运行的最终状态" className="flex flex-col gap-3 border-t border-border px-0 py-4">
     <Field label="复核理由" error={overLimitText(reason, 4000) ?? undefined}>{control => <Textarea {...control} required readOnly={!!partial || attempted} value={reason} onChange={event => setReason(event.target.value)} rows={3} />}</Field>
     <div><Button type="submit" variant="primary" size="compact" disabled={busy || attempted || context.blocked || !reason.trim()}>{busy ? "正在核对…" : partial ? "继续核对" : "回读最终状态并登记观察"}</Button></div>
     {message && <Notice>{message}</Notice>}

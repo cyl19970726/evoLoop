@@ -332,7 +332,7 @@ export function CollaborationPanel({ context }: { context: MutationContext; refr
       <section aria-label="投影状态" className="flex flex-col gap-3">
         <h2 className="text-heading font-semibold text-foreground">投影状态 <span className={muted}>· 已读 {deliveries.length} 条{deliveryEnd ? `，${deliveryEnd}` : ""}</span></h2>
         {deliveries.length === 0 ? <EmptyState title="还没有任务投影记录" reason="没有记录不等于已经同步：可能没有配置连接，也可能还没有要投影的任务变化。" />
-          : <ul className="flex flex-col rounded-xl bg-raised px-4 py-3 shadow-sm">{deliveries.map(item => <DeliveryRow key={item.eventId} item={item} projectId={projectId} allowed={allowed}
+          : <ul className="flex flex-col rounded-xl bg-raised px-4 py-3 border border-border">{deliveries.map(item => <DeliveryRow key={item.eventId} item={item} projectId={projectId} allowed={allowed}
             busy={busy || pendingIds.has(item.eventId)} read={deliveryRead(item.eventId)} configured={data.configured} onAction={act} />)}</ul>}
         {moreDeliveries.stale && <Notice tone="waiting" title="上次读回，当前待核对">后续投影重新读取失败：{errorText(moreDeliveries.error)}。后面这些行是上次读到的，重新读取成功前不能处理。<ErrorDetails error={moreDeliveries.error} /></Notice>}
         {moreDeliveries.failed && <div className="text-caption text-destructive">后续投影没有读回：{errorText(moreDeliveries.error)}<ErrorDetails error={moreDeliveries.error} /></div>}
@@ -341,7 +341,7 @@ export function CollaborationPanel({ context }: { context: MutationContext; refr
       <section aria-label="远端修改" className="flex flex-col gap-3">
         <h2 className="text-heading font-semibold text-foreground">远端修改 <span className={muted}>· 已读 {incoming.length} 条{incomingEnd ? `，${incomingEnd}` : ""}</span></h2>
         {incoming.length === 0 ? <EmptyState title="还没有远端修改" reason="回读远端变化后，飞书里对任务的改动会作为候选出现在这里；没有可靠的修改人身份时只能人工审阅。" />
-          : <ul className="flex flex-col rounded-xl bg-raised px-4 py-3 shadow-sm">{incoming.map(item => <IncomingRow key={item.id} item={item} projectId={projectId} allowed={allowed}
+          : <ul className="flex flex-col rounded-xl bg-raised px-4 py-3 border border-border">{incoming.map(item => <IncomingRow key={item.id} item={item} projectId={projectId} allowed={allowed}
             busy={busy || pendingIds.has(item.id)} read={incomingRead(item.id)} onAction={act} />)}</ul>}
         {moreIncoming.stale && <Notice tone="waiting" title="上次读回，当前待核对">后续远端修改重新读取失败：{errorText(moreIncoming.error)}。后面这些行是上次读到的，重新读取成功前不能采纳或拒绝。<ErrorDetails error={moreIncoming.error} /></Notice>}
         {moreIncoming.failed && <div className="text-caption text-destructive">后续远端修改没有读回：{errorText(moreIncoming.error)}<ErrorDetails error={moreIncoming.error} /></div>}

@@ -23,7 +23,7 @@ function Avatar({ agent, size }: { agent: SampleAgent; size?: number }) {
 
 function Section({ title, note, children }: { title: string; note?: string; children: React.ReactNode }) {
   return (
-    <section className="flex flex-col gap-4 rounded-xl bg-background p-6 shadow-lg">
+    <section className="flex flex-col gap-4 rounded-xl border border-border bg-background p-6">
       <div className="flex flex-wrap items-baseline gap-3">
         <h2 className="m-0 text-heading font-semibold leading-(--leading-tight)">{title}</h2>
         {note && <span className="text-label text-muted-foreground">{note}</span>}
@@ -218,7 +218,7 @@ export default function UiSamplesPage() {
         </header>
 
         <main className="mx-auto flex max-w-[1080px] flex-col gap-4 px-4 pb-16 pt-2 md:px-8">
-          <Section title="按钮与输入" note="主按钮（陶土实底）每屏最多一个，次要按钮是陶土浅底；按钮是胶囊形，文字链接、可选中的行和页签不是">
+          <Section title="按钮与输入" note="主按钮（墨绿实底）每屏最多一个，次要按钮是描边；按钮是 4px 圆角，文字链接、可选中的行和页签不是按钮">
             <Row label="按钮">
               <Button variant="primary">通过验收</Button>
               <Button>退回返工</Button>
@@ -262,13 +262,13 @@ export default function UiSamplesPage() {
           <Section title="空、加载、失败与未知" note="四种情况分开说，每种都写原因和下一步">
             <div className="grid gap-3 md:grid-cols-2">
               <EmptyState title="这一轮还没有任务" reason="需求总图已经写好，但还没有拆出任务。" action={<Button size="compact" variant="primary">从总图拆任务</Button>} />
-              <div className="rounded-lg bg-muted px-5 py-4"><LoadingState /></div>
+              <div className="border-t border-border px-0 py-4"><LoadingState /></div>
               <ErrorState title="任务列表没有读到" happened="协调服务没有响应。" previousContentKept next="稍后会自动重读，也可以现在重试。" diagnostics="GET /api/projects/…/tasks → 503" action={<Button size="compact">重试</Button>} />
               <UnknownState title="交付结果未知" lastKnown="11:20 已提交交付第 1 版" reason="这台机器离线，无法确认是否已送达" owner="项目负责人" howToCheck="机器上线后按原操作查回，不会重新提交" />
             </div>
           </Section>
 
-          <Section title="列表、折叠与页签" note="选中的行用墨蓝浅底区分，不做成卡片">
+          <Section title="列表、折叠与页签" note="选中的行用中性底加粗字区分，不做成卡片">
             <div className="grid gap-4 md:grid-cols-[300px_minmax(0,1fr)]">
               <div className="flex flex-col gap-0.5 rounded-lg bg-sunken p-2">
                 {sampleTasks.map(task => {
@@ -359,7 +359,7 @@ export default function UiSamplesPage() {
           <Section title="头像与标志" note="底色跟职责走，发型和配饰跟智能体走">
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               {sampleAgents.map(agent => (
-                <div key={agent.id} className="flex flex-col items-center gap-2 rounded-lg bg-muted px-3 py-4">
+                <div key={agent.id} className="flex flex-col items-center gap-2 border-t border-border px-0 py-4">
                   <Avatar agent={agent} size={64} />
                   <span className="font-medium">{agent.name}</span>
                   <span className="flex items-center gap-1.5"><Avatar agent={agent} size={30} /><Avatar agent={agent} size={20} /></span>

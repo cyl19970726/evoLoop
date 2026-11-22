@@ -29,13 +29,13 @@ test("link, row and tab buttons keep the button element and carry no pill size o
   assert.doesNotMatch(link, /\bh-9\b|\bpx-4\b|text-small|rounded-full/, "a link is sized by the text around it");
   const row = html(h(Button, { variant: "row", "aria-pressed": true }, "阶段一"));
   assert.match(row, /aria-pressed="true"/);
-  assert.match(row, /aria-pressed:bg-accent/); assert.match(row, /aria-pressed:text-accent-strong/);
+  assert.match(row, /selected-mark/, "the chosen row is a neutral fill with heavier text, from one utility"); assert.doesNotMatch(row, /accent-strong|inset/);
   assert.match(row, /w-full/);
   assert.match(row, /justify-start/);
   const tab = html(h(Button, { variant: "tab", role: "tab", "aria-selected": true }, "信息"));
   assert.match(tab, /role="tab"/);
   assert.match(tab, /aria-selected="true"/);
-  assert.match(tab, /aria-selected:bg-accent/); assert.match(tab, /aria-selected:text-accent-strong/);
+  assert.match(tab, /selected-mark/); assert.doesNotMatch(tab, /accent-strong|color-mix|inset/, "a selected tab has no outline");
   assert.match(html(h(Button, { variant: "link", size: "compact" }, "加载更多")), /h-\(--control-height-compact\)/, "a size given still applies");
 });
 
@@ -65,7 +65,7 @@ test("StatusTag shows text for every tone, and an icon for every tone that the s
 });
 
 test("counts are neutral and hidden at zero; a count that cannot be checked says so instead of a number", () => {
-  assert.match(html(h(Badge, null, 8)), /bg-field/);
+  assert.doesNotMatch(html(h(Badge, null, 8)), /bg-field|rounded/, "a badge is plain text, not a box");
   assert.equal(html(h(CountDot, { count: 0 })), "");
   assert.match(html(h(CountDot, { count: 120 })), />99\+</);
   const unknown = html(h(CountDot, { count: null }));
@@ -133,8 +133,8 @@ test("avatars are stable, share a background within a role, and never use green"
   assert.match(mark, /data-mark-color="teal"/);
 });
 
-test("the logo follows the theme tokens and thickens the loop at small sizes", () => {
-  assert.match(html(h(Logo, { size: 36 })), /fill="var\(--accent\)"[\s\S]*stroke="var\(--on-accent\)"[^>]*stroke-width="2.3"/);
+test("the logo follows the theme through its own tokens, not the link colour and thickens the loop at small sizes", () => {
+  assert.match(html(h(Logo, { size: 36 })), /fill="var\(--logo\)"[\s\S]*stroke="var\(--on-logo\)"[^>]*stroke-width="2.3"/);
   assert.match(html(h(Logo, { size: 16 })), /stroke-width="2.8"/);
 });
 

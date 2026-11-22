@@ -33,7 +33,7 @@ export function ProjectUsageView({ usage, error = null, stale = false }: { usage
   // Today counts as recorded only when the service lists a ledger row for it; without a usable today, as before.
   const gauge = usage ? projectBudgetGauge(usage.budget, today ? usage.daily.some(day => day.day === today) : null) : null;
   const days = usage ? recentProjectDays(usage.daily, today) : [];
-  return <div className="flex min-w-0 flex-col gap-3 rounded-xl bg-raised px-4 py-3 shadow-sm">
+  return <div className="flex min-w-0 flex-col gap-3 rounded-xl bg-raised px-4 py-3 border border-border">
       {error ? <Notice tone="error">项目用量暂不可读取：{error}。每日上限和近几天用量暂时无法判断。</Notice>
         : !usage || !gauge ? <p role="status" className={mutedText}>正在读取项目用量…</p>
           : <>

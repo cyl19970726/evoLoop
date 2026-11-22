@@ -1205,6 +1205,20 @@ export class WorkflowService {
     return this.read(principal, projectId, async reader => { required(await reader.getStage(stageId), "Stage");
       return { milestone: await reader.getStageMilestone?.(stageId) ?? null, history: await reader.listStageMilestoneHistory?.(stageId) ?? [] }; });
   }
+  /** The stages that supply evidence for each verification-ladder level, by `stage_milestone.ladder_keys`; earliest due date first, undated last, then oldest. */
+  getLadderEvidence(principal: Principal, projectId: string) {
+    return this.read(principal, projectId, async reader => {
+      const rows: Array<{ id: string; shortName: string; dueOn: string | null; createdAt: string; ladderKeys: string[] }> = [];
+      for (const stage of await reader.listStages()) {
+        const milestone = await reader.getStageMilestone?.(stage.id) ?? null;
+        if (!milestone?.ladderKeys.length) continue;
+        rows.push({ id: stage.id, shortName: milestone.shortName ?? (stage.deliverable.split("\n")[0] ?? "").trim(), dueOn: milestone.dueOn, createdAt: stage.createdAt, ladderKeys: milestone.ladderKeys });
+      }
+      const key = (row: { dueOn: string | null }) => row.dueOn ?? "9999-12-31";
+      rows.sort((x, y) => key(x) < key(y) ? -1 : key(x) > key(y) ? 1 : x.createdAt < y.createdAt ? -1 : x.createdAt > y.createdAt ? 1 : x.id < y.id ? -1 : 1);
+      return rows;
+    });
+  }
   /** A Task's stage ownership row (null: unassigned) as the side table records it. */
   getTaskStage(principal: Principal, projectId: string, taskId: string) {
     return this.read(principal, projectId, async reader => { required(await reader.getTask(taskId), "Task"); return { taskStage: await reader.getTaskStage?.(taskId) ?? null }; });

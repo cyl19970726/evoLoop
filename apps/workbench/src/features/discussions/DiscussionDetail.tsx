@@ -76,7 +76,7 @@ function PackageView({ projectId, documentId, revisionId, label, read }: { proje
     try { await navigator.clipboard.writeText(discussionCopyEnvelope(window.location.origin, projectId, documentId, revisionId, read.data.body)); setCopied("done"); }
     catch { setCopied("failed"); }
   };
-  return <div className="flex flex-col gap-2 rounded-lg bg-muted p-3">
+  return <div className="flex flex-col gap-2 border-t border-border px-0 py-3">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <span className="text-small font-medium text-foreground">{label}</span>
       {/* A failed read wins over an older answer: the tag never says 已核对 next to a failed check. */}
@@ -243,7 +243,7 @@ export function DiscussionDetail({ context, record, events, choices, choicesLoad
     </Section>
 
     <Section title="决定">
-      {latest ? <div className="flex flex-col gap-1.5 rounded-lg bg-muted p-3">
+      {latest ? <div className="flex flex-col gap-1.5 border-t border-border px-0 py-3">
         <span className="text-small font-medium text-foreground">{latest.supersedesDecisionEventId ? "当前决定（已纠正前一项）" : "当前决定"}</span>
         <Fact label="取舍"><span className="whitespace-pre-wrap">{latest.choice}</span></Fact>
         {latest.unresolved && <Fact label="还没解决"><span className="whitespace-pre-wrap">{latest.unresolved}</span></Fact>}
