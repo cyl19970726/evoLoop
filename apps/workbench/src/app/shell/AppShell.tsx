@@ -10,6 +10,7 @@ import {
 import { href, parseRoute, type Route, type Section } from "../../shared/routes";
 import { readThemePreference, setThemePreference, subscribeTheme, themeLabels, type ThemePreference } from "../../shared/theme";
 import { currentPath, navigate, onAddressChange } from "../../shared/navigation";
+import { ProviderHoldBar } from "./ProviderHoldBar";
 import { SessionNavigation, emptySessionNavigationState, type SessionNavigationState } from "../../features/sessions/SessionNavigation";
 import { ContextPanelColumn, ContextPanelProvider } from "../../shared/ui/ContextPanel";
 import { ContextRailProvider, ContextRailSlot } from "../../shared/ui/ContextRail";
@@ -31,6 +32,8 @@ export interface AppShellProps {
   inboxCount: number | null; token: string; logout(): void; children: React.ReactNode;
   /** Notices above every page: unconfirmed operations, storage problems, project read failures. */
   notices?: ShellNoticeItem[];
+  /** The provider holds as read ("运行受阻"): the one-line bar above every page, or nothing while none is held. */
+  providerHolds?: import("@evoloop/contracts/provider-hold").ProviderHoldListing | undefined;
 }
 
 const permissionLabel: Record<string, string> = { task: "任务", document: "文档", session: "Session", management: "项目管理" };
@@ -131,7 +134,7 @@ export function AppShell(props: AppShellProps) {
         </nav>
         {!railHidden && <div className="sticky top-0 hidden h-dvh compact:block"><ContextRail {...railProps} /></div>}
         <div className="flex min-w-0 bg-background compact:m-2 compact:ml-0 compact:min-h-[calc(100dvh-16px)] compact:rounded-xl compact:shadow-lg">
-          <main id="workspace-main" ref={mainRef} tabIndex={-1} className="min-w-0 flex-1 outline-none max-compact:pb-20 max-compact:[&_h1[data-echo]]:sr-only">{props.notices?.map(({ key, ...notice }) => <ShellNotice key={key} {...notice} />)}{props.children}</main>
+          <main id="workspace-main" ref={mainRef} tabIndex={-1} className="min-w-0 flex-1 outline-none max-compact:pb-20 max-compact:[&_h1[data-echo]]:sr-only"><ProviderHoldBar listing={props.providerHolds} projectId={projectId} route={route} />{props.notices?.map(({ key, ...notice }) => <ShellNotice key={key} {...notice} />)}{props.children}</main>
           <ContextPanelColumn />
         </div>
       </div>
