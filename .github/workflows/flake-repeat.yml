@@ -1,0 +1,40 @@
+name: Flake repeat evidence (throwaway, Task 2c727dce; never merged)
+on:
+  push:
+    branches: [ci/2c727dce-repeat-evidence]
+permissions:
+  contents: read
+jobs:
+  repeat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [baseline, fixed]
+        slot: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]
+    env:
+      TEST_DATABASE_URL: postgres://evoloop:test-only-password@127.0.0.1:5432/evoloop_hub_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/test-postgres
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build:packages
+      - run: docker exec evoloop-test-pg psql -U evoloop -d evoloop_ci_test -c 'CREATE DATABASE evoloop_hub_test'
+      - name: Use main's test file for the baseline
+        if: matrix.variant == 'baseline'
+        run: git show origin/main:tests/integration/hub-machine-conflict.test.ts > tests/integration/hub-machine-conflict.test.ts
+      - name: Run the file 5 times in a row
+        run: |
+          fails=0
+          for i in 1 2 3 4 5; do
+            if node --import tsx --test tests/integration/hub-machine-conflict.test.ts > "run$i.log" 2>&1; then echo "REPEAT ${{ matrix.variant }} slot ${{ matrix.slot }} run $i: pass"; else echo "REPEAT ${{ matrix.variant }} slot ${{ matrix.slot }} run $i: FAIL"; fails=$((fails+1)); grep -n "AssertionError\|✖" "run$i.log" | head -5; fi
+          done
+          echo "REPEAT-SUMMARY ${{ matrix.variant }} slot ${{ matrix.slot }} fails=$fails/5"
+          [ "${{ matrix.variant }}" = baseline ] || [ "$fails" = 0 ]
