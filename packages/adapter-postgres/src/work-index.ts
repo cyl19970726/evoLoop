@@ -960,6 +960,18 @@ export async function readLeaderWorkPhaseCounts(db: Database, projectId: string)
   return counts;
 }
 
+/**
+ * Every Task of the project (closed ones too) with the phase of the same classification the Task page and the Leader index use (taskFactsSql), and its
+ * `task_stage` ownership row. The stage projection counts from this, so its 卡住 is the Task page's 受阻 and cannot drift from it.
+ */
+export async function readTaskStageFacts(db: Database, projectId: string): Promise<Array<{ taskId: string; phase: string; state: string; link: { stageId: string | null } | null }>> {
+  const result = await db.query(`${taskFactsSql(true)}
+    SELECT facts.task_id,facts.phase,facts.state,ts.task_id IS NOT NULL AS has_link,ts.stage_id
+    FROM facts LEFT JOIN task_stage ts ON ts.project_id=facts.project_id AND ts.task_id=facts.task_id`, [projectId]);
+  return result.rows.map(row => ({ taskId: String(row.task_id), phase: String(row.phase), state: String(row.state),
+    link: row.has_link ? { stageId: row.stage_id ? String(row.stage_id) : null } : null }));
+}
+
 export async function readLeaderWorkTasks(db: Database, projectId: string, query: LeaderWorkQuery,
   observedAtOverride?: string): Promise<LeaderWorkPage<LeaderWorkTask>> {
   return withReadSnapshot(db, async snapshot => {
