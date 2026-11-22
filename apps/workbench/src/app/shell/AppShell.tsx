@@ -2,7 +2,7 @@
 // object list, and one raised work panel with the center column and the right column. The frame is built from
 // @evoloop/ui inside [data-ui]. Pages render in the center; the window scrolls the center.
 import * as React from "react";
-import { BriefcaseBusiness, Check, ChevronsUpDown, Monitor, Moon, Sun, Inbox, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Settings, Users, FolderGit2, Plug, TriangleAlert, X } from "lucide-react";
+import { BriefcaseBusiness, Check, ChevronDown, ChevronRight, ChevronsUpDown, Monitor, Moon, Sun, Inbox, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Settings, Users, Plug, X } from "lucide-react";
 import {
   CountDot, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
   Button, IconButton, Logo, Notice, PersonAvatar, Sheet, SheetClose, SheetContent, SheetDescription, SheetTitle, cn, type NoticeTone,
@@ -16,8 +16,8 @@ import { ContextPanelColumn, ContextPanelProvider } from "../../shared/ui/Contex
 import { ContextRailProvider, ContextRailSlot } from "../../shared/ui/ContextRail";
 import { useMediaQuery } from "../../shared/ui/useMediaQuery";
 import {
-  inboxNavigation, leafOf, projectInitial, rememberSpace, sectionLabels, spaceHref, spaceLabels, spaceOf, workNavigation, workSectionOf,
-  type NavItem, type Space,
+  inboxNavigation, leafOf, listedEntries, operationsGroupKey, operationsGroupLabel, operationsNavigation, projectInitial, rememberSpace, sectionLabels, spaceHref, spaceLabels,
+  spaceOf, workNavigation, workSectionOf, type NavItem, type Space,
 } from "./spaces";
 import { serviceErrorCodes } from "../../shared/errorCodes";
 import { registerErrorCodes } from "../../shared/errorPresentation";
@@ -34,8 +34,8 @@ export interface AppShellProps {
   notices?: ShellNoticeItem[];
   /** The provider holds as read ("运行受阻"): the one-line bar above every page, or nothing while none is held. */
   providerHolds?: import("@evoloop/contracts/provider-hold").ProviderHoldListing | undefined;
-  /** Sections whose own list was read and is empty: not listed in the menu unless the reader is on them. */
-  emptySections?: ReadonlySet<import("../../shared/routes").Section> | undefined;
+  /** Optional sections that have records or a configured backend: only these are listed (the page the reader is on stays listed). */
+  presentSections?: ReadonlySet<import("../../shared/routes").Section> | undefined;
 }
 
 const permissionLabel: Record<string, string> = { task: "任务", document: "文档", session: "Session", management: "项目管理" };
@@ -204,7 +204,8 @@ function ContextRail(props: AppShellProps & { space: Space; sessionState: Sessio
           onNavigate={props.onNavigate} state={props.sessionState} onState={props.onSessionState} />
       </div>
       : <nav data-ui="" aria-label={space === "inbox" ? "待我处理" : "工作分区"} className={cn("flex-1", !inDrawer && "min-h-0 overflow-y-auto")}>
-        <SectionList items={space === "inbox" ? inboxNavigation : workNavigation} route={route} projectId={projectId} onNavigate={props.onNavigate} empty={props.emptySections} />
+        <SectionList items={space === "inbox" ? inboxNavigation : workNavigation} route={route} projectId={projectId} onNavigate={props.onNavigate} present={props.presentSections}
+          group={space === "work"} />
         {(inDrawer || !compact) && <ContextRailSlot className="mt-3 empty:hidden" onNavigate={props.onNavigate} />}
       </nav>}
     <div data-ui="" className="mt-2 flex items-center gap-2.5 border-t border-border px-2 pt-2.5">
@@ -218,25 +219,39 @@ function ContextRail(props: AppShellProps & { space: Space; sessionState: Sessio
   </aside>;
 }
 
-function SectionList({ items, route, projectId, onNavigate, empty }: { items: readonly NavItem[]; route: Route; projectId: string; onNavigate(): void; empty?: ReadonlySet<Section> | undefined }) {
-  const owner = workSectionOf(route.section) ?? route.section;
+const operationsKey = "evoloop:nav:operations";
+const readOperationsOpen = () => { try { return localStorage.getItem(operationsKey) === "open"; } catch { return false; } };
+
+function NavLink({ item, route, projectId, onNavigate, nested = false }: { item: NavItem; route: Route; projectId: string; onNavigate(): void; nested?: boolean }) {
+  const current = leafOf(route.section) === item.section;
+  return <a href={href(projectId, item.section)} onClick={onNavigate} aria-current={current ? "page" : undefined}
+    className={cn("selected-edge flex items-center rounded-md px-3 py-2 text-text-secondary hover:bg-selected hover:text-foreground focus-visible:shadow-[var(--focus-ring)] outline-none",
+      nested && "py-1.5 pl-2.5 text-small text-muted-foreground", current && "bg-accent font-medium text-accent-strong hover:bg-accent")}>{item.label}</a>;
+}
+
+function SectionList({ items, route, projectId, onNavigate, present, group = false }: { items: readonly NavItem[]; route: Route; projectId: string; onNavigate(): void; present?: ReadonlySet<Section> | undefined; group?: boolean }) {
   const leaf = leafOf(route.section);
+  const listed = (list: readonly NavItem[]) => listedEntries(list, present, leaf);
+  const inGroup = workSectionOf(route.section) === operationsGroupKey;
+  // 运转 is folded by default and the choice is kept on this machine; a reader on one of its pages sees it open.
+  const [open, setSaved] = React.useState(() => readOperationsOpen() || inGroup);
+  const toggle = () => {
+    const next = !open; setSaved(next);
+    try { localStorage.setItem(operationsKey, next ? "open" : "closed"); } catch { /* memory only */ }
+  };
+  // Arriving on a page of the group opens it for good, so leaving it again does not fold the page the reader just used.
+  React.useEffect(() => { if (inGroup) { setSaved(true); try { localStorage.setItem(operationsKey, "open"); } catch { /* memory only */ } } }, [inGroup]);
   return <ul className="flex flex-col gap-0.5">
-    {items.map(item => {
-      const current = item.section === owner;
-      return <li key={item.section}>
-        <a href={href(projectId, item.section)} onClick={onNavigate} aria-current={current && (!item.children || leaf === item.section) ? "page" : undefined}
-          className={cn("selected-edge flex items-center rounded-md px-3 py-2 text-text-secondary hover:bg-selected hover:text-foreground focus-visible:shadow-[var(--focus-ring)] outline-none",
-            current && "bg-accent font-medium text-accent-strong hover:bg-accent")}>{item.label}</a>
-        {current && item.children && <ul className="mb-1 ml-3 mt-0.5 flex flex-col gap-0.5 border-l border-border pl-2">
-          {item.children.filter(child => !empty?.has(child.section) || leaf === child.section).map(child => <li key={child.section}>
-            <a href={href(projectId, child.section)} onClick={onNavigate} aria-current={leaf === child.section ? "page" : undefined}
-              className={cn("selected-edge block rounded-md px-2.5 py-1.5 text-small text-muted-foreground hover:bg-selected hover:text-foreground focus-visible:shadow-[var(--focus-ring)] outline-none",
-                leaf === child.section && "bg-accent font-medium text-accent-strong hover:bg-accent")}>{child.label}{child.hint && <span className="block text-caption font-normal text-muted-foreground">{child.hint}</span>}</a>
-          </li>)}
-        </ul>}
-      </li>;
-    })}
+    {listed(items).map(item => <li key={item.section}><NavLink item={item} route={route} projectId={projectId} onNavigate={onNavigate} /></li>)}
+    {group && <li>
+      <Button type="button" variant="ghost" size="inline" aria-expanded={open} aria-controls="nav-operations" onClick={toggle} data-nav-group="operations"
+        className={cn("h-auto w-full justify-start gap-1.5 rounded-md px-3 py-2 font-normal text-text-secondary hover:bg-selected hover:text-foreground", inGroup && !open && "font-semibold text-foreground")}>
+        {open ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}{operationsGroupLabel}
+      </Button>
+      {open && <ul id="nav-operations" className="mb-1 ml-3 mt-0.5 flex flex-col gap-0.5 border-l border-border pl-2">
+        {listed(operationsNavigation).map(item => <li key={item.section}><NavLink item={item} route={route} projectId={projectId} onNavigate={onNavigate} nested /></li>)}
+      </ul>}
+    </li>}
   </ul>;
 }
 
@@ -254,7 +269,7 @@ function ThemeChoice() {
   </div>;
 }
 
-function AccountMenu({ projectId, actor, permissions, receiptCount, logout, trigger }: AppShellProps & { trigger: React.ReactElement }) {
+function AccountMenu({ projectId, actor, permissions, logout, trigger }: AppShellProps & { trigger: React.ReactElement }) {
   const go = (section: Section) => navigate(href(projectId, section));
   return <DropdownMenu>
     <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
@@ -262,8 +277,6 @@ function AccountMenu({ projectId, actor, permissions, receiptCount, logout, trig
       <DropdownMenuLabel><span className="block truncate text-foreground">{actor}</span><span className="text-caption">{permissionText(permissions)}</span></DropdownMenuLabel>
       <DropdownMenuSeparator />
       <DropdownMenuItem onSelect={() => go("settings")}><Settings size={16} aria-hidden="true" />项目设置</DropdownMenuItem>
-      <DropdownMenuItem onSelect={() => go("operations")}><TriangleAlert size={16} aria-hidden="true" />结果未知的操作{receiptCount > 0 && <span className="ml-auto text-caption text-warning">{receiptCount}</span>}</DropdownMenuItem>
-      <DropdownMenuItem onSelect={() => go("repository")}><FolderGit2 size={16} aria-hidden="true" />仓库规范</DropdownMenuItem>
       <DropdownMenuItem onSelect={() => go("connectors")}><Plug size={16} aria-hidden="true" />微信连接</DropdownMenuItem>
       <DropdownMenuSeparator />
       <ThemeChoice />

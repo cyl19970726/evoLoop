@@ -4,31 +4,37 @@ import { href, type Route, type Section } from "../../shared/routes";
 
 export type Space = "work" | "agents" | "inbox";
 
-export interface NavItem { section: Section; label: string; /** One line under a child entry, for siblings that are easy to mix up. */ hint?: string; children?: readonly NavItem[] }
+export interface NavItem {
+  section: Section; label: string;
+  /** Listed only while the project has something there (records, or a configured backend); the page the reader is on stays listed. */
+  optional?: true;
+}
 
-/** The work space's sections. Pages that used to open only from deep links are listed under their section. */
+/** The work space's top level: 总览, 目标与阶段, 任务, 文档. None of them has children. */
 export const workNavigation: readonly NavItem[] = [
   { section: "overview", label: "总览" },
-  { section: "work", label: "任务", children: [
-    { section: "work", label: "任务列表" },
-    { section: "journey", label: "目标与阶段" },
-    { section: "evaluations", label: "评价与后果" },
-  ] },
-  { section: "documents", label: "文档与知识", children: [
-    { section: "documents", label: "过程文档", hint: "工作依据与报告" },
-    { section: "knowledge", label: "知识空间", hint: "长期的知识页" },
-    { section: "repository", label: "仓库规范", hint: "固定 Git 来源" },
-  ] },
-  { section: "schedules", label: "日程" },
-  { section: "arrangement", label: "团队", children: [
-    { section: "arrangement", label: "统筹安排" },
-    { section: "runtime", label: "运行与接入" },
-    { section: "roles", label: "职责" },
-    { section: "discussions", label: "分工讨论" },
-    { section: "reviews", label: "组织复盘" },
-    { section: "collaboration", label: "协作回执" },
-  ] },
+  { section: "journey", label: "目标与阶段" },
+  { section: "work", label: "任务" },
+  { section: "documents", label: "文档" },
+  { section: "knowledge", label: "知识空间", optional: true },
 ];
+
+/** 运转: folded by default; 分工讨论 and 协作回执 join it once they have records. */
+export const operationsNavigation: readonly NavItem[] = [
+  { section: "schedules", label: "日程" },
+  { section: "roles", label: "职责" },
+  { section: "runtime", label: "运行与接入" },
+  { section: "discussions", label: "分工讨论", optional: true },
+  { section: "collaboration", label: "协作回执", optional: true },
+];
+export const operationsGroupLabel = "运转";
+/** The pages that sit in the 运转 group (their address opens them whether or not they are listed). */
+export const operationsSections: readonly Section[] = operationsNavigation.map(item => item.section);
+
+/** The entries to list: optional ones only when the project has records or a configured backend there, or the reader is on that page. */
+export function listedEntries(items: readonly NavItem[], present: ReadonlySet<Section> | undefined, current: Section): readonly NavItem[] {
+  return items.filter(item => !item.optional || present?.has(item.section) || current === item.section);
+}
 
 /** 待我处理: acceptance and judgement waiting on me, then operations whose result is unknown. */
 export const inboxNavigation: readonly NavItem[] = [
@@ -48,24 +54,26 @@ export const sectionLabels: Record<Section, string> = {
 
 export function spaceOf(route: Route): Space {
   // `/runtime?session=owned:…` is an old conversation link (redirected to /sessions); `?session={uuid}` is 运行与接入.
-  if (route.section === "sessions" || route.section === "runtime" && !!route.session?.includes(":")) return "agents";
+  // 统筹安排 lives in the agents space: the page shown while no agent is selected.
+  if (route.section === "sessions" || route.section === "arrangement" || route.section === "runtime" && !!route.session?.includes(":")) return "agents";
   if (route.section === "inbox" || route.section === "operations") return "inbox";
   return "work";
 }
 
-/** The work section that owns a page: a task belongs to 任务, a document to 文档与知识, a role to 团队. */
-export function workSectionOf(section: Section): Section | null {
-  if (["work", "task", "create-task", "journey", "evaluations"].includes(section)) return "work";
-  if (["documents", "document", "knowledge", "repository"].includes(section)) return "documents";
-  if (["arrangement", "runtime", "roles", "discussions", "reviews", "collaboration"].includes(section)) return "arrangement";
-  if (section === "overview" || section === "schedules") return section;
+/** The work item that owns a page: a task belongs to 任务, a document (and 组织复盘, now a filter of it) to 文档, the pages in 运转 to that group. */
+export function workSectionOf(section: Section): Section | typeof operationsGroupKey | null {
+  if (["work", "task", "create-task", "evaluations"].includes(section)) return "work";
+  if (["documents", "document", "reviews"].includes(section)) return "documents";
+  if (section === "overview" || section === "journey" || section === "knowledge") return section;
+  if (operationsSections.includes(section)) return operationsGroupKey;
   return null;
 }
+export const operationsGroupKey = "operations-group" as const;
 
-/** The highlighted leaf under a section: a task highlights 任务列表, a document 过程文档. */
+/** The highlighted entry: a task page highlights 任务, a document 文档, a page in 运转 its own entry. */
 export function leafOf(section: Section): Section {
-  if (section === "task" || section === "create-task") return "work";
-  if (section === "document") return "documents";
+  if (section === "task" || section === "create-task" || section === "evaluations") return "work";
+  if (section === "document" || section === "reviews") return "documents";
   return section;
 }
 

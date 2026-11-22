@@ -82,9 +82,9 @@ function Repositories({ projectId }: { projectId: string }) {
   </>;
 }
 
-export function RepositoryPage({ projectId, reference }: { projectId: string; reference: ReactNode }) {
-  return <SettingsPage title="仓库规范" description="本项目有哪些能力和仓库，怎样登记固定 Git 来源；产品、架构与开发规范在仓库 docs 维护，与项目的过程文档分开。"
-    className="repository-page" action={<Button asChild size="compact" variant="ghost"><a href={href(projectId, "settings")}><ArrowLeft aria-hidden="true" />项目设置</a></Button>}>
+/** The parts of 仓库规范, shared by 项目设置 (where it now lives) and the older standalone page. */
+export function RepositorySections({ projectId, reference }: { projectId: string; reference: ReactNode }) {
+  return <>
     <SettingsSection title="已配置的能力">
       <SectionBoundary label="能力结论"><Capabilities projectId={projectId} /></SectionBoundary>
     </SettingsSection>
@@ -109,5 +109,12 @@ export function RepositoryPage({ projectId, reference }: { projectId: string; re
       ]} />
     </SettingsSection>
     <p className={note}>项目工作中产生的方案、报告和讨论是过程文档，不在这里。<a href={href(projectId, "documents")} className="ml-1 text-foreground underline">查看过程文档</a></p>
+  </>;
+}
+
+export function RepositoryPage({ projectId, reference }: { projectId: string; reference: ReactNode }) {
+  return <SettingsPage title="仓库规范" description="本项目有哪些能力和仓库，怎样登记固定 Git 来源；产品、架构与开发规范在仓库 docs 维护，与项目的过程文档分开。"
+    className="repository-page" action={<Button asChild size="compact" variant="ghost"><a href={href(projectId, "settings")}><ArrowLeft aria-hidden="true" />项目设置</a></Button>}>
+    <RepositorySections projectId={projectId} reference={reference} />
   </SettingsPage>;
 }

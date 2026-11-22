@@ -7,7 +7,7 @@ import { returnPlaceOf, type ReturnPlace } from "../../shared/returnLink";
 import type { Original } from "../../shared/ui/OriginalDocumentReader";
 
 export const kindLabel: Record<DocumentKind, string> = {
-  issue: "问题", spec: "规范", discussion: "讨论", report: "报告", organization_review: "组织复盘", task: "任务正文",
+  issue: "问题", spec: "规范", discussion: "讨论", report: "报告", organization_review: "复盘", task: "任务正文",
 };
 export const lifecycleLabel: Record<DocumentStatus, string> = { draft: "草稿", published: "已发布", archived: "已归档" };
 export const lifecycleTone: Record<DocumentStatus, StatusTone> = { draft: "idle", published: "done", archived: "history" };

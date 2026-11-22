@@ -28,13 +28,16 @@ test("old team links open their current place; a managed agent stays in 运行�
   assert.equal(legacyTeamAddress("/p/a/runtime/?view=roles"), "/p/a/roles", "a trailing slash is the same address");
   assert.equal(legacyTeamAddress("/p/a/roles?view=roles"), null);
   // Task 0f8c7a15: 统筹安排 has its own address; the directory's old 动态 link moves, every other /sessions address stays.
-  assert.equal(legacyTeamAddress("/p/a/sessions?view=flow"), "/p/a/arrangement?view=flow", "the old 动态 address opens 统筹安排 › 动态");
-  assert.equal(legacyTeamAddress("/p/a/sessions/?view=flow&x=1"), "/p/a/arrangement?view=flow&x=1");
-  assert.equal(legacyTeamAddress("/p/a/sessions"), null, "the directory stays at /sessions");
+  assert.equal(legacyTeamAddress("/p/a/sessions?view=flow"), null, "统筹安排 now opens at /sessions while no agent is selected, 动态 view included");
+  assert.equal(legacyTeamAddress("/p/a/sessions"), null, "the agents home stays at /sessions");
+  // The navigation cleanup: 组织复盘 is the 复盘 filter of 文档, 仓库规范 a part of 项目设置.
+  assert.equal(legacyTeamAddress("/p/a/reviews"), "/p/a/documents?kind=organization_review");
+  assert.equal(legacyTeamAddress("/p/a/reviews/"), "/p/a/documents?kind=organization_review");
+  assert.equal(legacyTeamAddress("/p/a/repository"), "/p/a/settings#settings-repository");
   assert.equal(legacyTeamAddress(`/p/a/sessions?session=owned%3A${id}&view=flow`), null, "an agent link keeps its address");
   assert.equal(parseRoute("/p/a/arrangement").section, "arrangement");
   assert.equal(parseRoute("/p/a/arrangement?view=flow").section, "arrangement");
-  assert.equal(spaceOf(parseRoute("/p/a/arrangement")), "work", "统筹安排 belongs to the work space, under 团队");
+  assert.equal(spaceOf(parseRoute("/p/a/arrangement")), "agents", "统筹安排 belongs to the agents space (the page while no agent is selected)");
   assert.equal(spaceOf(parseRoute("/p/a/sessions")), "agents", "the directory belongs to the agents space");
   assert.equal(spaceOf(parseRoute(`/p/a/runtime?session=${id}`)), "work", "运行与接入 belongs to the work space");
   assert.equal(spaceOf(parseRoute(`/p/a/runtime?session=owned:${id}`)), "agents");

@@ -1,7 +1,7 @@
 // 过程文档 with no document open: the inner rail lists the documents, the center shows the document table
 // (docs/frontend/pages/documents.md). Search and filters sit in the rail while it is on screen, otherwise above
 // the table, so the page never shows two search boxes.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { hasPermission } from "@evoloop/contracts";
 import { Button } from "@evoloop/ui";
 import { ActionForm, option, type MutationContext } from "../../shared/ActionForm";
@@ -10,7 +10,8 @@ import { DocumentFilters } from "./DocumentFilters";
 import { DocumentRail } from "./DocumentRail";
 import { ReadingSpaceSwitch } from "../../shared/ui/ReadingSpaceSwitch";
 import { DocumentTable } from "./DocumentTable";
-import { kindLabel } from "./documentPresentation";
+import { kindLabel, kindFilters } from "./documentPresentation";
+import { currentPath } from "../../shared/navigation";
 import { useDocumentListState } from "./documentListState";
 import { useDocumentList } from "./useDocumentList";
 import { useRereadOnReturn } from "../../shared/ui/rereadOnReturn";
@@ -20,6 +21,12 @@ export function DocumentIndex({ context }: { context: MutationContext }) {
   const { projectId } = context;
   const scope = `${context.principal.actorId}:${projectId}`;
   const [state, update] = useDocumentListState(scope);
+  // An address may name the type filter (`?kind=organization_review`, where 组织复盘 now opens); it is applied once when the page opens.
+  useEffect(() => {
+    const kind = new URLSearchParams(currentPath().split("?")[1] ?? "").get("kind");
+    if (kind && kindFilters.some(([key]) => key === kind)) update({ kind: kind as typeof state.kind });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const list = useDocumentList(projectId, state, update);
   useRereadOnReturn(() => void list.reread());
   const railShown = useContextRailShown();

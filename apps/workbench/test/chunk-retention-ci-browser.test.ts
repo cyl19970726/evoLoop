@@ -48,6 +48,7 @@ async function scenario(policy: Record<string, number>, t: { after: (fn: () => u
   await page.getByLabel("访问令牌").fill(token); await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { name: "项目总览", exact: true }).first().waitFor();
   for (const n of [2, 3, 4]) { await unlink(current); await symlink(dists[n - 1]!, current); } // three releases while the tab stays open
+  await page.getByRole("button", { name: "运转" }).click(); // 日程 sits in the folded 运转 group
   await page.getByText("日程", { exact: true }).filter({ visible: true }).first().click();
   await page.waitForTimeout(2500);
   const heading = await page.getByRole("heading", { level: 1 }).filter({ visible: true }).first().textContent().catch(() => null);

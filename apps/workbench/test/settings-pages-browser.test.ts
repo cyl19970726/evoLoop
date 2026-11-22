@@ -134,7 +134,7 @@ test("结果未知的操作, 仓库规范 and 项目设置: back to the object, 
     state.failSession = false; state.permissions = ["task", "document", "session", "management"];
 
     // 仓库规范: what the server declared, then a Git source registered and a formal decision with the revision chosen by name.
-    await go(settings, `/p/${projectId}/repository`);
+    await go(settings, `/p/${projectId}/settings`);
     const repository = settings;
     await heading(repository, "仓库规范").waitFor();
     // The capabilities judged for this project (GET /capabilities), not the identity's declaration on /api/session.

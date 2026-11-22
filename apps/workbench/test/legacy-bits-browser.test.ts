@@ -233,7 +233,7 @@ test("rebuilt legacy parts read, write and fail as the record allows, at three w
   await otherReferences.getByText("这一版任务还没有登记外部依据。").waitFor();
 
   // 仓库规范: the same registration without a task (no task decision form).
-  await go(`/p/${projectId}/repository`);
+  await go(`/p/${projectId}/settings`);
   const repository = pageBrowser.getByRole("region", { name: "登记固定 Git 来源与正式采用" });
   await repository.getByText("登记 Git 固定来源", { exact: true }).waitFor();
   await repository.getByText("记录正式文档与过程文档的关系", { exact: true }).waitFor();

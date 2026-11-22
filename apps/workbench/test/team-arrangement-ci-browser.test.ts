@@ -8,7 +8,7 @@ import { id, projectId, serve } from "./arrangement-fixture.ts";
 const modulePath = process.env.EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE;
 const shots = process.env.EVOLOOP_ARRANGEMENT_SCREENSHOT_DIR;
 
-test("团队 › 统筹安排 is the only page with the arrangement; 运行与接入 and the agent directory point to it; old links open",
+test("统筹安排 (the agents space home) is the only page with the arrangement; 运行与接入 points to it; old links open",
   { skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE" }, async t => {
     const { base } = await serve(t);
     const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
@@ -33,11 +33,9 @@ test("团队 › 统筹安排 is the only page with the arrangement; 运行与�
       assert.match(await role.innerText(), /统筹安排：谁在做什么、谁空闲、队伍与冲突，是唯一显示安排的页面/);
       assert.equal(await role.locator("a", { hasText: "运行与接入" }).getAttribute("href"), `/p/${projectId}/runtime`);
       assert.equal(await role.locator("a", { hasText: "智能体目录" }).getAttribute("href"), `/p/${projectId}/sessions`);
-      if (width === 1440) {
-        const nav = page.getByRole("navigation", { name: "工作分区" });
-        assert.deepEqual(await nav.locator("ul ul a").evaluateAll(links => links.map(link => link.textContent)), ["统筹安排", "运行与接入", "职责", "组织复盘", "协作回执"], "团队 lists 统筹安排 first and 运行与接入 second");
-        assert.equal(await nav.locator("ul ul a[aria-current=page]").innerText(), "统筹安排");
-      }
+      // 统筹安排 now lives in the agents space: the work navigation is not shown and there is no 团队 group anywhere.
+      assert.equal(await page.getByRole("navigation", { name: "工作分区" }).count(), 0, "the agents space has no work navigation");
+      assert.equal(await page.getByRole("link", { name: "团队", exact: true }).count(), 0, "there is no 团队 group");
       if (shots) await page.screenshot({ path: `${shots}/team-arrangement-${width}.png` });
 
       // 2. 运行与接入: the sentence, the link, and none of the arrangement facts.
@@ -54,19 +52,18 @@ test("团队 › 统筹安排 is the only page with the arrangement; 运行与�
       assert.equal(path(), `/p/${projectId}/arrangement`, "the sentence's link opens 统筹安排");
       if (shots) { await go(page, `/p/${projectId}/runtime`); await page.getByRole("heading", { name: "运行与接入", exact: true }).waitFor(); await page.screenshot({ path: `${shots}/team-runtime-${width}.png` }); }
 
-      // 3. The agent directory: only the directory, with the way to 统筹安排.
+      // 3. The agents space with no agent selected shows 统筹安排 as it was.
       await go(page, `/p/${projectId}/sessions`);
-      await page.getByRole("heading", { name: "智能体", exact: true }).waitFor();
-      assert.equal(await page.locator("[data-page-key]:not([hidden]) .arrangement-page").count(), 0);
-      assert.doesNotMatch(await page.locator("[data-page-key]:not([hidden])").innerText(), arrangementFacts, "the agent directory shows no arrangement");
-      assert.equal(await page.locator("[data-page-key]:not([hidden]) [data-arrangement-entry]").getAttribute("href"), `/p/${projectId}/arrangement`);
-      assert.match(await page.locator("[data-page-key]:not([hidden]) [data-page-role]").innerText(), /智能体目录：选一个智能体/);
-      if (shots) await page.screenshot({ path: `${shots}/agents-directory-${width}.png` });
+      await page.getByRole("heading", { name: "统筹安排", exact: true }).waitFor();
+      assert.equal(path(), `/p/${projectId}/sessions`, "/sessions keeps its address and shows 统筹安排");
+      await page.getByRole("list", { name: "各智能体的安排" }).waitFor();
+      assert.equal(await page.locator("[data-page-key]:not([hidden]) .arrangement-page").count(), 1);
+      if (shots) await page.screenshot({ path: `${shots}/agents-arrangement-${width}.png` });
 
       // 4. Old addresses: each opens (no 404) and lands where it belongs.
       await go(page, `/p/${projectId}/sessions?view=flow`);
       await page.getByRole("heading", { name: "统筹安排", exact: true }).waitFor();
-      assert.equal(path(), `/p/${projectId}/arrangement?view=flow`, "/sessions?view=flow opens 统筹安排 › 动态");
+      assert.equal(path(), `/p/${projectId}/sessions?view=flow`, "/sessions?view=flow opens 统筹安排 › 动态");
       assert.equal(await page.getByRole("tab", { name: "动态" }).getAttribute("aria-selected"), "true");
       await go(page, `/p/${projectId}/runtime?session=owned:${id(2)}`);
       await page.waitForFunction(() => location.pathname.endsWith("/sessions"));
@@ -78,6 +75,13 @@ test("团队 › 统筹安排 is the only page with the arrangement; 运行与�
       await go(page, `/p/${projectId}/sessions?session=owned:${id(2)}`);
       await page.waitForFunction(() => document.querySelector("[data-shell=frame]") !== null);
       assert.equal(await page.getByRole("heading", { level: 1, name: "找不到这个页面" }).count(), 0, "an agent link keeps opening the agent");
+      // 组织复盘 and 仓库规范 moved: their old addresses open the 文档 filter and 项目设置.
+      await go(page, `/p/${projectId}/reviews`);
+      await page.waitForFunction(() => location.pathname.endsWith("/documents"));
+      assert.equal(path(), `/p/${projectId}/documents?kind=organization_review`, "组织复盘 opens the 复盘 filter of 文档");
+      await go(page, `/p/${projectId}/repository`);
+      await page.waitForFunction(() => location.pathname.endsWith("/settings"));
+      assert.equal(new URL(page.url()).hash, "#settings-repository", "仓库规范 opens inside 项目设置");
       await page.close();
     }
     assert.deepEqual(errors, []);
