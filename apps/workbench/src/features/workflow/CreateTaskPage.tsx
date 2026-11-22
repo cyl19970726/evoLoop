@@ -149,7 +149,7 @@ export function CreateTaskView({ context, active, pathname, back, embedded = fal
       </Select>}</Field>}
       {draft.closeRule === "use" && <Field label={draft.stageId || draft.acceptanceMode === "human_required" ? "实际使用成果的身份" : "实际使用成果的身份（可选）"} {...field("consumer")}
         hint={draft.acceptanceMode === "human_required" ? "选验收的人本人；关闭时要有他对本次交付的使用记录。只列出能写入的人。"
-          : "选会实际使用成果的智能体；不选时可以稍后由统筹确定独立验收。只列出能写入的智能体。"}>
+          : "选会实际使用成果的智能体；不选时可以稍后由 Leader 确定独立验收。只列出能写入的智能体。"}>
         {control => <MemberChoice projectId={context.projectId} control={control} value={draft.consumer} onChange={consumer => edit({ consumer })}
           need="write" kind={acceptanceMemberKind(draft.acceptanceMode)} optional={!(draft.stageId || draft.acceptanceMode === "human_required")} />}</Field>}
     </section>

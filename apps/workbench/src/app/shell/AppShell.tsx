@@ -60,13 +60,15 @@ export function AppShell(props: AppShellProps) {
   React.useEffect(() => {
     const main = mainRef.current; if (!main) return;
     const apply = () => {
-      const heading = main.querySelector("h1")?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+      // Pages already visited stay mounted under `[hidden]`: the heading is the first one of the page on screen, not of an earlier page.
+      const shown = Array.from(main.querySelectorAll("h1")).find(h => !h.closest("[hidden]"));
+      const heading = shown?.textContent?.replace(/\s+/g, " ").trim() ?? "";
       const name = heading && heading !== title ? (heading.length > 60 ? `${heading.slice(0, 60)}…` : heading) : title;
       document.title = `${name} · ${props.projectTitle || "evoLoop"}`;
     };
     apply();
     const observer = new MutationObserver(apply);
-    observer.observe(main, { childList: true, subtree: true, characterData: true });
+    observer.observe(main, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["hidden"] });
     return () => observer.disconnect();
   }, [title, props.projectTitle, path]);
   React.useEffect(() => {

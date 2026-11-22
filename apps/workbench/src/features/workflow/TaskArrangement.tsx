@@ -273,7 +273,7 @@ export function TaskArrangementFacts({ projectId, detail, leader, responsibleNam
         {leader.delivery && <span className="block text-caption text-muted-foreground">{leader.delivery.observationResult
           ? `使用：${leader.delivery.observationKind === "human" ? "本人" : "智能体"} ${actorText(leader.delivery.observationActorId)} · ${leader.delivery.observationResult === "used" ? "已使用" : leader.delivery.observationResult === "failed" ? "使用失败" : "未使用"}`
           : "还没有这次交付的使用观察"}</span>}</Fact>
-      <Fact label="统筹决定">{leader.review ? `${leader.review.decision === "acknowledged" ? "已核对" : "暂缓"} · ${leader.review.reason}` : "当前工作位置还没有统筹决定。"}
+      <Fact label="Leader 决定">{leader.review ? `${leader.review.decision === "acknowledged" ? "已核对" : "暂缓"} · ${leader.review.reason}` : "当前工作位置还没有 Leader 决定。"}
         {leader.review && <span className="block text-caption text-muted-foreground">{actorText(leader.review.actorId)} · {date(leader.review.at)}</span>}</Fact>
     </div>
     <div className="flex flex-col gap-2" aria-label="结果回程">
@@ -306,7 +306,7 @@ export function TaskArrangementFacts({ projectId, detail, leader, responsibleNam
       { label: "最近一次运行", value: leader.latestRun?.runId }, { label: "当前交付", value: leader.delivery?.deliveryId },
       { label: "承接对象", value: leader.assignment?.targetId }, { label: "队列暂停代码", value: leader.queueHold },
       { label: "工作变化序号", value: String(leader.workChangeSequence) }, actorRow("指定使用者", consumer),
-      actorRow("使用记录者", leader.delivery?.observationActorId), actorRow("统筹决定者", leader.review?.actorId)]} />
+      actorRow("使用记录者", leader.delivery?.observationActorId), actorRow("Leader 决定者", leader.review?.actorId)]} />
   </div>;
 }
 
@@ -331,7 +331,7 @@ export function noticeState(item: LeaderNotice): string {
   if (item.viaPacket) return packetNoticeState(item);
   if (item.messageState === "failed" || item.messageState === "cancelled") return `原通知${item.messageState === "failed" ? "失败" : "已取消"}；要核对原消息和任务，再作新的安排`;
   if (item.blockedReason?.startsWith("MESSAGE_POST_REJECTED") || item.blockedReason === "PINNED_RECIPIENT_CHANGED") return "原消息被拒绝或接收者已变；核对原操作后另作安排";
-  if (item.state === "linked") return item.readAt ? `统筹已记录收阅 · ${date(item.readAt)}；下一步另行核对` : item.messageBlockedReason ? "消息待恢复" : item.nativeTurnId ? "这一轮已关联；收阅与下一步另行核对" : "已保存给统筹的消息，还没有核到接收";
+  if (item.state === "linked") return item.readAt ? `Leader 已记录收阅 · ${date(item.readAt)}；下一步另行核对` : item.messageBlockedReason ? "消息待恢复" : item.nativeTurnId ? "这一轮已关联；收阅与下一步另行核对" : "已保存给 Leader 的消息，还没有核到接收";
   if (item.blockedReason) return "待恢复";
-  return item.stale ? "来源属于历史修订，要核对当前任务" : "待通知统筹";
+  return item.stale ? "来源属于历史修订，要核对当前任务" : "待通知 Leader";
 }

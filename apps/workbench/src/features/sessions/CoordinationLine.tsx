@@ -23,7 +23,7 @@ export function CoordinationLine({ round, projectId, titleOf, taskHref, onMessag
   const body = round.input && round.input.kind === "message" && round.input.body ? round.input.body : round.fact?.content ?? "";
   const times = sentStartedText(sentAndStarted(round));
   const id = round.input?.id ?? round.key;
-  return <article aria-label="统筹的协调消息" className={cn("workspace-coordination min-w-0 text-small", !nested && "pl-[38px]")} data-workspace-entry={id} data-coordination-line="" data-turn-id={round.turnId ?? undefined}>
+  return <article aria-label="Leader 的协调消息" className={cn("workspace-coordination min-w-0 text-small", !nested && "pl-[38px]")} data-workspace-entry={id} data-coordination-line="" data-turn-id={round.turnId ?? undefined}>
     <CollapsibleRow summary={<span>{summary.type} · {summary.title}{summary.at ? <> · <time dateTime={summary.at}>{date(summary.at)}</time></> : ""}</span>}>
       <div className="flex min-w-0 flex-col gap-1.5 pb-1">
         {times && <p className="text-caption text-muted-foreground">{times}</p>}
@@ -39,7 +39,7 @@ export function CoordinationLine({ round, projectId, titleOf, taskHref, onMessag
 }
 
 export function CoordinationGroup({ rounds, ...rest }: Omit<LineProps, "round"> & { rounds: Round[] }) {
-  return <article aria-label="统筹的协调消息组" className="workspace-coordination-group min-w-0 pl-[38px] text-small" data-workspace-entry={rounds[0]!.input?.id ?? rounds[0]!.key} data-coordination-group="">
+  return <article aria-label="Leader 的协调消息组" className="workspace-coordination-group min-w-0 pl-[38px] text-small" data-workspace-entry={rounds[0]!.input?.id ?? rounds[0]!.key} data-coordination-group="">
     <CollapsibleRow summary={<span>Leader 的 {rounds.length} 条协调消息</span>}>
       <div className="flex min-w-0 flex-col gap-1.5">
         {rounds.map(round => <CoordinationLine key={round.key} round={round} nested {...rest} />)}

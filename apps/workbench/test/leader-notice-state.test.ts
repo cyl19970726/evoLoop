@@ -13,7 +13,7 @@ test("a packet notice never says its own unused message was saved and not yet re
   const states = [inPacket("pending"), inPacket("delivered"), inPacket("seen"), inPacket("handled", { disposition: "handled" }),
     inPacket("handled", { disposition: "deferred", deferUntil: "2026-11-12T00:00:00Z" }), inPacket("withdrawn", { withdrawnReason: "TODO_SOURCE_SUPERSEDED" }),
     inPacket("unknown", {}, "blocked"), inPacket("unknown", {}, "unknown"), inPacket("unknown", { readBefore: true }, "returned"), { ...base, packet: null } as LeaderNotice];
-  for (const item of states) assert.doesNotMatch(noticeState(item), /已保存给统筹的消息，还没有核到接收/);
+  for (const item of states) assert.doesNotMatch(noticeState(item), /已保存给 Leader 的消息，还没有核到接收/);
 });
 
 test("each packet state is named in the workbench's words", () => {
@@ -30,5 +30,5 @@ test("each packet state is named in the workbench's words", () => {
 });
 
 test("a notice from before packets keeps its one-notice-one-message wording", () => {
-  assert.match(noticeState({ ...base, viaPacket: false } as LeaderNotice), /已保存给统筹的消息，还没有核到接收/);
+  assert.match(noticeState({ ...base, viaPacket: false } as LeaderNotice), /已保存给 Leader 的消息，还没有核到接收/);
 });

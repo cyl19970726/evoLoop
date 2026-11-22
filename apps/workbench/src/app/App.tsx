@@ -13,6 +13,7 @@ import { checkedNoticeText } from "./operationNotice";
 import { providerHoldReadFailure } from "./providerHoldNotice";
 import { useProviderHolds } from "../shared/providerHolds";
 import { useEmptySections } from "../shared/emptySections";
+import { useKnowledgeMenuEmpty } from "../features/knowledge/knowledgeNav";
 import { clearRecoveryIntents, forgetRecoveryIntent, isSpecialOperation, rememberRecoveryIntent } from "./recoveryIntent";
 
 import { readRoute, href, type Route } from "../shared/ui/shared";
@@ -214,7 +215,9 @@ export function App() {
   const drain = drainNotice(drainRead.data, iso => new Date(iso).toLocaleString("zh-CN"));
   const projectTitle = projectRead.data?.title ?? "";
   const holdsRead = useProviderHolds(projectId ?? "", !!session);
-  const emptySections = useEmptySections(projectId ?? "", token, !!session);
+  const emptyShared = useEmptySections(projectId ?? "", token, !!session);
+  const knowledgeEmpty = useKnowledgeMenuEmpty(projectId ?? "", !!session);
+  const emptySections = useMemo(() => knowledgeEmpty ? new Set([...emptyShared, "knowledge" as const]) : emptyShared, [emptyShared, knowledgeEmpty]);
   // 待我处理 counts 验收安排, 依据变化 and 等我使用的交付 under the page's own keys; an unknown part is never counted as 0.
   const inbox = useInboxCount(projectId ?? "", session?.principal.actorId ?? "", !!session);
   const projectError = projectRead.error ? errorText(projectRead.error) : "";

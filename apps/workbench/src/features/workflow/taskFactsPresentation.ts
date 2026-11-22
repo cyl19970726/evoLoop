@@ -66,7 +66,7 @@ export function phaseFact(read: Read<LeaderWorkTask | null>): { tone: StatusTone
     case "failed": return { tone: "unknown", label: "无法判断", next: "当前工作安排暂不可读取，无法判断下一步；可重新读取。" };
     case "ready": return read.value
       ? { ...phaseStatus[read.value.phase], next: workItemNextStep(read.value) }
-      : { tone: "idle", label: "未登记", next: "当前工作安排未登记；与统筹沟通后回读。" };
+      : { tone: "idle", label: "未登记", next: "当前工作安排未登记；与 Leader 沟通后回读。" };
   }
 }
 

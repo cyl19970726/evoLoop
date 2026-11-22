@@ -7,7 +7,7 @@ import type { AcceptanceRelayView } from "@evoloop/contracts/acceptance-relay";
 
 // Used by 统筹安排 and the overview (moved here from 统筹安排's arrangementPresentation, #259).
 const nextSteps: Record<LeaderWorkPhase, string> = {
-  unassigned: "等统筹指定承接的智能体",
+  unassigned: "等 Leader 指定承接的智能体",
   awaiting_assignment: "等承接的智能体确认接手",
   ready: "可以开始，等统筹安排执行",
   running: "等这次执行结束；执行结束不等于验收通过",
@@ -37,7 +37,7 @@ export function responsibleKind(responsible: Pick<Responsible, "kind" | "id">, a
     case "role": return "职责";
     case "session": return assignment?.targetId === responsible.id && assignment.targetKind === "external" ? "外部智能体" : "智能体";
     case "consumer": return "指定验收者";
-    case "leader": return "项目统筹";
+    case "leader": return "Leader";
     case "publisher": return "发布维护者";
     case "user": return "指定的人";
     case "task": return "前置任务";
@@ -140,7 +140,7 @@ export const relayStageLabel: Record<AcceptanceRelayView["stage"], string> = { c
 export const relayStateLabel: Record<AcceptanceRelayView["state"], string> = {
   pending: "等待投递或接手", linked: "消息已入队", blocked: "投递受阻", superseded: "已被替代", released: "已释放",
 };
-export const relayModeLabel: Record<AcceptanceRelayView["mode"], string> = { human: "指定的人", leader: "统筹", session: "业务智能体" };
+export const relayModeLabel: Record<AcceptanceRelayView["mode"], string> = { human: "指定的人", leader: "Leader", session: "业务智能体" };
 const messageStates: Record<string, string> = {
   queued: "已排队", processing: "处理中", replied: "已回复", completed_without_reply: "已处理，未回复", failed: "处理失败",
   unknown: "结果未知", cancelled: "已撤回", manual_pending: "等人工转交",
@@ -161,5 +161,6 @@ export function relayProgress(item: Pick<AcceptanceRelayView, "messageState" | "
 
 /** Who the relay hands the acceptance to, by kind; the recipient's identity is in the full-identifier layer. */
 export function relayRecipient(item: Pick<AcceptanceRelayView, "mode">): string {
-  return `交给${relayModeLabel[item.mode] ?? "接收方"}`;
+  const who = relayModeLabel[item.mode] ?? "接收方";
+  return `交给${/^[A-Za-z]/.test(who) ? " " : ""}${who}`;
 }

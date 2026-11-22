@@ -30,7 +30,7 @@ test("free capacity is only judged with every open Task and the queues", () => {
 });
 
 test("nobody free is only 'everyone has work' when every other agent's work is on record", () => {
-  assert.equal(noFreeAgentText({ judged: true, free: [], others: 0, unknown: 0 }), "统筹以外还没有其他智能体。");
+  assert.equal(noFreeAgentText({ judged: true, free: [], others: 0, unknown: 0 }), "Leader 以外还没有其他智能体。");
   assert.doesNotMatch(noFreeAgentText({ judged: true, free: [], others: 0, unknown: 0 }), /都有|每个/);
   assert.match(noFreeAgentText({ judged: true, free: [], others: 3, unknown: 0 }), /都有在做、已分派或排队的工作/);
   assert.match(noFreeAgentText({ judged: true, free: [], others: 1, unknown: 0 }), /唯一的智能体有在做/);

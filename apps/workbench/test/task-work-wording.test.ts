@@ -16,7 +16,7 @@ test("acceptance relay steps read in plain words and never print raw values", ()
 test("the relay names who it hands acceptance to by kind; the recipient's identity stays in the full-identifier layer", () => {
   assert.equal(relayRecipient({ mode: "human" }), "交给指定的人");
   assert.equal(relayRecipient({ mode: "session" }), "交给业务智能体");
-  assert.equal(relayRecipient({ mode: "leader" }), "交给统筹");
+  assert.equal(relayRecipient({ mode: "leader" }), "交给 Leader");
   for (const label of [...Object.values(relayStageLabel), ...Object.values(relayStateLabel)]) assert.doesNotMatch(label, /[A-Za-z]/);
 });
 

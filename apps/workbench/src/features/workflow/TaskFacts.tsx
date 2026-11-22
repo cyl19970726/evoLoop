@@ -113,7 +113,7 @@ function StatusFacts({ context, detail, read, linkForTab }: {
         projection.plan.plannedStartAt ? `计划开始 ${taskTimestamp(projection.plan.plannedStartAt)}` : ""].filter(Boolean).join(" · ")}</Fact>}
     {projection && projection.dependencies.length > 0 && <Fact label="前置任务">{projection.dependencies.filter(item => !item.acceptanceSatisfied).length
       ? `${projection.dependencies.filter(item => !item.acceptanceSatisfied).length} 项尚未验收` : `${projection.dependencies.length} 项均已验收`}</Fact>}
-    {projection?.review && <Fact label="统筹决定">{projection.review.decision === "deferred" ? "已暂缓" : "已核对"}<span className="mt-0.5 block text-caption text-muted-foreground">{projection.review.reason}</span></Fact>}
+    {projection?.review && <Fact label="Leader 决定">{projection.review.decision === "deferred" ? "已暂缓" : "已核对"}<span className="mt-0.5 block text-caption text-muted-foreground">{projection.review.reason}</span></Fact>}
     {pending > 0 && <p className="text-label text-warning">{pending} 项依据变化待复核。<a className="text-primary hover:underline" href={linkForTab("basis")}>去复核</a></p>}
   </div>;
 }
@@ -162,7 +162,7 @@ function DocumentFacts({ projectId, detail }: { projectId: string; detail: TaskD
         })}</ul>
       </div>;
     })}
-    <p className="text-caption text-muted-foreground">需求总图与统筹总览关联到任务后列在“关联文档”；系统尚未单独标记它们。</p>
+    <p className="text-caption text-muted-foreground">需求总图与 Leader 总览关联到任务后列在“关联文档”；系统尚未单独标记它们。</p>
   </div>;
 }
 

@@ -186,8 +186,8 @@ export function TaskActionsTab({ context, detail, leader, leaderState, documents
     </TabSection>)}
     {canArrange && <TabSection title="统筹安排">
       {(leaderState === "loading" || leaderState === "checking") && <Fine>{shownLeader ? "正在重新核对当前工作安排…" : "正在读取当前工作安排…"}</Fine>}
-      {leaderState === "failed" && <Notice tone="waiting" action={<Button size="compact" onClick={onRereadLeader}>重新读取</Button>}>当前工作安排暂不可读取。计划、依赖和统筹决定要按读到的版本提交，读回前暂不能修改。</Notice>}
-      {leaderState === "ready" && !leader && <p className="text-label text-text-secondary">这项任务没有登记当前工作安排，不能设置计划、依赖或统筹决定。</p>}
+      {leaderState === "failed" && <Notice tone="waiting" action={<Button size="compact" onClick={onRereadLeader}>重新读取</Button>}>当前工作安排暂不可读取。计划、依赖和 Leader 决定要按读到的版本提交，读回前暂不能修改。</Notice>}
+      {leaderState === "ready" && !leader && <p className="text-label text-text-secondary">这项任务没有登记当前工作安排，不能设置计划、依赖或 Leader 决定。</p>}
       {shownLeader && <LeaderActions context={context} detail={detail} leader={shownLeader} open={open} />}
     </TabSection>}
     <TaskScheduleSection context={context} detail={detail} />
@@ -251,7 +251,7 @@ function LeaderActions({ context, detail, leader, open }: { context: MutationCon
       ? `${leader.dependencies.length} 项前置任务，${leader.dependencies.filter(item => !item.acceptanceSatisfied).length} 项尚未验收` : "没有前置任务。"}>
       <DependenciesForm context={context} detail={detail} leader={leader} onReread={context.onChanged} />
     </ActionRow>
-    <ActionRow defaultOpen={open === "review"} title="记录统筹处理决定" description={leader.review ? `${leader.review.decision === "deferred" ? "已暂缓" : "已核对"} · ${date(leader.review.at)}` : "对这项任务的当前版本记“已核对”或“暂缓”。"}>
+    <ActionRow defaultOpen={open === "review"} title="记录 Leader 处理决定" description={leader.review ? `${leader.review.decision === "deferred" ? "已暂缓" : "已核对"} · ${date(leader.review.at)}` : "对这项任务的当前版本记“已核对”或“暂缓”。"}>
       <CommandForm context={context} submitLabel="保存决定" permission="task" decision baseline={{ taskVersion: seen.taskVersion, revisionId: seen.revisionId, workChangeSequence: seen.workChangeSequence }}
         options={{ validate: value => { leaderWorkReviewCommandSchema.parse(withoutOperationType(value)); },
           send: command => api().leaderReview(projectId, task.id, command as unknown as LeaderWorkReviewCommand) }}
