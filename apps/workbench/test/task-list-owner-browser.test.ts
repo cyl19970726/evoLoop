@@ -123,11 +123,11 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button",{name:"进入",exact:true}).click();
   // 全项目统筹对账 under the table view.
-  await page.getByRole("button",{name:/查看全项目统筹对账/}).click();
+  await page.getByRole("button",{name:/查看全项目的 Leader 对账/}).click();
   const overview=page.locator("[data-leader-overview]");
   await overview.getByText(/可开始/).first().waitFor();
   assert.match(await overview.innerText(),/变更序号 4/);
-  assert.match(await overview.innerText(),/统筹已暂缓/);
+  assert.match(await overview.innerText(),/Leader 已暂缓/);
   await page.setViewportSize({ width: 1280, height: 900 });
   const main=page.getByRole("main");
   const row=main.getByRole("row").filter({hasText:"澄清分工页待办"});

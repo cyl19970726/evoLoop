@@ -155,8 +155,8 @@ const lineStepLabel: Record<string, string> = { assign: "正在分派", confirm:
 // a refused step keeps the refusing command's code. People read a sentence; the code and the original stay one click away.
 const lineSuspendCodes: Record<string, string> = {
   RECIPIENT_UNAVAILABLE: "找不到这个智能体签名用的业务身份，任务没法分派给它；要先给它登记执行身份",
-  RETRY_LIMIT: "这一步多次被拒绝，已停止重试，等统筹处理",
-  MESSAGE_MISSING: "执行确认的请求没有记录下来，等统筹处理",
+  RETRY_LIMIT: "这一步多次被拒绝，已停止重试，等 Leader 处理",
+  MESSAGE_MISSING: "执行确认的请求没有记录下来，等 Leader 处理",
   MESSAGE_UNDELIVERED: "执行确认的请求没有送达这个智能体",
   CONFIRMATION_TIMEOUT: "这个智能体没有按时确认执行",
   CONFIRMATION_STALE: "确认之后任务又改了，需要重新确认",

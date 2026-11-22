@@ -59,7 +59,7 @@ test("Task actions expose planning, dependency and exact-position Leader review"
   const html = render(actions({ context: reviewContext, detail, leader, open: "review" }));
   assert.match(html, /设置计划、截止与优先级/);
   assert.match(html, /设置前置任务依赖/);
-  assert.match(html, /记录统筹处理决定/);
+  assert.match(html, /记录 Leader 处理决定/);
   assert.match(html, /已核对当前工作/);
 });
 
@@ -77,7 +77,7 @@ test("Task timing names the actual waiting party and does not present the owner 
     ...timing, current: { ...timing.current, waitingFor: { kind: "consumer", id: "qa-actor" } },
   } as never }));
   assert.match(consumerHtml, /等待 指定验收者 · qa-actor/);
-  for (const [kind, words] of [["session", "智能体"], ["leader", "项目统筹"], ["publisher", "发布维护者"], ["user", "指定的人"]] as const) {
+  for (const [kind, words] of [["session", "智能体"], ["leader", "Leader"], ["publisher", "发布维护者"], ["user", "指定的人"]] as const) {
     const html = renderToStaticMarkup(createElement(TaskTiming, { timing: { ...timing, current: { ...timing.current, waitingFor: { kind, id: null } } } as never }));
     assert.match(html, new RegExp(`等待 ${words}`), kind);
   }

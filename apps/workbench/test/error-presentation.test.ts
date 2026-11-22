@@ -9,7 +9,7 @@ import { codeText, describeError, describeFailure, registerErrorCodes } from "..
 import { errorOutcome, resultOutcome } from "../src/shared/submissionOutcome.ts";
 
 const chinese = /[㐀-鿿]/;
-const internalWords = /\b(Session|Role|Run|operation|assignment|queue|Leader|nextAction)\b|PG\b/i;
+const internalWords = /\b(Session|Role|Run|operation|assignment|queue|nextAction)\b|PG\b/i;
 const unconfirmedWords = /结果还没有确认|结果未确认|结果尚未确认/;
 
 test("before the workspace loads the code table, an English answer is said by its status; Chinese stays as it is", () => {

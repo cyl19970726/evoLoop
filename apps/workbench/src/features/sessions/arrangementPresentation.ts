@@ -9,7 +9,7 @@ import type { FreeCapacity } from "./arrangementModel";
 
 /** A task's phase on the board. An assignment that would stop the next dispatch (`Arrangement.stale`) is not “待接手”. */
 export function boardPhaseText(task: Pick<LeaderWorkTask, "phase">, stale?: "assigned" | "accepted" | null): string {
-  return stale ? `${stale === "accepted" ? "接手" : "分派"}属于旧修订 · 要重新指定` : leaderPhaseLabel[task.phase];
+  return stale ? `${stale === "accepted" ? "接手" : "分派"}是按旧版任务做的 · 要重新指定` : leaderPhaseLabel[task.phase];
 }
 
 const directoryRelations: Record<ObservedTask["relation"], string> = {
@@ -62,11 +62,11 @@ export function freeCountStat(capacity: FreeCapacity, unknownReason: string | nu
 /** The line under 空闲与过载 when nobody is free. Only says "everyone has work" when every agent's work is on record. */
 export function noFreeAgentText(capacity: FreeCapacity, directoryComplete = true): string {
   if (!directoryComplete) return "智能体目录没有读全，无法确认谁空闲；先点“重新读取”或读完目录。";
-  if (!capacity.others) return "统筹以外还没有其他智能体。";
+  if (!capacity.others) return "Leader 以外还没有其他智能体。";
   if (capacity.unknown === capacity.others) return "各智能体的占用都待核对，暂不能确认谁空闲。";
   if (capacity.unknown) return "没有可确认空闲的智能体。";
-  return capacity.others === 1 ? "没有空闲的智能体：统筹以外唯一的智能体有在做、已分派或排队的工作。"
-    : "没有空闲的智能体：统筹以外的智能体都有在做、已分派或排队的工作。";
+  return capacity.others === 1 ? "没有空闲的智能体：Leader 以外唯一的智能体有在做、已分派或排队的工作。"
+    : "没有空闲的智能体：Leader 以外的智能体都有在做、已分派或排队的工作。";
 }
 
 /** The line under 冲突与风险 when no risk is listed. */

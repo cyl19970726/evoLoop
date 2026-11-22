@@ -22,7 +22,7 @@ const known: Record<string, string> = {
   ACCEPTANCE_CHANGED: "验收安排已经变化",
   EVALUATION_SOURCE_CHANGED: "评价依据的来源已经变化",
   SUBMISSION_VERSION_CONFLICT: "交付的版本已经变化",
-  ORCHESTRATION_VERSION_CONFLICT: "统筹记录已经变化",
+  ORCHESTRATION_VERSION_CONFLICT: "Leader 记录已经变化",
   TASK_BASELINE_CONFLICT: "任务的基线已经变化",
   STALE_IMPACT: "影响记录已经过期",
   STALE_DELIVERY: "交付记录已经过期",

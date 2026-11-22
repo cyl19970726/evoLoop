@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ScheduleGrantHelp } from "./ScheduleGrantHelp";
+import { isSampleTitle } from "../../shared/sampleObjects";
 import { useQueries } from "@tanstack/react-query";
 import { CalendarClock, Plus, RefreshCw } from "lucide-react";
 import { Button, EmptyState, ListRow, Notice as UiNotice, Select, cn } from "@evoloop/ui";
@@ -149,7 +150,11 @@ export function SchedulingPanel({ context, refresh }: { context: MutationContext
     {schedules.length > 0 && <ContextRailContent>
       <nav aria-label="日程" className="flex flex-col gap-0.5 pt-2">
         <span className="px-3 pb-1.5 pt-2 text-caption text-muted-foreground">日程 · {schedules.length}</span>
-        {schedules.map(listItem)}
+        {schedules.filter(item => !isSampleTitle(item.revision.template.title) || item.id === selectedSchedule?.id).map(listItem)}
+        {schedules.some(item => isSampleTitle(item.revision.template.title) && item.id !== selectedSchedule?.id) && <details data-sample-fold="" className="px-1">
+          <summary className="cursor-pointer px-2 py-1.5 text-caption text-muted-foreground">测试与样本 · {schedules.filter(item => isSampleTitle(item.revision.template.title) && item.id !== selectedSchedule?.id).length}（默认折叠）</summary>
+          {schedules.filter(item => isSampleTitle(item.revision.template.title) && item.id !== selectedSchedule?.id).map(listItem)}
+        </details>}
       </nav>
     </ContextRailContent>}
     <header className="flex flex-wrap items-start justify-between gap-3">

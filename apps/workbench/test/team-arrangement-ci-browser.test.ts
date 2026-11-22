@@ -35,7 +35,7 @@ test("团队 › 统筹安排 is the only page with the arrangement; 运行与�
       assert.equal(await role.locator("a", { hasText: "智能体目录" }).getAttribute("href"), `/p/${projectId}/sessions`);
       if (width === 1440) {
         const nav = page.getByRole("navigation", { name: "工作分区" });
-        assert.deepEqual(await nav.locator("ul ul a").evaluateAll(links => links.map(link => link.textContent)), ["统筹安排", "运行与接入", "职责", "分工讨论", "组织复盘", "协作回执"], "团队 lists 统筹安排 first and 运行与接入 second");
+        assert.deepEqual(await nav.locator("ul ul a").evaluateAll(links => links.map(link => link.textContent)), ["统筹安排", "运行与接入", "职责", "组织复盘", "协作回执"], "团队 lists 统筹安排 first and 运行与接入 second");
         assert.equal(await nav.locator("ul ul a[aria-current=page]").innerText(), "统筹安排");
       }
       if (shots) await page.screenshot({ path: `${shots}/team-arrangement-${width}.png` });

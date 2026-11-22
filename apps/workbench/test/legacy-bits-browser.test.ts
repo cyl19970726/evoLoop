@@ -1,6 +1,6 @@
 // Opt-in built-app regression: build workbench, then set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE.
 // The parts rebuilt in #229 PR9k, each read, written and failing on a fixture: a task's collaboration thread and its
-// Markdown text (当前工作), Git and external source registration (运行与关联 and 仓库规范), 待我验收与判断, and a schedule
+// Markdown text (当前工作), Git and external source registration (运行与关联 and 仓库规范), 待我处理, and a schedule
 // said in its own time zone. Screenshots at 1440, 1024 (right column as a drawer) and 390 go to
 // EVOLOOP_LEGACY_BITS_SCREENSHOT_DIR when it is set.
 import assert from "node:assert/strict";
@@ -241,7 +241,7 @@ test("rebuilt legacy parts read, write and fail as the record allows, at three w
   assert.equal(await repository.evaluate(element => !!element.closest("[data-legacy]")), false);
   await shoot("repository");
 
-  // 待我验收与判断: both lists in words; a failed list says it cannot tell, never "0 项".
+  // 待我处理: both lists in words; a failed list says it cannot tell, never "0 项".
   await go(`/p/${projectId}/inbox`);
   const inbox = pageBrowser.locator("[data-inbox]");
   await inbox.getByText("候选验收 · 按说明改一处文档").waitFor();
