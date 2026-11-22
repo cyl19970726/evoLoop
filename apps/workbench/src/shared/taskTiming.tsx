@@ -12,7 +12,7 @@ export const timingStageLabel: Record<LeaderWorkTimingStage, string> = {
 };
 /** Who the current stage waits on, in the words of shared/workPresentation.ts responsibleKind. */
 export const waitingKindLabel: Record<LeaderWorkTaskTiming["current"]["waitingFor"]["kind"], string> = {
-  session: "智能体", consumer: "指定验收者", leader: "项目统筹", role: "任务负责职责", publisher: "发布维护者",
+  session: "智能体", consumer: "指定验收者", leader: "Leader", role: "任务负责职责", publisher: "发布维护者",
   user: "指定的人", task: "前置任务", unknown: "责任未知",
 };
 const recordId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

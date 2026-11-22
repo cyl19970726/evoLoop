@@ -80,7 +80,7 @@ test("task timing read accepts absent timing and rejects another task's or incom
   } finally { globalThis.fetch = original; }
 });
 
-test("执行时间与重复 takes the date and time on the task zone's clock and sends what a typed ISO time with its offset sent", () => {
+test("定时任务 takes the date and time on the task zone's clock and sends what a typed ISO time with its offset sent", () => {
   const typedOnce = timingSetPayload("task-1", 2, timing, { executeAtUtc: "2026-11-12T09:00:00+08:00", timezone: "Asia/Shanghai", repeat: "none", scope: "this", reason: "改到早上" });
   assert.deepEqual(timingFormPayload("task-1", 2, timing, { executeAt: "2026-11-12T09:00", timezone: "Asia/Shanghai", repeat: "none", scope: "this", reason: "改到早上" }), typedOnce);
   assert.equal(typedOnce.executeAtUtc, "2026-11-12T01:00:00.000Z");
@@ -92,7 +92,7 @@ test("执行时间与重复 takes the date and time on the task zone's clock and
   // Daylight saving as the scheduler reads it: a skipped time is refused, a repeated one is the earlier instant.
   assert.throws(() => timingFormPayload("task-1", 2, null, { executeAt: "2027-03-14T02:30", timezone: "America/New_York", repeat: "none", scope: "this", reason: "r" }), /夏令时/);
   assert.equal(timingFormPayload("task-1", 2, null, { executeAt: "2027-11-07T01:30", timezone: "America/New_York", repeat: "daily", scope: "this", reason: "r" }).executeAtUtc, "2027-11-07T05:30:00.000Z");
-  assert.throws(() => timingFormPayload("task-1", 2, null, { executeAt: "", timezone: "Asia/Shanghai", repeat: "none", scope: "this", reason: "r" }), /请选择约定执行时间/);
+  assert.throws(() => timingFormPayload("task-1", 2, null, { executeAt: "", timezone: "Asia/Shanghai", repeat: "none", scope: "this", reason: "r" }), /请选择执行时间/);
   // A stored time left alone goes back as stored, the later of a repeated reading included.
   const laterTiming = { ...timing, executeAtUtc: "2027-11-07T06:30:00.000Z", timezone: "America/New_York" };
   assert.equal(timingFormPayload("task-1", 2, laterTiming, { executeAt: timeFieldValue(laterTiming.executeAtUtc, laterTiming.timezone), timezone: laterTiming.timezone,

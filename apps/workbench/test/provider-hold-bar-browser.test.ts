@@ -106,7 +106,7 @@ test("the run-blocked bar is one plain line, goes to the affected object, and �
     // One affected agent: the link goes straight to it; on its own page the line is red, on another agent's page it stays neutral.
     holds = [hold([impact(leader, true, 0)])];
     await open(page, `/p/${projectId}/work`);
-    await page.getByText(/统筹 Leader停着/).first().waitFor();
+    await page.getByText(/统筹 Leader 停着/).first().waitFor();
     assert.equal(await page.locator("[data-provider-hold-link]").getAttribute("href"), `/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${leader}`)}`);
     await open(page, `/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${leader}`)}`);
     await page.locator('[data-provider-hold-bar][data-here="true"]').waitFor();

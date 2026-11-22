@@ -150,8 +150,8 @@ test("reconciliation overview hides empty review counts and maps cognition histo
     const counts = page.getByRole("main").locator('[aria-label="对账阶段计数"]');
     await counts.getByText("待交付 · 1").waitFor({ timeout: 8000 }).catch(async () => assert.fail(`counts missing: ${(await page.getByRole("main").innerText()).slice(0, 900)} errors=${pageErrors.join(" | ")}`));
     await counts.getByText("运行中 · 1").waitFor();
-    assert.doesNotMatch(await counts.innerText(), /统筹已暂缓|^\s*0\s*$/m);
-    await page.getByRole("button", { name: /查看全项目统筹对账/ }).click();
+    assert.doesNotMatch(await counts.innerText(), /Leader 已暂缓|^\s*0\s*$/m);
+    await page.getByRole("button", { name: /查看全项目的 Leader 对账/ }).click();
     const overview = page.locator("[data-leader-overview]");
     await overview.getByText("业务结果反馈 · 完成真实闭环验收").waitFor();
     await overview.getByText("历史判断记录 · 原任务责任见原任务").waitFor();

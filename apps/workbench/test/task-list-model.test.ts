@@ -81,7 +81,7 @@ test("assigned, accepted and running stay three separate facts", () => {
   assert.deepEqual(values({ ...base, state: "assigned" }), ["已分派", "待接受", "没有运行"]);
   assert.deepEqual(values({ ...base, state: "accepted", ack: { method: "direct", actorId: "me", observerActorId: "me", evidence: "e", sourceRef: null, at: "x" } },
     { runId: "r", state: "running" }), ["已分派", "已接受 · 本人确认", "正在运行"]);
-  assert.deepEqual(values({ ...base, state: "accepted", taskRevisionId: "r1" }), ["分派属于旧修订", "接受属于旧修订", "没有运行"]);
+  assert.deepEqual(values({ ...base, state: "accepted", taskRevisionId: "r1" }), ["分派时的任务已改版，要重新分派", "接手时的任务已改版，要重新确认", "没有运行"]);
   assert.deepEqual(agentFacts({ state: "done", currentRevisionId: "r2" }, ready({ ...base, state: "accepted" }), ready({ runId: "r", state: "completed" })).map(fact => fact.value),
     ["历史分派", "当时已接受", "任务已关闭 · 最近一轮已结束"], "a closed task's assignment is history");
 });

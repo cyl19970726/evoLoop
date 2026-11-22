@@ -55,7 +55,7 @@ export function returnPlaceOf(target: string | null | undefined, projectId: stri
 }
 
 const pageNames: Partial<Record<Section, string>> = {
-  overview: "总览", work: "任务列表", inbox: "待我验收与判断", documents: "文档列表", knowledge: "知识空间", journey: "目标与阶段",
+  overview: "总览", work: "任务列表", inbox: "待我处理", documents: "文档列表", knowledge: "知识空间", journey: "目标与阶段",
   discussions: "分工讨论", reviews: "组织复盘", collaboration: "协作回执", runtime: "运行与接入", arrangement: "统筹安排", sessions: "智能体目录", schedules: "日程", roles: "职责",
   repository: "仓库规范", operations: "结果未知的操作", evaluations: "评价与后果", settings: "项目设置", connectors: "微信连接",
 };

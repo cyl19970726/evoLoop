@@ -1,5 +1,5 @@
 // A date and time typed on a local clock (a date-time control) in a chosen time zone, and the instant the service
-// stores. The forms that agree on a time (日程, 执行时间与重复, 新建任务) ask for the clock reading in the zone the
+// stores. The forms that agree on a time (日程, 定时任务, 新建任务) ask for the clock reading in the zone the
 // record names, never for UTC or an offset. The reading follows the scheduler's own rule
 // (@evoloop/contracts/scheduling dailyRuleInstant, also used by packages/core computeDue), so a preview never differs
 // from what the coordinator decides: a time that a daylight-saving gap skips does not exist, and a time that happens

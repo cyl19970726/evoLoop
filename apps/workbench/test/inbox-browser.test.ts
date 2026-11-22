@@ -1,7 +1,7 @@
 // Opt-in built-app regression for 待我处理 (docs/frontend/pages/tasks.md 收件页): signed in as a task's declared consumer,
 // 等我使用的交付 lists every current delivery that waits for my use, read across both pages of the work index, and leaves
 // out another consumer's, one I already used, one I last recorded as 使用失败 (back to rework, not mine), an older
-// revision's; every row (等我使用, 依据变化, 待我验收) opens its task with the way back to 待我验收与判断.
+// revision's; every row (等我使用, 依据变化, 待我验收) opens its task with the way back to 待我处理.
 // The 待我处理 count adds 验收安排, 依据变化 and 等我使用; when a part cannot be read it shows the 待核对 mark instead of a
 // number and the shell says why, and the page never says 0. At 1440, 1024 and 390 (no sideways scroll).
 // EVOLOOP_INBOX_SCREENSHOT_DIR=<dir> saves the screenshots.
@@ -213,20 +213,20 @@ test("待我处理 lists what waits for my use and counts every part, or says it
   const target = new URL(await link.getAttribute("href") ?? "", base);
   assert.equal(target.pathname, `/p/${projectId}/tasks/${taskId(fixtures.mine)}`);
   assert.deepEqual([target.searchParams.get("tab"), target.searchParams.get("return"), target.searchParams.get("actor"), target.searchParams.get("returnTitle")],
-    ["delivery", `/p/${projectId}/inbox`, me, "待我验收与判断"]);
+    ["delivery", `/p/${projectId}/inbox`, me, "待我处理"]);
   await link.click();
   const center = page.locator(`[data-task-page="${taskId(fixtures.mine)}"]`);
   await center.getByRole("tab", { name: /^交付与使用/, selected: true }).waitFor();
   await center.getByRole("tabpanel").filter({ visible: true }).locator(`[data-delivery="${deliveryId(fixtures.mine)}"]`).getByText("技术检查通过").waitFor();
   await shoot(page, "inbox-delivery-tab", () => center.getByRole("tab", { name: /^交付与使用/, selected: true }).waitFor());
-  await center.getByRole("link", { name: "返回待我验收与判断" }).waitFor();
+  await center.getByRole("link", { name: "返回待我处理" }).waitFor();
 
   // 依据变化 and 待我验收 open their tasks with the same way back (N1).
   await go(page, `/p/${projectId}/inbox`);
   const back = async (href: string | null, tab: string | null, task: Fixture) => {
     const url = new URL(href ?? "", base);
     assert.deepEqual([url.pathname, url.searchParams.get("tab"), url.searchParams.get("return"), url.searchParams.get("actor"), url.searchParams.get("returnTitle")],
-      [`/p/${projectId}/tasks/${taskId(task)}`, tab, `/p/${projectId}/inbox`, me, "待我验收与判断"]);
+      [`/p/${projectId}/tasks/${taskId(task)}`, tab, `/p/${projectId}/inbox`, me, "待我处理"]);
   };
   const impactLink = inbox.getByRole("list", { name: "依据变化" }).getByRole("link").first();
   await back(await impactLink.getAttribute("href"), "basis", fixtures.used);
@@ -234,7 +234,7 @@ test("待我处理 lists what waits for my use and counts every part, or says it
   await impactLink.click();
   const impactTask = page.locator(`[data-task-page="${taskId(fixtures.used)}"]`);
   await impactTask.getByRole("tab", { name: /^依据与影响/, selected: true }).waitFor();
-  await impactTask.getByRole("link", { name: "返回待我验收与判断" }).click();
+  await impactTask.getByRole("link", { name: "返回待我处理" }).click();
   await page.waitForURL(url => url.pathname === `/p/${projectId}/inbox`);
   await inbox.getByRole("list", { name: "依据变化" }).waitFor();
 

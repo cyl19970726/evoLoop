@@ -105,7 +105,7 @@ test("待我决定的职责与阶段深链带着返回待我处理，直接打�
 
   await open(`/p/${projectId}/inbox`);
   const inbox = page.locator("[data-inbox]");
-  await inbox.getByRole("heading", { level: 1, name: "待我验收与判断" }).waitFor();
+  await inbox.getByRole("heading", { level: 1, name: "待我处理" }).waitFor();
   const decisionList = inbox.getByRole("list", { name: "待我决定" });
   await decisionList.waitFor();
 
@@ -124,7 +124,7 @@ test("待我决定的职责与阶段深链带着返回待我处理，直接打�
   await noSideways(); await shot("decision-role-return-390");
   await roleBack.click();
   await page.waitForURL(`${base}/p/${projectId}/inbox`);
-  await inbox.getByRole("heading", { level: 1, name: "待我验收与判断" }).waitFor();
+  await inbox.getByRole("heading", { level: 1, name: "待我处理" }).waitFor();
   await decisionList.waitFor();
 
   await open(`/p/${projectId}/inbox`);
@@ -145,7 +145,7 @@ test("待我决定的职责与阶段深链带着返回待我处理，直接打�
   await noSideways(); await shot("decision-stage-return-390");
   await stageBack.click();
   await page.waitForURL(`${base}/p/${projectId}/inbox`);
-  await inbox.getByRole("heading", { level: 1, name: "待我验收与判断" }).waitFor();
+  await inbox.getByRole("heading", { level: 1, name: "待我处理" }).waitFor();
 
   await page.setViewportSize({ width: 1440, height: 900 });
   await open(`/p/${projectId}/roles?role=${roleId}`);

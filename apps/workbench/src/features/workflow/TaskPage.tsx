@@ -48,7 +48,7 @@ const taskTabs: { id: TaskTab; label: string }[] = [
 function TimingLine({ projectId, taskId, onOpen }: { projectId: string; taskId: string; onOpen(): void }) {
   const read = useTaskTiming(projectId, taskId);
   if (!read.data) return read.error ? <p className="text-caption text-muted-foreground">执行时间暂不可读取：{errorText(read.error)}</p> : null;
-  return <p className="text-label text-text-secondary">约定执行：{timingSummary(read.data)} · <Button variant="link" onClick={onOpen}>调整执行时间与重复</Button></p>;
+  return <p className="text-label text-text-secondary">定时任务：{timingSummary(read.data)} · <Button variant="link" onClick={onOpen}>调整定时任务</Button></p>;
 }
 
 /** One task in the center (tasks.md 中间): goal → completion conditions → body → progress and discussion, with the
@@ -238,8 +238,10 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
       <p className="text-caption text-muted-foreground">{taskType(detail.task.kind)} · 第 {detail.task.version} 版</p>
       <h1 tabIndex={-1} className="text-title font-semibold leading-(--leading-tight) text-foreground outline-none">{detail.task.title}</h1>
       <div className="flex flex-wrap items-center gap-2">
-        <StatusTag tone={state.tone} label={state.label} />
-        {projection && (detail.task.state === "todo" || detail.task.state === "in_progress") && <StatusTag tone={phaseStatus[projection.phase].tone} label={phaseStatus[projection.phase].label} />}
+        {/* One layer for the reader: an open task says where it waits ("等关闭", "待返工"), not "进行中" and then that; other states say the state. */}
+        {projection && (detail.task.state === "todo" || detail.task.state === "in_progress")
+          ? <StatusTag tone={phaseStatus[projection.phase].tone} label={phaseStatus[projection.phase].label} />
+          : <StatusTag tone={state.tone} label={state.label} />}
         <span className="text-label text-text-secondary">{responsibilityLabel}</span>
       </div>
     </header>

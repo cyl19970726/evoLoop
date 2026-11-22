@@ -13,7 +13,7 @@ export function useRevisionOrigin(projectId: string, revision: { actorId?: strin
   const schedules = useProjectQuery(projectId, ["schedules", "names"], signal =>
     request<ScheduleDefinition[]>("", `/api/projects/${encodeURIComponent(projectId)}/schedules`, 15000, { signal }),
   { enabled: !!scheduleId, retry: false });
-  // Same key as the task's 执行时间与重复 (TaskScheduleSection), so the two share one read.
+  // Same key as the task's 定时任务 (TaskScheduleSection), so the two share one read.
   const timing = useProjectQuery(projectId, ["tasks", "timing", taskId], () => api().taskTiming(projectId, taskId!),
     { enabled: first.series && !!taskId, retry: false });
   const found = scheduleId && Array.isArray(schedules.data) ? schedules.data.find(item => item.id === scheduleId && item.projectId === projectId) : undefined;
