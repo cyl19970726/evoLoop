@@ -32,7 +32,7 @@ import { buildRounds, lastReplyId, roundEntries, timelineRows, type Round } from
 import { useMessageFacts } from "./useMessageFacts";
 import { CoordinationGroup, CoordinationLine } from "./CoordinationLine";
 import { RoundTimes } from "./RoundTimes";
-import { runSourceLabel, sentAndStarted, type SentStarted } from "./roundPresentation";
+import { reworkHref, runSourceLabel, sentAndStarted, type SentStarted } from "./roundPresentation";
 import { replyingPhrase } from "./sessionStatusPresentation";
 import { api } from "../../shared/api";
 import {
@@ -42,6 +42,8 @@ import {
 import { SessionIdentityMark } from "./SessionIdentityMark";
 import { SessionComposer } from "./SessionComposer";
 import { grantBlockText, grantBlockedNotice } from "./queuedMessagePresentation";
+import { LongMessage } from "./LongMessage";
+import { foldAtBlock } from "./longText";
 import { SourceLimitations } from "./SourceLimitations";
 import type { NativeProgressView } from "./NativeSessionPanel";
 
@@ -159,17 +161,18 @@ function ReplyRecord({ id, reply, title, sessionKey, roleSeed, lastReply, projec
     <AgentAvatar seed={sessionKey} roleSeed={roleSeed} size={26} className="mt-0.5" />
     <div className="min-w-0 flex-1">
       <header className="mb-1 flex flex-wrap items-center gap-x-2 text-caption text-muted-foreground"><strong className="font-medium text-text-secondary">{title}</strong>{reply.at && <time dateTime={reply.at}>{date(reply.at)}</time>}</header>
-      <AgentMessage className={replyProse}><MarkdownBody source={reply.body} identity={`workspace-${id}`} projectId={projectId} topHeading={3} /></AgentMessage>
-      {reply.truncated && <footer className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-caption"><Button variant="link" className={linkButton} onClick={onFull}>读取完整回复</Button></footer>}
+      <AgentMessage className={replyProse}><MarkdownBody source={reply.truncated ? foldAtBlock(reply.body).shown : reply.body} identity={`workspace-${id}`} projectId={projectId} topHeading={3} linkify /></AgentMessage>
+      {reply.truncated && <footer className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-caption"><span className="text-text-secondary" data-reply-cut="">已显示前一部分，后面还有内容</span><Button variant="link" className={linkButton} onClick={onFull}>读取完整回复</Button></footer>}
     </div>
   </article>;
 }
 
-function RunStrip({ id, turnId, label, at, href }: { id: string; turnId: string | null; label: string; at: string | null; href: string | null }) {
+function RunStrip({ id, turnId, label, at, href, reworkHref = null }: { id: string; turnId: string | null; label: string; at: string | null; href: string | null; reworkHref?: string | null }) {
   return <article className="workspace-system-strip flex flex-wrap items-center gap-x-2 gap-y-1 self-center rounded-md bg-muted px-3 py-1.5 text-caption text-text-secondary" data-workspace-entry={id} data-round-source="" data-turn-id={turnId ?? undefined}>
     <FileText size={14} aria-hidden="true" /><strong className="font-medium text-foreground">{label}</strong>
     {at && <time dateTime={at}>{date(at)}</time>}
     {href && <a className="text-primary hover:underline" href={href}>查看任务与指令</a>}
+    {reworkHref && <a className="text-primary hover:underline" href={reworkHref} data-rework-link="">查看退回意见</a>}
   </article>;
 }
 
@@ -208,12 +211,16 @@ function TimelineEntry({ item, context, title, sessionKey, target, identity, tas
   const heading = item.kind === "message" ? null : item.kind === "tool" ? toolLabel(item.name) : item.kind === "reasoning" ? "思考过程" : recordLabel(item.label);
   const expandedBody = item.kind === "message" && fullText && item.state !== "running" && fullText.body.startsWith(item.body) ? fullText : null;
   const uncheckedInput = item.kind === "notice" && item.nativeKind === "userMessage" && item.label === "未核对的原生输入";
-  const body = expandedBody?.body ?? (uncheckedInput ? "这条输入的来源还在核对，展开可核对；这不表示来源不明。" : item.kind === "tool" ? toolStepText(item) : item.body);
+  const cutShort = assistant && !expandedBody && item.truncated;
+  const rawBody = expandedBody?.body ?? (uncheckedInput ? "这条输入的来源还在核对，展开可核对；这不表示来源不明。" : item.kind === "tool" ? toolStepText(item) : item.body);
+  const body = cutShort ? foldAtBlock(rawBody).shown : rawBody;
   const runHref = item.origin?.kind === "run" && item.origin.taskId ? `${taskHref(item.origin.taskId)}${taskHref(item.origin.taskId).includes("?") ? "&" : "?"}run=${encodeURIComponent(item.origin.id)}` : null;
   const failedInput = item.kind === "message" && item.role === "input" && ["failed", "unknown", "interrupted"].includes(item.state);
   const stateTag = item.kind === "message" && item.role === "input" && ["pending", "running", "failed", "unknown", "interrupted", "declined"].includes(item.state)
     ? <span className={cn("workspace-input-state text-caption", failedInput ? "font-medium text-destructive" : "text-text-secondary")}>{item.state === "pending" ? (item.kind === "message" && grantBlockText(item.blockedReason) !== null ? "受阻：缺少消息授权" : "排队中") : item.state === "running" && mine ? replyingPhrase("me") : item.state === "declined" ? "已撤回" : entryStateLabel[item.state]}</span> : null;
   const actions = <>
+    {cutShort && <span className="text-text-secondary" data-reply-cut="">已显示前 {body.length.toLocaleString("zh-CN")} 字，后面还有内容</span>}
+    {assistant && expandedBody && <span className="text-text-secondary" data-reply-full="">已读取完整回复，共 {expandedBody.body.length.toLocaleString("zh-CN")} 字</span>}
     {(expandedBody?.truncated ?? item.truncated) && <Button variant="link" className={linkButton} disabled={bodyBusy} onClick={() => void expandBody()}>{bodyBusy ? "读取完整内容中…" : `读取完整${assistant ? "回复" : "内容"}`}</Button>}
     {messageId && <Button variant="link" className={linkButton} onClick={() => onMessage(messageId)}>消息详情</Button>}
     {runHref && <a className="text-caption text-primary hover:underline" href={runHref}>查看来源任务</a>}
@@ -235,8 +242,8 @@ function TimelineEntry({ item, context, title, sessionKey, target, identity, tas
     </article>;
   }
   const stale = item.freshness === "stale" && <span className="workspace-stale">上次观察</span>;
-  if (mine) return <article aria-label="我发出的消息" className="flex flex-col items-end gap-1 self-end" data-workspace-entry={item.id} data-round-source="" data-turn-id={item.turnId ?? undefined}>
-    <MessageBubble footer={<span className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1"><span>你的消息</span>{stateTag}{time}{stale}{actions}</span>}>{body || "（没有可公开的正文）"}</MessageBubble>
+  if (mine) return <article aria-label="我发出的消息" className="flex min-w-0 max-w-full flex-col items-end gap-1 self-end" data-workspace-entry={item.id} data-round-source="" data-turn-id={item.turnId ?? undefined}>
+    <MessageBubble footer={<span className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1"><span>你的消息</span>{stateTag}{time}{stale}{actions}</span>}>{body ? <LongMessage text={body} identity={item.id} /> : "（没有可公开的正文）"}</MessageBubble>
     {bodyError && <p role="alert" className="text-caption text-destructive">{bodyError}</p>}
   </article>;
   return <article aria-label={label} className={cn("flex min-w-0 gap-3", item.kind !== "message" && "text-small")} data-workspace-entry={item.id} data-turn-id={item.turnId ?? undefined} {...(input ? { "data-round-source": "" } : {})} {...(lastReply ? { "data-last-reply": "" } : {})}>
@@ -245,7 +252,7 @@ function TimelineEntry({ item, context, title, sessionKey, target, identity, tas
     <div className="min-w-0 flex-1">
       <header className="mb-1 flex flex-wrap items-center gap-x-2 text-caption text-muted-foreground">{provenSession && <SessionIdentityMark target={target} identity={identity} name={title} size="small" />}<strong className="font-medium text-text-secondary">{label}</strong>{time}{stale}{stateTag}</header>
       {heading && <h3 className="mb-1 text-label font-medium text-text-secondary">{heading}</h3>}
-      {body ? <AgentMessage className={cn(replyProse, item.kind !== "message" && "text-small text-text-secondary")}><MarkdownBody source={body} identity={`workspace-${item.id}`} projectId={context.projectId} topHeading={3} /></AgentMessage>
+      {body ? <AgentMessage className={cn(replyProse, item.kind !== "message" && "text-small text-text-secondary")}><MarkdownBody source={body} identity={`workspace-${item.id}`} projectId={context.projectId} topHeading={3} linkify /></AgentMessage>
         : <p className="text-small text-muted-foreground">{assistant && item.state === "running" ? "正在回复…" : "来源没有提供可公开的正文。"}</p>}
       {bodyError && <p role="alert" className="mt-1 text-caption text-destructive">{bodyError}</p>}
       <footer className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-caption">{actions}</footer>
@@ -289,7 +296,7 @@ function EntryInspector({ entry, context, sessionKey, mayReadOriginal, agentName
         {value.detail.resources.length > 0 && <ul className="flex flex-col gap-0.5 font-mono text-caption">{value.detail.resources.map(resource => <li key={resource}>{resource}</li>)}</ul>}
       </> : value.detailAvailable && mayReadOriginal ? <Button size="compact" className="self-start" disabled={busy} onClick={() => void read()}>{busy ? "读取中…" : "读取原始输入与输出"}</Button>
         : <p className="text-caption text-muted-foreground">{mayReadOriginal ? toolDetailReason(value.detailReason) : "当前身份可阅读活动摘要；原始输入与输出未获授权。"}</p>}
-    </> : <div className={replyProse}><MarkdownBody source={value.body} identity={`workspace-detail-${value.id}`} projectId={context.projectId} topHeading={4} /></div>}
+    </> : <div className={replyProse}><MarkdownBody source={value.body} identity={`workspace-detail-${value.id}`} projectId={context.projectId} topHeading={4} linkify /></div>}
     {busy && <p role="status" className="text-caption text-muted-foreground">正在读取完整内容…</p>}
     {error && <Notice tone="error" action={<Button size="compact" disabled={busy} onClick={() => void read()}>重试详情</Button>}>{error}</Notice>}
     {value.truncated && !busy && <p className="text-caption text-muted-foreground">来源内容仍有截断，当前显示不能代表完整原件。</p>}
@@ -324,8 +331,8 @@ function MessageInspector({ id, context, snapshot, onApplied }: { id: string; co
     {read.isError && <Notice tone="error">重新读取失败：{errorText(read.error)}；下面是上次读回，当前待核对。</Notice>}
     <h3 className="text-label font-semibold">消息详情 · {messageStates[message.state]}</h3>
     <p className="text-caption text-muted-foreground">发送于 {date(message.createdAt)}{message.senderActorId === context.principal.actorId ? " · 由我发送" : ""}{senderClassLabel(message.senderClass) ? ` · 发送者：${senderClassLabel(message.senderClass)}` : ""}</p>
-    <div className={replyProse}><MarkdownBody source={message.content} identity={`message-detail-${message.id}`} projectId={context.projectId} topHeading={4} /></div>
-    {processing?.response && <><h3 className="text-label font-semibold">回复</h3><div className={replyProse}><MarkdownBody source={processing.response} identity={`message-response-${processing.id}`} projectId={context.projectId} topHeading={4} /></div></>}
+    <div className={replyProse}><MarkdownBody source={message.content} identity={`message-detail-${message.id}`} projectId={context.projectId} topHeading={4} linkify /></div>
+    {processing?.response && <><h3 className="text-label font-semibold">回复</h3><div className={replyProse}><MarkdownBody source={processing.response} identity={`message-response-${processing.id}`} projectId={context.projectId} topHeading={4} linkify /></div></>}
     {processing?.failure && <Notice tone="error">{nativeFailureLine(processing.failureCategory)}处理失败：{processing.failure}</Notice>}
     {message.blockedReason && <p className="text-text-secondary">等待原因：{grantBlockText(message.blockedReason) ?? message.blockedReason}</p>}
     {message.readReceipt && <p className="text-text-secondary">已读回执：{message.readReceipt.evidence} · {date(message.readReceipt.at)}</p>}
@@ -497,8 +504,9 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, titleO
   const renderRound = (round: Round) => {
     const { source, input } = round;
     const head = source.kind === "run" && (input?.origin?.taskId ?? source.taskId) !== null
-      ? <RunStrip key={`source:${round.key}`} id={input?.id ?? round.key} turnId={round.turnId} label={runSourceLabel(source.by, titleOf(source.taskId ?? input!.origin!.taskId!))}
-        at={round.startedAt ?? round.at} href={taskLink(source.taskId ?? input!.origin!.taskId!, source.runId)} />
+      ? <RunStrip key={`source:${round.key}`} id={input?.id ?? round.key} turnId={round.turnId} label={runSourceLabel(source.label, titleOf(source.taskId ?? input!.origin!.taskId!))}
+        at={round.startedAt ?? round.at} href={taskLink(source.taskId ?? input!.origin!.taskId!, source.runId)}
+        reworkHref={source.dispatch?.source === "rework" ? reworkHref(taskHref(source.taskId ?? input!.origin!.taskId!), source.dispatch) : null} />
       : source.kind === "message" && source.from === "leader" && input
         ? <CoordinationLine key={`source:${round.key}`} round={round} projectId={context.projectId} titleOf={titleOf} taskHref={taskHref} onMessage={messageId => inspect({ messageId })} />
         : input ? entryView(round, input, `source:${round.key}`) : null;

@@ -119,7 +119,7 @@ Token `total` 是 Thread 累计绝对快照，重复通知直接覆盖，不能�
 
 当前“处理中”只能由现有 owner 在确切 Thread 上观察到的 Turn 启动通知证明，读取历史中的 `running` 或全局连接 ready 均不能替代。`activeTurnId` 随匹配终态、断连和连接代次重置清除；已知终态不能被迟到的启动通知重新打开。
 
-工作区用一个只读模型连接原生持久历史、现有 owner 连接的公开活动和 PostgreSQL 消息；它不新增聊天数据库，也不接管执行。`RuntimePort.readWorkspaceHistory` 返回有稳定键的消息、工具、公开计划和来源范围，`onWorkspaceUpdate` 更新同一 Item。协调层负责项目/Session/Thread 授权、发送者核对、独立分页和有限实时覆盖；CLI `work timeline` 与工作台读取同一服务，前端不解析 provider 原始事件。
+工作区用一个只读模型连接原生持久历史、现有 owner 连接的公开活动和 PostgreSQL 消息；它不新增聊天数据库，也不接管执行。`RuntimePort.readWorkspaceHistory` 返回有稳定键的消息、工具、公开计划和来源范围，`onWorkspaceUpdate` 更新同一 Item。协调层负责项目/Session/Thread 授权、发送者核对、独立分页和有限实时覆盖；CLI `work timeline` 与工作台读取同一服务，前端不解析 provider 原始事件。Run 起的回合与输入的 `origin.dispatch`（Task c58b83e2）说明队伍怎样接下这个 Run：来路（leader、schedule、rework）、排它的身份、该身份是否队伍控制者、日程及其标题、返工对应的观察与交付；取自 `session_line_entry` 按 Run 编号，没有队伍项记着它的旧数据为 null。Session 快照的 `latestBusinessRun.dispatch` 同源（只在单个 Session 的读取里给，目录批量读不给）。
 
 ```mermaid
 flowchart LR

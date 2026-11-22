@@ -203,7 +203,10 @@ export function taskDetail(t) {
       submittedByActorId: "agent-dev", artifactRef: "git:evoloop/workbench", artifactRevision: "4f1c2ab", contentHash: hash("c"),
       technicalResult: "passed", technicalEvidence: "类型检查、单元测试和三个宽度的浏览器回归通过", reason: "交付右栏信息核对",
       actorId: "agent-dev", createdAt: ago(45) }] : [],
-    observations: [], closures: [],
+    // FIXTURE_REWORK_OBS: the return opinion a rework round's link points to (?observation=ID), id(881) like agents.mjs's rework dispatch.
+    observations: t.delivery && process.env.FIXTURE_REWORK_OBS === "1" ? [{ projectId, id: id(881), taskId: t.id, deliveryId: deliveryId(t), observer: "acceptance-claude-agent",
+      observerKind: "agent", result: "failed", evidence: "退回：任务列表页默认视图的选中行标题仍是中等字重，不满足“选中字重不低于 600”。", reason: "验收未通过，退回返工",
+      actorId: "acceptance-claude-agent", createdAt: ago(40) }] : [], closures: [],
   };
 }
 /** Oldest first, as the coordinator lists them (ORDER BY version). */

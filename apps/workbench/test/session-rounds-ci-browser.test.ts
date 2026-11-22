@@ -32,7 +32,7 @@ test("the timeline reads as rounds: last reply on open, times, task-named source
   const taskId = "70000000-0000-4000-8000-000000000011";
   const runInput = (id: string, minutes: number, turnId: string) => ({ id: `message:${id}`, kind: "message", role: "input", phase: "unknown", body: "", clientId: null,
     state: "completed", turnId, nativeItemId: `in-${id}`, nativeKind: "userMessage", author: { kind: "native", id: null, label: "原生" },
-    origin: { kind: "run", id, taskId, taskRevisionId: null, initiatingActorId: "leader-1" }, occurredAt: ago(minutes), observedAt: ago(minutes), freshness: "persisted", truncated: false });
+    origin: { kind: "run", id, taskId, taskRevisionId: null, initiatingActorId: "leader-1", dispatch: { source: "leader", actorId: "leader-1", viaController: true, scheduleId: null, scheduleTitle: null, reworkObservationId: null, reworkDeliveryId: null } }, occurredAt: ago(minutes), observedAt: ago(minutes), freshness: "persisted", truncated: false });
   const input = (id: string, who: string, body: string, minutes: number, turnId: string | null) => ({ id: `message:${id}`, kind: "message", role: "input", phase: "unknown", body,
     clientId: id, state: "completed", turnId, nativeItemId: turnId ? `in-${id}` : null, nativeKind: turnId ? "userMessage" : null, author: { kind: "actor", id: who, label: who },
     origin: { kind: "message", id, taskId: null, taskRevisionId: null, initiatingActorId: who }, occurredAt: ago(minutes), observedAt: ago(minutes), freshness: "persisted", truncated: false });
@@ -50,7 +50,7 @@ test("the timeline reads as rounds: last reply on open, times, task-named source
     input("l7", "leader-1", dispatch(7), 100, "t7"), reply("a7", "已确认任务 7。", 98, "t7"),
     { ...input("h1", actorId, "请先做表格视图。", 60, "t8"), state: running ? "running" : "completed" }, ...(running ? [] : [reply("a8", "收到，表格视图已开始。", 58, "t8")]),
   ];
-  const turns = (running: boolean) => [turn("t-run", 300, { kind: "run", id: "run-1", taskId, taskRevisionId: null, initiatingActorId: "leader-1" }),
+  const turns = (running: boolean) => [turn("t-run", 300, { kind: "run", id: "run-1", taskId, taskRevisionId: null, initiatingActorId: "leader-1", dispatch: { source: "leader", actorId: "leader-1", viaController: true, scheduleId: null, scheduleTitle: null, reworkObservationId: null, reworkDeliveryId: null } }),
     turn("t5", 200, msgOrigin("l5", "leader-1")), turn("t6", 150, msgOrigin("l6", "leader-1")), turn("t7", 100, msgOrigin("l7", "leader-1")),
     turn("t8", 60, msgOrigin("h1", actorId), running ? "running" : "completed")];
   // Three Leader notices in a row with nothing between them: they fold into a group.

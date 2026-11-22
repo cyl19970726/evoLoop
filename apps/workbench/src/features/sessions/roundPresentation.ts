@@ -1,6 +1,7 @@
 // Words for the time and the source of a round (Task f2d82dfe). The send time is what a message shows; when processing began is
 // marked beside it and never replaces it.
 import { date } from "../../shared/ui/shared";
+import type { RunDispatch } from "@evoloop/contracts/session-timeline";
 import type { Round } from "./timelineRounds";
 
 /** Processing that began within this long of the send is not worth a second time on the line. */
@@ -23,7 +24,33 @@ export function sentStartedText({ sent, started }: SentStarted): string {
   return "";
 }
 
-/** The one-line label of a Run's round: who dispatched it and for which Task. */
-export function runSourceLabel(by: "me" | "leader", title: string | null): string {
-  return `${by === "me" ? "你派发" : "Leader 派发"} · 任务「${title || "标题待核对"}」`;
+/**
+ * How a round got into the Session's line, in words (Task c58b83e2). The reader's own identity is "你派发"; the line's controller
+ * is "Leader 派发"; any other identity that queued it (the requirements Session while the Leader is stopped) is named, "代派";
+ * a schedule is named by its title; a return after a failed acceptance is "验收退回后返工". Nothing read: "来源待核对" — never a guess.
+ */
+export function dispatchLabel(dispatch: RunDispatch | null | undefined, me: string | null): string {
+  if (!dispatch) return "来源待核对";
+  if (dispatch.source === "schedule") return `日程触发 · ${dispatch.scheduleTitle?.trim() || "日程名待核对"}`;
+  if (dispatch.source === "rework") return "验收退回后返工";
+  if (me !== null && dispatch.actorId === me) return "你派发";
+  return dispatch.viaController ? "Leader 派发" : `${dispatch.actorId} 代派`;
+}
+
+/** The one-line label of a Run's round: how it was dispatched and for which Task. */
+export function runSourceLabel(label: string, title: string | null): string {
+  return `${label} · 任务「${title || "标题待核对"}」`;
+}
+
+/**
+ * Where a rework round's "查看退回意见" goes: the task's 交付 tab, at the return opinion the round records (`observation`), with the
+ * delivery it belongs to as the fallback when the opinion is not on the page. A round that names neither goes to the tab alone.
+ */
+export function reworkHref(taskHref: string, dispatch: RunDispatch): string {
+  const [path, query = ""] = taskHref.split("?");
+  const params = new URLSearchParams(query);
+  params.set("tab", "delivery");
+  if (dispatch.reworkDeliveryId) params.set("delivery", dispatch.reworkDeliveryId);
+  if (dispatch.reworkObservationId) params.set("observation", dispatch.reworkObservationId);
+  return `${path}?${params.toString()}`;
 }
