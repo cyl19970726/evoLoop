@@ -25,6 +25,7 @@ test("stages: overview block and journey table", { skip }, async t => {
   const errors: string[] = [];
   const api = `**/api/projects/${projectId}`;
   type Setup = { projection?: (value: Json) => Json; ladder?: "absent" | "error" | "none"; permissions?: string[]; work?: (value: Json) => Json; commands?: Json[]; timeZone?: string[] };
+  const ladderRead = new WeakMap<Page, Promise<unknown>>();
   const open = async (path: string, width: number, height: number, setup: Setup = {}, colorScheme: "light" | "dark" = "light"): Promise<Page> => {
     const context = await browser.newContext({ viewport: { width, height }, colorScheme, locale: "zh-CN", timezoneId: "Asia/Tashkent" });
     const page = await context.newPage(); page.on("pageerror", error => errors.push(error.message));
@@ -46,15 +47,16 @@ test("stages: overview block and journey table", { skip }, async t => {
       const command = JSON.parse(route.request().postData() ?? "{}"); setup.commands!.push(command);
       await route.fulfill({ json: { status: "applied", operationId: command.operationId, entityId: command.taskId } });
     });
+    ladderRead.set(page, page.waitForResponse(response => response.url().includes("/ladder"), { timeout: 20000 }).catch(() => null)); // the ladder has its own read; wait for it before asserting on it
     await page.goto(`${fx.base}/p/${projectId}/${path}`);
     await page.getByLabel("访问令牌").fill(token); await page.getByRole("button", { name: "进入", exact: true }).click();
     return page;
   };
   const overview = async (width: number, height: number, setup: Setup = {}, scheme: "light" | "dark" = "light") => {
-    const page = await open("overview", width, height, setup, scheme); await page.locator("[data-overview-stages]").waitFor({ timeout: 10000 }); return page;
+    const page = await open("overview", width, height, setup, scheme); await page.locator("[data-overview-stages] [data-stage-row], [data-overview-stages] [data-no-stages]").first().waitFor({ timeout: 15000 }); await ladderRead.get(page); await page.waitForTimeout(150); return page;
   };
   const journey = async (query: string, width: number, height: number, setup: Setup = {}, scheme: "light" | "dark" = "light") => {
-    const page = await open(`journey${query}`, width, height, setup, scheme); await page.locator("[data-stages] [data-stage-row]").first().waitFor({ timeout: 10000 }); return page;
+    const page = await open(`journey${query}`, width, height, setup, scheme); await page.locator("[data-stages] [data-stage-row]").first().waitFor({ timeout: 15000 }); await ladderRead.get(page); await page.waitForTimeout(150); return page;
   };
   const clean = async (page: Page) => { await page.context().close(); };
   const overflow = (page: Page) => page.evaluate(`({ over: document.documentElement.scrollWidth - document.documentElement.clientWidth,
@@ -189,6 +191,7 @@ test("stages: overview block and journey table", { skip }, async t => {
   const filing = await journey("#unassigned", 1440, 900, { commands, work: withUnassigned, projection: value => { const v = five(value); return filed ? { ...v, tasksNoStage: { ...v.tasksNoStage, unowned: Math.max(0, v.tasksNoStage.unowned - 1) } } : v; } });
   const area = filing.locator("#unassigned");
   await area.locator("summary").waitFor();
+  await filing.locator("[data-unowned-task]").first().waitFor({ timeout: 10000 });
   const before = await filing.locator("[data-unowned-task]").count();
   assert.ok(before > 0, "the fixture has an open Task with no stage");
   {
@@ -204,6 +207,7 @@ test("stages: overview block and journey table", { skip }, async t => {
   // No task-write permission: the select is there but disabled, with the reason beside it, and nothing is sent.
   const denied = await journey("#unassigned", 1440, 900, { permissions: [], commands });
   const deniedRow = denied.locator("[data-unowned-task]").first();
+  await deniedRow.waitFor({ timeout: 10000 });
   assert.equal(await deniedRow.count(), 1);
   {
     assert.equal(await deniedRow.locator("select").isDisabled(), true);
