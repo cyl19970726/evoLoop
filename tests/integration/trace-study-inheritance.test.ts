@@ -62,7 +62,7 @@ test("declared finite Run study copies exact formal refs, dispatches once and re
   await seedFixtureRole(pool,projectId,role,{templateKey:"cognition"});
   await seedFixtureRole(pool,projectId,sourceRole);
   applied(await business({type:"goal.create",goalId,outcome:"Trace-informed choice",constraints:"Bounded",consumer:"owner",authority:"reviewer",scope:"trial",owner:controllerId}));
-  applied(await business({type:"stage.propose",stageId,goalId,deliverable:"One study",learningQuestion:"How is work divided?",reason:"Trial"}));
+  applied(await business({type:"stage.propose", shortName: "S", checkMethod: "Check",stageId,goalId,deliverable:"One study",learningQuestion:"How is work divided?",reason:"Trial"}));
   applied(await business({type:"stage.accept",stageId,expectedVersion:1,reason:"Study"}));
   applied(await business({type:"task.create",taskId:businessTaskId,stageId,title:"Actual work",content:"Actual work",acceptance:"Done",owner:sourceRole,consumer:"study-consumer",evidence:"Trace",stopCondition:"One run"}));
   applied(await business({type:"task.start",taskId:businessTaskId,expectedVersion:1,reason:"Start"}));

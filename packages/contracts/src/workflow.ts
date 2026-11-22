@@ -5,6 +5,11 @@ const text = z.string().trim().min(1).max(4000);
 const title = z.string().trim().min(1).max(240);
 const version = z.number().int().positive();
 const common = { projectId: id, operationId: id };
+// Milestone fields of a stage (migration 118): a short name for one table row, a due date (calendar day, may be unset), how to check it, and which
+// verification-ladder levels (M0, M0.5, M1, ...) it supplies evidence for.
+const shortName = z.string().trim().min(1).max(40);
+const dueOn = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().startsWith(value), "dueOn must be a real calendar date");
+const ladderKeys = z.array(z.string().regex(/^M[0-9]+(?:\.[0-9]+)?$/)).max(10).refine(keys => new Set(keys).size === keys.length, "ladderKeys must be unique");
 export const workflowCommands = [
   z.strictObject({
     ...common,
@@ -37,6 +42,23 @@ export const workflowCommands = [
     goalId: id,
     deliverable: text,
     learningQuestion: text,
+    // Required from migration 118: no stage is proposed without a table-row name and a way to check it.
+    shortName,
+    checkMethod: text,
+    dueOn: dueOn.nullable().optional(),
+    ladderKeys: ladderKeys.optional(),
+    reason: text,
+  }),
+  z.strictObject({
+    ...common,
+    type: z.literal("stage.milestone.set"),
+    stageId: id,
+    // The milestone row's own optimistic version: 0 when the stage has no row yet, otherwise the version read back.
+    expectedVersion: z.number().int().min(0),
+    shortName,
+    checkMethod: text,
+    dueOn: dueOn.nullable(),
+    ladderKeys,
     reason: text,
   }),
   z.strictObject({
@@ -162,6 +184,30 @@ export interface Stage {
   state: "proposed" | "active" | "reviewed";
   createdAt: string;
   actorId: string;
+}
+/** The four milestone fields of a stage (side table `stage_milestone`; `project_stage` and its revisions are untouched). */
+export interface StageMilestone {
+  projectId: string;
+  stageId: string;
+  version: number;
+  shortName: string | null;
+  dueOn: string | null;
+  checkMethod: string | null;
+  ladderKeys: string[];
+  actorId: string;
+  reason: string;
+  updatedAt: string;
+}
+/** A Task's stage ownership (side table `task_stage`): a stage, or an explicit "not part of any stage" with its reason. No row means unassigned. */
+export interface TaskStageLink {
+  projectId: string;
+  taskId: string;
+  version: number;
+  stageId: string | null;
+  noStageReason: string | null;
+  actorId: string;
+  reason: string;
+  updatedAt: string;
 }
 export interface StageRevision {
   projectId: string;

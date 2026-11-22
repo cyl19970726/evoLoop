@@ -82,7 +82,7 @@ for(const mode of ["current","legacy-later","legacy-equal","legacy-postbound"] a
   await seedFixtureRole(pool,pid,cognitiveRole,{templateKey:"cognition"});
   await seedFixtureRole(pool,pid,fixtureRoleId("prior-role"));
   await applied(controller,{type:"goal.create",goalId,outcome:"Bounded",constraints:"One trial",consumer:controller,authority:"reviewer",scope:"fixture",owner:controller});
-  await applied(controller,{type:"stage.propose",stageId,goalId,deliverable:"One result",learningQuestion:"Useful?",reason:"Fixture"});
+  await applied(controller,{type:"stage.propose", shortName: "S", checkMethod: "Check",stageId,goalId,deliverable:"One result",learningQuestion:"Useful?",reason:"Fixture"});
   await applied(controller,{type:"stage.accept",stageId,expectedVersion:1,reason:"Start"});
   await applied(controller,{type:"task.create",taskId:parentTaskId,stageId,title:"Decide",content:"# Decide",acceptance:"One signed choice",
     owner:cognitiveRole,kind:"research",consumer:cognitiveRole,useRequired:false,evidence:"Fixture",stopCondition:"One choice"});

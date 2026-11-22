@@ -32,7 +32,7 @@ test("goal to consumer use and stage review retains versions, decisions, and ope
   yes(await issue({type:"goal.create",goalId,outcome:"Consumer can finish monthly report",constraints:"Keep CSV format",consumer:"integration-consumer",authority:"Project owner",scope:"One report",owner:"integration-owner"}));
   no(await issue({type:"goal.revise",goalId,expectedVersion:2,outcome:"Updated",constraints:"Keep CSV",consumer:"integration-consumer",authority:"owner",scope:"one",owner:"integration-owner",reason:"stale"}),"VERSION_CONFLICT");
   yes(await issue({type:"goal.revise",goalId,expectedVersion:1,outcome:"Consumer can finish verified monthly report",constraints:"Keep CSV format",consumer:"integration-consumer",authority:"Project owner",scope:"One report",owner:"integration-owner",reason:"Clarify verification"}));
-  const stage= yes(await issue({type:"stage.propose",stageId,goalId,deliverable:"One working report",learningQuestion:"What blocks independent completion?",reason:"First stage"}));
+  const stage= yes(await issue({type:"stage.propose", shortName: "S", checkMethod: "Check",stageId,goalId,deliverable:"One working report",learningQuestion:"What blocks independent completion?",reason:"First stage"}));
   yes(await issue({type:"stage.accept",stageId,expectedVersion:stage.version,reason:"Bounded stage"}));
   const doc=yes(await issue({type:"document.create",documentId,title:"Requirement",body:"# Requirement\nReport must be verifiable."}));
   yes(await issue({type:"document.adopt",documentId,expectedVersion:1,revisionId:doc.revisionId,reason:"Use this basis"}));

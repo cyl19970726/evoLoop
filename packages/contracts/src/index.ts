@@ -34,7 +34,7 @@ export type { EvaluationRevision, EvaluationAttempt, EvaluationAssessment, Evalu
 export type { RuntimeSessionRecord, RuntimeRunRecord, RuntimeRecordEvent, RuntimeRunState, RuntimeSessionState } from "./runtime.js";
 export type { UsageTotals, UsageDay, SessionUsage, UsageBudget, UsageOverview, UsageBudgetConfig, UsageBucketRow, UsageContextRow, UsageDelta } from "./usage.js";
 export type { ContextPressureState, ContextBudgetConfig, ContextObservation, ContextPressure, ContextHandoffSummaryInput } from "./context-budget.js";
-export type { Goal, GoalRevision, Stage, StageRevision, StageReview, TaskProposal, TaskJudgement, Delivery, ConsumerObservation, TaskClosure, AcceptanceMode, CompletionBoundary, MergeFact, MergeFactReader, TaskCompletionView } from "./workflow.js";
+export type { Goal, GoalRevision, Stage, StageMilestone, TaskStageLink, StageRevision, StageReview, TaskProposal, TaskJudgement, Delivery, ConsumerObservation, TaskClosure, AcceptanceMode, CompletionBoundary, MergeFact, MergeFactReader, TaskCompletionView } from "./workflow.js";
 export type { DiscussionRecord, DiscussionEvent, DiscussionTarget, DiscussionStatus } from "./discussions.js";
 export type { ResidentQueue, ResidentQueueEntry, QueueClaim, QueueAttempt } from "./queues.js";
 

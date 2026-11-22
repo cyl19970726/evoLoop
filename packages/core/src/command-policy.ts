@@ -30,6 +30,8 @@ export const commandPermissionPolicy = {
   "goal.revise": task(),
   "stage.propose": task(),
   "stage.phaseKey.set": task(true),
+  // Two tiers (stage.milestone.set in workflow.ts): task permission always; changing dueOn or checkMethod of a stage that is no longer proposed also needs decision authority.
+  "stage.milestone.set": task(),
   "stage.accept": task(true),
   "task.start": task(true),
   "task.cancel": task(true),

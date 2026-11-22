@@ -863,6 +863,12 @@ export async function buildServer(options: {
   app.get("/api/projects/:projectId/stages/:id", async request => {
     const p = params(request.params); return options.service.getStage(who(request.principal), p.projectId!, p.id!);
   });
+  app.get("/api/projects/:projectId/stages/:id/milestone", async request => {
+    const p = params(request.params); return options.service.getStageMilestone(who(request.principal), p.projectId!, p.id!);
+  });
+  app.get("/api/projects/:projectId/tasks/:id/stage", async request => {
+    const p = params(request.params); return options.service.getTaskStage(who(request.principal), p.projectId!, p.id!);
+  });
   app.get("/api/projects/:projectId/stages/:id/reviews", async request => {
     const p = params(request.params); return options.service.listStageReviews(who(request.principal), p.projectId!, p.id!);
   });
