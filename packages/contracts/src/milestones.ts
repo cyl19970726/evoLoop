@@ -58,3 +58,8 @@ export interface MilestonesView {
 }
 
 export interface VersionInfo { commit: string | null; builtAt: string | null; startedAt: string }
+
+/** One level of a project's verification ladder (`GET /api/projects/:id/ladder`): its roadmap name, the first sentence of its current status, and the stages that supply evidence for it. */
+export interface LadderLevel { key: string; name: string; status: string | null; evidenceStages: Array<{ id: string; shortName: string }> }
+/** `available:false` with no levels means the project has no roadmap (an answer, not an error); a repository that cannot be read is the error `LADDER_UNREADABLE`. */
+export interface LadderView { available: boolean; source: { commit: string | null }; levels: LadderLevel[] }
