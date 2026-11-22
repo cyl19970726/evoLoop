@@ -525,6 +525,13 @@ async function exerciseInternalRework(result: "failed" | "notUsed") {
   });
   await pump.tick();
   await pump.tick();
+  // Task 586504eb: the confirmation request of a rework entry says so and quotes the observation; it names no Task revision.
+  const liveNow = (await workflow.listSessionLineEntries(lead, projectId, reworkSession)).find(entry => entry.taskId === taskId)!;
+  const requestMessage = (await workflow.getSessionMessageRecord(lead, projectId, liveNow.messageId!))!;
+  assert.match(requestMessage.content, /返工/);
+  assert.ok(requestMessage.content.includes(firstDeliveryId) && requestMessage.content.includes(rework[0]!.reworkObservationId!));
+  assert.ok(requestMessage.content.includes(`The fixed result was returned as ${result}`) && requestMessage.content.includes("Send the same Task back to its original Session once"));
+  for (const item of await workflow.listTaskRevisions(lead, projectId, taskId)) assert.ok(!requestMessage.content.includes(item.revision.id));
   const assignment = (await workflow.getTaskAssignment(lead, projectId, taskId))!;
   await apply({
     type: "task.assignment.acknowledge",
@@ -544,6 +551,9 @@ async function exerciseInternalRework(result: "failed" | "notUsed") {
   assert.equal(runs.length, 2, "the line starts exactly one rework Run");
   const secondRun = runs.find(run => run.id !== firstRunId)!;
   assert.equal(secondRun.taskRevisionId, (await currentTask(taskId)).currentRevisionId);
+  assert.match(secondRun.input, /返工/);
+  assert.ok(secondRun.input.includes(firstDeliveryId) && secondRun.input.includes(rework[0]!.reworkObservationId!) && secondRun.input.includes(`The fixed result was returned as ${result}`));
+  for (const item of await workflow.listTaskRevisions(lead, projectId, taskId)) assert.ok(!secondRun.input.includes(item.revision.id), "the Run instruction names no Task revision");
   assert.equal((await currentTask(taskId)).state, "in_progress");
   assert.ok(live.id);
   await finishRun(secondRun.id, "completed");
