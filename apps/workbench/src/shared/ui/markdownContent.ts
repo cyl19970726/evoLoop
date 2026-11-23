@@ -1,6 +1,7 @@
 import MarkdownIt from "markdown-it";
 import { appPath } from "../appPath";
 import { refHits, refTarget, type RefAnswer } from "../refLinks";
+import { codeBlockHtml } from "./codeBlockHtml";
 import { legacyWorkbenchRoute } from "./legacyWorkbenchLink";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -21,6 +22,8 @@ function markdownFor(projectId?: string, linkify = false) {
   // Only a complete http(s) address becomes a link: no bare domain, address or e-mail is guessed into one.
   if (linkify) markdown.linkify.set({ fuzzyLink: false, fuzzyEmail: false, fuzzyIP: false });
   markdown.disable("image");
+  // Fenced code other than a diagram: a head line (language, wrap, copy) over the code; a diff block colours its lines (codeBlockHtml.ts).
+  markdown.renderer.rules.fence = (tokens, index) => codeBlockHtml(tokens[index]!.content, tokens[index]!.info);
   markdown.validateLink = value => {
     if (value.startsWith("#/p/") || value.startsWith("/p/")) return !!fixedWikiHref(value, projectId) ||
       /^#?\/p\/[a-z0-9-]+\/(?:tasks|documents)\/[a-z0-9-]+(?:\?revision=[a-z0-9-]+)?$/i.test(value);

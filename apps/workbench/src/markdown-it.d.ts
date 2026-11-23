@@ -4,7 +4,7 @@ declare module "markdown-it" {
     constructor(options?: { html?: boolean; linkify?: boolean; breaks?: boolean });
     options: Record<string, unknown>;
     validateLink: (url: string) => boolean;
-    renderer: { render(tokens: Token[], options: Record<string, unknown>, env: object): string };
+    renderer: { render(tokens: Token[], options: Record<string, unknown>, env: object): string; rules: Record<string, (tokens: Token[], index: number) => string> };
     parse(source: string, env: object): Token[];
     linkify: { set(options: { fuzzyLink?: boolean; fuzzyEmail?: boolean; fuzzyIP?: boolean }): unknown };
     disable(name: string): this;
