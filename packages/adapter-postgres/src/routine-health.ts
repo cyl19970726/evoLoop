@@ -1,5 +1,5 @@
 import type { PoolClient } from "pg";
-import type { ScheduleHealthFacts, ScheduleHealthReader } from "@evoloop/contracts/routine-health";
+import type { ScheduleHealthFacts, ScheduleHealthReader, UnreceivedTask } from "@evoloop/contracts/routine-health";
 
 const iso = (value: unknown): string => new Date(value as string | Date).toISOString();
 const maxRows = 1000;
@@ -10,6 +10,21 @@ const maxRows = 1000;
  */
 export class PgRoutineHealth implements ScheduleHealthReader {
   constructor(private readonly client: PoolClient, private readonly projectId: string) {}
+
+  /**
+   * Of these Tasks, the ones still to do that nobody took up: no assignment (or a released one), no entry in any Agent's queue that is waiting, held or
+   * claimed, and no Run at all. Read-only, the same tables the work index reads; `sinceUtc` is the Task's first revision.
+   */
+  async unreceivedTasks(taskIds: string[]): Promise<UnreceivedTask[]> {
+    if (!taskIds.length) return [];
+    const result = await this.client.query(`SELECT t.task_id,
+        (SELECT min(r.created_at) FROM task_revision r WHERE r.project_id=t.project_id AND r.task_id=t.task_id) AS since
+      FROM task t WHERE t.project_id=$1 AND t.task_id=ANY($2::uuid[]) AND t.state='todo'
+        AND NOT EXISTS (SELECT 1 FROM task_session_assignment a WHERE a.project_id=t.project_id AND a.task_id=t.task_id AND a.state IN ('assigned','accepted'))
+        AND NOT EXISTS (SELECT 1 FROM resident_queue_entry e WHERE e.project_id=t.project_id AND e.task_id=t.task_id AND e.state IN ('queued','held','claimed'))
+        AND NOT EXISTS (SELECT 1 FROM runtime_run u WHERE u.project_id=t.project_id AND u.task_id=t.task_id)`, [this.projectId, taskIds]);
+    return result.rows.map(row => ({ taskId: row.task_id, sinceUtc: iso(row.since) }));
+  }
 
   async scheduleHealthFacts(): Promise<ScheduleHealthFacts[]> {
     const result = await this.client.query(`SELECT d.schedule_id,

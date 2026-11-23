@@ -37,11 +37,11 @@ test("例行健康: one read, what needs a look first, stopped folded, a row ope
     revision: { ...template.revision, id: ids[key], scheduleId: ids[key], template: { ...template.revision.template, title: titles[key] } } });
   const schedules = [definition("a", "active"), definition("b", "active"), definition("c", "active"), definition("d", "active"), definition("e", "paused"), definition("f", "stopped"), definition("sample", "active")];
   const base = { kind: "schedule", rule: { kind: "daily", localTime: "09:00" }, timezone: "Asia/Shanghai", repeat: null, rootTaskId: null, misfire: "latest", skippedTotal: null,
-    consecutiveSkips: 0, overdue: null, lastTaskOpen: false, watermarkUtc: ago(60) };
+    consecutiveSkips: 0, overdue: null, lastTaskOpen: false, watermarkUtc: ago(60), lastTaskUnreceived: null };
   const created = (title: string, state: string, taskId: string) => ({ plannedAtUtc: ago(60 * 5), observedAtUtc: ago(60 * 5 - 1), outcome: "created", reason: "scheduled", task: { taskId, title, state } });
   const skipped = { plannedAtUtc: ago(60 * 3), observedAtUtc: ago(60 * 3 - 1), outcome: "skipped", reason: "overlap skipped", task: null };
   const seriesItem = (n: number, title: string, over: Record<string, unknown>) => ({ ...base, kind: "timed_series", id: uuid(20 + n), title, state: "active", rule: null, repeat: "daily",
-    rootTaskId: uuid(30 + n), misfire: null, watermarkUtc: null, nextAtUtc: ahead(60 * 20), lastTaskOpen: false,
+    rootTaskId: uuid(30 + n), misfire: null, watermarkUtc: null, nextAtUtc: ahead(60 * 20), lastTaskOpen: false, lastTaskUnreceived: null,
     lastTrigger: created(title, "done", uuid(40 + n)), ...over });
   const health = { projectId, observedAt: new Date().toISOString(), complete: true, items: [
     { ...base, id: ids.d, title: titles.d, state: "active", nextAtUtc: ahead(60 * 20), overdue: { expectedAtUtc: ago(60 * 4) }, lastTrigger: created("发布窗口检查报告", "done", uuid(50)) },

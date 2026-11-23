@@ -37,7 +37,7 @@ test("创建日程 and 保存日程修订: role and grant by name, a local time 
         else if (url.pathname === `${base}/schedules`) value = schedules;
         else if (url.pathname === `${base}/routine-health`) value = { projectId, observedAt: stamp, complete: true, items: (schedules as Array<Record<string, any>>).map(item => ({
           kind: "schedule", id: item.id, title: item.revision.template.title, state: item.state, rule: item.revision.rule, timezone: item.revision.timezone, repeat: null,
-          rootTaskId: null, misfire: "latest", lastTrigger: null, consecutiveSkips: 0, skippedTotal: null, nextAtUtc: null, overdue: null, lastTaskOpen: false, watermarkUtc: null })) };
+          rootTaskId: null, misfire: "latest", lastTrigger: null, consecutiveSkips: 0, skippedTotal: null, nextAtUtc: null, overdue: null, lastTaskUnreceived: null, lastTaskOpen: false, watermarkUtc: null })) };
         else if (url.pathname === `${base}/scheduling/status`) value = { state: "idle", lastTickAt: stamp, lastError: null, lastCreated: 0,
           grants: [{ projectId, actorId: "reader", scopeId: "acceptance-schedules", roleId }] };
         else if (url.pathname === `${base}/roles`) value = { items: [role(roleId, "巡检职责"), role(otherRole, "发布职责")], nextCursor: null };

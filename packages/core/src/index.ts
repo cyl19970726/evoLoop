@@ -1447,7 +1447,9 @@ export class WorkflowService {
         if (page >= 4) { complete = false; break; }
         cursor = read.nextCursor;
       }
-      return buildRoutineHealth({ projectId, schedules, facts, series, now: new Date().toISOString(), complete });
+      const madeTasks = [...facts.map(fact => fact.lastTask), ...series.map(entry => entry.latestTask)].filter(task => task?.state === "todo").map(task => task!.taskId);
+      const unreceived = madeTasks.length ? await reader.scheduleHealth.unreceivedTasks([...new Set(madeTasks)]) : [];
+      return buildRoutineHealth({ projectId, schedules, facts, series, unreceived, now: new Date().toISOString(), complete });
     });
   }
   getScheduleDispatchPolicy(principal: Principal, projectId: string, scheduleId: string) {

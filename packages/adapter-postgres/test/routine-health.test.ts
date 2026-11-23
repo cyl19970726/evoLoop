@@ -95,3 +95,40 @@ test("a lagging active schedule with no record reads as overdue, ahead of a heal
   assert.equal(health.items[0]!.lastTrigger, null);
   assert.equal(health.items[1]!.overdue, null);
 });
+
+/** Insert rows without the foreign keys that tie them to a whole runtime fixture: what is under test is only which tables mark a Task as taken up. */
+const bare = async (statements: Array<[string, unknown[]]>) => {
+  const client = await pool.connect();
+  try { await client.query("SET session_replication_role = replica"); for (const [sql, values] of statements) await client.query(sql, values); }
+  finally { await client.query("RESET session_replication_role"); client.release(); }
+};
+const revisionOf = async (taskId: string) => (await pool.query(`SELECT current_revision_id FROM task WHERE project_id=$1 AND task_id=$2`, [projectId, taskId])).rows[0].current_revision_id as string;
+const unreceived = async (...taskIds: string[]) => { const client = await pool.connect(); try { return (await new PgRoutineHealth(client, projectId).unreceivedTasks(taskIds)).map(item => item.taskId).sort(); } finally { client.release(); } };
+
+test("a Task nobody took up: an assignment, a queue entry or a Run each take it out; a released assignment, a released queue entry and a closed Task do not", async () => {
+  const names = ["没人接", "已分派", "分派已释放", "在队伍里", "队伍项已释放", "已有运行", "已关闭"];
+  const made = new Map<string, string>();
+  for (const name of names) made.set(name, (await fire(await schedule(name), 1)).taskId!);
+  const id = (name: string) => made.get(name)!;
+  const now = new Date().toISOString();
+  for (const [name, state] of [["已分派", "assigned"], ["分派已释放", "released"]] as const) {
+    const revision = await revisionOf(id(name));
+    await bare([[`INSERT INTO task_session_assignment(project_id,task_id,version,task_revision_id,target_kind,target_id,recipient_actor_id,state,actor_id,reason,updated_at)
+      VALUES($1,$2,1,$3,'owned',$4,'worker',$5,'lead','fixture',$6)`, [projectId, id(name), revision, randomUUID(), state, now]]]);
+  }
+  for (const [name, state, position] of [["在队伍里", "queued", 0], ["队伍项已释放", "released", 1]] as const) {
+    const revision = await revisionOf(id(name)), queue = randomUUID();
+    await bare([[`INSERT INTO resident_queue_entry(project_id,queue_id,entry_id,task_id,task_revision_id,source_input_json,session_id,role_id,position,consumer_id,use_required,release_rule,state,claim_id)
+      VALUES($1,$2,$3,$4,$5,'{}',$6,$7,$8,'lead',false,'accepted',$9,$10)`, [projectId, queue, randomUUID(), id(name), revision, randomUUID(), roleId, position, state, state === "released" ? randomUUID() : null]]]);
+  }
+  const revision = await revisionOf(id("已有运行"));
+  await bare([[`INSERT INTO runtime_run(project_id,run_id,task_id,task_revision_id,basis_set_id,session_id,operation_id,input,input_hash,state,version,actor_id,created_at,updated_at,execution_profile_snapshot)
+    VALUES($1,$2,$3,$4,$5,$6,$7,'input',$8,'failed',1,'worker',$9,$9,'{}'::jsonb)`, [projectId, randomUUID(), id("已有运行"), revision, randomUUID(), randomUUID(), randomUUID(), "a".repeat(64), now]]]);
+  await closeTask(id("已关闭"));
+
+  assert.deepEqual(await unreceived(...made.values()), [id("没人接"), id("分派已释放"), id("队伍项已释放")].sort(),
+    "an assignment, a waiting queue entry and any Run (even a failed one) mean somebody has it; released ones and plain todo mean nobody does; a closed Task is not to do");
+  assert.deepEqual(await unreceived(), []);
+  const since = await (async () => { const client = await pool.connect(); try { return (await new PgRoutineHealth(client, projectId).unreceivedTasks([id("没人接")]))[0]!.sinceUtc; } finally { client.release(); } })();
+  assert.match(since, /^\d{4}-\d{2}-\d{2}T.*Z$/, "when it was made, as an instant");
+});

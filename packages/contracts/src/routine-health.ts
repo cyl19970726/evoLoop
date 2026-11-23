@@ -47,6 +47,11 @@ export interface RoutineHealthItem {
   lastTaskOpen: boolean;
   /** The schedule's watermark (checked through); null for a timed series. */
   watermarkUtc: string | null;
+  /**
+   * The last Task is still to do, has no assignment, is in no Agent's queue (waiting, held or started) and has no Run, and `sinceUtc` (when it was made)
+   * is further back than the same two hours the Task attention policy gives a Task nobody was assigned. Only for an active routine; null otherwise.
+   */
+  lastTaskUnreceived: { sinceUtc: string } | null;
 }
 
 export interface RoutineHealth {
@@ -67,4 +72,10 @@ export interface ScheduleHealthFacts {
   lastTask: { taskId: string; title: string; state: RoutineTaskState } | null;
   consecutiveSkips: number;
 }
-export interface ScheduleHealthReader { scheduleHealthFacts(): Promise<ScheduleHealthFacts[]> }
+/** A Task that is to do and that nobody has taken up: no assignment, not in any queue, no Run. `sinceUtc` is when its first revision was made. */
+export interface UnreceivedTask { taskId: string; sinceUtc: string }
+export interface ScheduleHealthReader {
+  scheduleHealthFacts(): Promise<ScheduleHealthFacts[]>;
+  /** Of these Tasks, the ones that are to do with no assignment, no queue entry and no Run. Same read for schedules and timed series. */
+  unreceivedTasks(taskIds: string[]): Promise<UnreceivedTask[]>;
+}
