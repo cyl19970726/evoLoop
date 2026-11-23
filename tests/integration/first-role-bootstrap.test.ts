@@ -119,7 +119,7 @@ test("an empty project can bootstrap one trial Lead from its project.create oper
   }));
   const taskBlocked = await cli("task-create-before-role", {
     type: "task.create", projectId, operationId: randomUUID(), taskId: randomUUID(), title: "Too early",
-    content: "# Too early", acceptance: "Must not exist", owner: randomUUID(), documentIds: [],
+    content: "# Too early\n关闭后下一步：无", acceptance: "Must not exist", owner: randomUUID(), documentIds: [],
   });
   assert.equal(taskBlocked.code, 1);
   assert.equal(cliErrorCode(taskBlocked.stderr), "TASK_OWNER_ROLE_REQUIRED");
@@ -176,7 +176,7 @@ test("an empty project can bootstrap one trial Lead from its project.create oper
     operationId: randomUUID(),
     taskId: firstTaskId,
     title: "First onboarding work",
-    content: "# First work\n\nUse the new trial Lead.",
+    content: "# First work\n\nUse the new trial Lead.\n关闭后下一步：无",
     acceptance: "The first Task is owned by the trial Lead.",
     owner: leadId,
     documentIds: [],

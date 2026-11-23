@@ -529,6 +529,12 @@ class PgReader implements Reader {
     const r = await this.client.query("SELECT * FROM document_revision WHERE project_id=$1 AND document_id=$2 AND revision_id=$3", [this.projectId, documentId, revisionId]);
     return r.rows[0] ? rowDocumentRevision(r.rows[0]) : null;
   }
+  async findReportRevisionByContentHash(contentHash: string): Promise<{ documentId: string; revisionId: string; body: string | null } | null> {
+    const r = await this.client.query(`SELECT r.document_id, r.revision_id, r.body FROM document_revision r
+      JOIN process_document d ON d.project_id=r.project_id AND d.document_id=r.document_id
+      WHERE r.project_id=$1 AND r.content_hash=$2 AND d.kind='report' ORDER BY r.created_at DESC, r.revision_id DESC LIMIT 1`, [this.projectId, contentHash]);
+    return r.rows[0] ? { documentId: r.rows[0].document_id, revisionId: r.rows[0].revision_id, body: r.rows[0].body } : null;
+  }
   async hasDocumentAdoption(documentId: string, revisionId: string): Promise<boolean> {
     const r = await this.client.query("SELECT EXISTS(SELECT 1 FROM document_decision WHERE project_id=$1 AND document_id=$2 AND revision_id=$3) AS adopted",
       [this.projectId, documentId, revisionId]);

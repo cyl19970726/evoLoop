@@ -1,4 +1,5 @@
 import { hasDecisionAuthority, hasPermission, isProjectMember, type Operation, type OutboxEvent, type Principal } from "@evoloop/contracts";
+import { DomainError } from "@evoloop/contracts/ports";
 import { applyRole, RoleRuleError } from "../roles/index.js";
 import type { DelegationTemplate, LoopPolicyRevision, RuntimeRoleBinding } from "@evoloop/contracts/division";
 import { orchestrationCommandSchema } from "@evoloop/contracts/orchestration";
@@ -9,6 +10,8 @@ export class OrchestrationError extends Error {
   constructor(public readonly code: string, message: string, public readonly currentVersion?: number) { super(message); this.name = "OrchestrationError"; }
 }
 export interface OrchestrationDependencies { store: OrchestrationStore; now(): string; nextId(): string; hash(value: string): string;
+  /** Task 3797cbdd: throws a DomainError when a report original lacks “下次同类工作先要知道的事”; sealing writes the delivery without the command entry, so worker.submit asks here. */
+  checkDeliveryReport?(projectId: string, contentHash: string): Promise<void>;
   getDelegationTemplate?(projectId: string, templateId: string): Promise<{template: DelegationTemplate; hash: string} | null>;
   getWorkerScope?(actorId: string): Promise<{projectId: string; loopId: string; taskId: string; runId: string; roleId: string; kind: string} | null>;
   getTrialController?(projectId: string, actorId: string): Promise<Principal | null>;
@@ -926,6 +929,8 @@ export class OrchestrationService {
       const run = await tx.getRunFact(command.runId);
       if (!run || run.projectId !== command.projectId || run.taskId !== dispatch.taskId || run.taskRevisionId !== command.taskRevisionId || run.inputHash !== command.runInputHash) return fail("RUN_MISMATCH", "submission fixed input must match bound Run");
       if (!["requested", "dispatching", "running"].includes(run.state)) return fail("RUN_NOT_ACTIVE", "first worker submission must be recorded before the Run becomes terminal or unknown");
+      try { await this.deps.checkDeliveryReport?.(command.projectId, command.deliveryIntent.contentHash); }
+      catch (error) { if (error instanceof DomainError) return fail(error.code, error.message); throw error; }
       let artifact: ReturnType<typeof parseArtifactReference>;
       try { artifact = parseArtifactReference(command.deliveryIntent.artifactRef,
         command.deliveryIntent.artifactRevision,command.projectId,false); }

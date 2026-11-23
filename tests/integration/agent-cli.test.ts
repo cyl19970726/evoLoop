@@ -82,7 +82,7 @@ test("real CLI and PostgreSQL share fixed inputs, observable changes, no replay 
   await command("project.create", { title: "Isolated CLI integration" });
   const ownerRoleId=fixtureRoleId("cli-test-agent");
   await seedFixtureRole(pool,projectId,ownerRoleId);
-  await command("task.create", { taskId: retryTaskId, title: "Recover one saved intent", content: "# Recovery\nApply once.",
+  await command("task.create", { taskId: retryTaskId, title: "Recover one saved intent", content: "# Recovery\nApply once.\n关闭后下一步：无",
     acceptance: "One Task, one journal record and the original receipt", owner: ownerRoleId }, 3, retryOperationId);
   assert.equal((await pool.query("SELECT count(*)::int AS n FROM operation_journal WHERE project_id=$1 AND operation_id=$2", [projectId, retryOperationId])).rows[0]?.n, 0);
   assert.equal((await cli(["receipts", "show", retryOperationId])).state, "pending");
@@ -101,7 +101,7 @@ test("real CLI and PostgreSQL share fixed inputs, observable changes, no replay 
   let document = await cli(["document", documentId]);
   const r1 = document.current.id;
   await command("document.adopt", { documentId, revisionId: r1, expectedVersion: document.document.version, reason: "Use fixture r1" });
-  await command("task.create", { taskId, title: "Read fixed input", content: "# Verify exact r1\nRead the fixed source.", acceptance: "Original r1 remains readable after source change",
+  await command("task.create", { taskId, title: "Read fixed input", content: "# Verify exact r1\nRead the fixed source.\n关闭后下一步：无", acceptance: "Original r1 remains readable after source change",
     owner: ownerRoleId, documentIds: [documentId] });
   await command("task.start", { taskId, expectedVersion: (await task()).task.version, basis: [{ documentId, revisionId: r1 }], reason: "Bounded fixed-input fixture" });
   const sealedRevision = (await task()).revision.id;
@@ -143,7 +143,7 @@ test("real CLI and PostgreSQL share fixed inputs, observable changes, no replay 
     acceptanceEvidence: "Synthetic fixed-original test passed", reason: "Fixture complete" });
   const view = await fetch(`${apiUrl}/api/projects/${projectId}/tasks/${taskId}`, { headers: { Authorization: `Bearer ${readerToken}` } }).then(r => r.json());
   assert.equal(view.task.state, "done"); assert.equal(view.basis.members.find((item: { documentId: string }) => item.documentId === documentId).revisionId, r1);
-  assert.equal(view.task.content, "# Verify exact r1\nRead the fixed source.");
+  assert.equal(view.task.content, "# Verify exact r1\nRead the fixed source.\n关闭后下一步：无");
   assert.equal(view.observations[0].observerKind, "agent");
   assert.ok((await cli(["task", taskId, "--history"])).some((entry: { revision: { state: string } }) => entry.revision.state === "in_progress"));
   await command("task.reopen", { taskId, expectedVersion: view.task.version, reason: "Reader cannot mutate" }, 1, randomUUID(), readerToken);

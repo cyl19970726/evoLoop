@@ -66,7 +66,7 @@ test("real CLI: a Delivery whose only arrangement is stuck is closed by a new ar
   await workflow.execute(reviewer, { type: "project.create", projectId, title: "Release CLI", operationId: randomUUID() } as never);
   const owner = fixtureRoleId("release-cli-owner"); await seedFixtureRole(pool, projectId, owner);
   const taskId = randomUUID(), deliveryId = randomUUID();
-  await command("reviewer", { type: "task.create", taskId, title: "Stuck arrangement", content: "# Stuck", acceptance: "Used", owner, consumer: "named-human", useRequired: true, acceptanceMode: "human_required", acceptanceTarget: "human" });
+  await command("reviewer", { type: "task.create", taskId, title: "Stuck arrangement", content: "# Stuck\n关闭后下一步：无", acceptance: "Used", owner, consumer: "named-human", useRequired: true, acceptanceMode: "human_required", acceptanceTarget: "human" });
   // The Task is being worked on, as dcd01bb1 was (in_progress), so observations are accepted.
   await command("reviewer", { type: "task.start", taskId, expectedVersion: Number((await workflow.getTask(reviewer, projectId, taskId)).task.version), reason: "start" });
   const task = (await workflow.getTask(reviewer, projectId, taskId)).task;
