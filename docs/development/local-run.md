@@ -431,7 +431,7 @@ git diff --check
 - 归属标记：`<目录>/.evoloop-test-pg.json`，记录名字、工作树路径、分支、端口；回收脚本据此把实例和工作树对上。分支取启动时工作树检出的分支（也可 `--branch` 指定；游离 HEAD 记为空）。**这次改动之前启动的实例，标记里没有分支**，工作树回收后不能靠 `--branch` 找到，要等不带 `--branch` 的例行运行回收。
 - 启动 `node scripts/ops/test-pg.mjs start`（在工作树里运行，输出 `TEST_DATABASE_URL`），停用 `stop`，列出 `list`；需要 `EVOLOOP_PG_BIN_DIR`。用完请 `stop`，忘了也会在工作树被回收时一并回收。
 
-**新工作树不再各带一份依赖。** 用 `node scripts/ops/new-worktree.mjs --path 绝对路径 --branch 名字 --seed 装好依赖的克隆`（`--seed` 默认读 `EVOLOOP_DEPS_SEED`）：seed 的 `package-lock.json` 与新工作树一致时，把它的 `node_modules` 用 APFS 写时复制克隆过来（`cp -c`，共享磁盘块，文件被改时才各占各的），否则回退 `npm ci`；不在 macOS 上、克隆失败也回退。本机实测（APFS）：普通复制 `node_modules` 约占用 960 MB，克隆约 40 MB；克隆出的工作树 `npm run build:packages` 与测试可正常运行。依赖在工作树里被 `npm install` 改过之后，被改的文件才会额外占用空间。
+**新工作树不再各带一份依赖。** 用 `node scripts/ops/new-worktree.mjs --path 绝对路径 --branch 名字 --seed 装好依赖的克隆`（`--seed` 默认读 `EVOLOOP_DEPS_SEED`）：seed 的 `package-lock.json` 与新工作树一致时，把它的 `node_modules` 用 APFS 写时复制克隆过来（`cp -c`，共享磁盘块，文件被改时才各占各的），否则回退 `npm ci`；不在 macOS 上、克隆失败也回退。本机实测（APFS）：普通复制 `node_modules` 约占用 960 MB，克隆约 40 MB；克隆出的工作树 `npm run build:packages` 与测试可正常运行。依赖在工作树里被 `npm install` 改过之后，被改的文件才会额外占用空间。在工作树里构建或预览工作台之前，先在这个工作树里 `npm run build:packages`；依赖用上面的脚本克隆，不要用符号链接共用 `node_modules`（包链接会指回共享检出，vite 报 `MISSING_EXPORT`）。
 
 ### 每日边界核对
 
