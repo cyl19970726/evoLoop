@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Button } from "@evoloop/ui";
+import { CodeBlock } from "../../shared/ui/codeBlock";
 import { LinkedText } from "../../shared/ui/LinkedText";
 import { foldMessage, messageSegments } from "./longText";
 
@@ -13,7 +14,7 @@ export function LongMessage({ text, identity, projectId }: { text: string; ident
   const shown = open || !fold.folded ? text : fold.head;
   return <>
     {messageSegments(shown).map((part, index) => part.kind === "code"
-      ? <pre key={`${identity}:${index}`} className="my-1 max-w-full overflow-x-auto rounded-sm bg-current/10 px-2 py-1 font-mono text-caption leading-(--leading-body)" data-message-code=""><code>{part.value}</code></pre>
+      ? <CodeBlock key={`${identity}:${index}`} code={part.value} />
       : <span key={`${identity}:${index}`} className="block min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere]"><LinkedText value={part.value} projectId={projectId} className="text-current" /></span>)}
     {fold.folded && <Button variant="link" className="mt-1 h-auto p-0 text-caption text-current underline" aria-expanded={open} onClick={() => setOpen(value => !value)} data-message-fold="">
       {open ? "收起" : `展开，还有 ${fold.hiddenLines} 行`}</Button>}

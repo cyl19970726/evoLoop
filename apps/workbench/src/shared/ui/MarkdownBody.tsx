@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { cn } from "@evoloop/ui";
 import { useRefAnswers } from "../refLinks";
 import { markdownRefKeys, maxDiagramLength, splitMarkdown } from "./markdownContent";
+import { onCodeClick } from "./codeBlock";
 import { readingProse } from "./readingProse";
 
 function Diagram({ source, id }: { source: string; id: string }) {
@@ -62,7 +63,7 @@ export function MarkdownBody({ source, identity, omitLeadingTitle, projectId, cl
   const parts = useMemo(() => splitMarkdown(source, { omitLeadingTitle, projectId, topHeading, linkify, ...(refLinks && answered.replaceAll("|", "") ? { refs } : {}) }),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `refs` reads the store; `answered` says when its answers changed
     [source, omitLeadingTitle, projectId, topHeading, linkify, refLinks, answered]);
-  return <div className={cn("markdown-body min-w-0 [overflow-wrap:anywhere] [&>:first-child>:first-child]:mt-0", readingProse, className)}>
+  return <div onClick={onCodeClick} className={cn("markdown-body min-w-0 [overflow-wrap:anywhere] [&>:first-child>:first-child]:mt-0", readingProse, className)}>
     {parts.map((part, index) => part.kind === "diagram"
       ? <Diagram key={`${identity}:${index}`} source={part.value} id={`${identity}-${index}`} />
       : <div key={`${identity}:${index}`} dangerouslySetInnerHTML={{ __html: part.value }} />)}
