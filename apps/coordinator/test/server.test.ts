@@ -57,6 +57,25 @@ test("document list passes kind and lifecycle filters to the service", async () 
   } finally { await app.close(); }
 });
 
+test("document list accepts the opaque cursor it issued; other lists still take ids (Task 69eefefa)", async () => {
+  const calls: unknown[][] = [];
+  const app = await buildServer({ credentials, service: { ...workManagementQueries,
+    listDocuments: async (...args: unknown[]) => { calls.push(args); return { items: [], nextCursor: null }; },
+    listTasks: async () => ({ items: [], nextCursor: null }),
+  } as unknown as WorkflowService });
+  const headers = { authorization: `Bearer ${token}` };
+  const cursor = Buffer.from(JSON.stringify({ v: 1, t: "2026-11-23T05:57:00.123456Z", id: "00000000-0000-4000-8000-000000000009" })).toString("base64url");
+  try {
+    for (const filter of ["", "&kind=brief", "&kind=delivery_report&status=active"]) {
+      const response = await app.inject({ url: `/api/projects/${projectId}/documents?limit=50&cursor=${cursor}${filter}`, headers });
+      assert.equal(response.statusCode, 200, filter);
+      assert.equal(calls.at(-1)?.[3], cursor, "the service gets the cursor unchanged");
+    }
+    assert.equal((await app.inject({ url: `/api/projects/${projectId}/documents?cursor=${"x".repeat(513)}`, headers })).statusCode, 400, "bounded");
+    assert.equal((await app.inject({ url: `/api/projects/${projectId}/tasks?cursor=${cursor}`, headers })).statusCode, 400, "a Task list cursor is still an id");
+  } finally { await app.close(); }
+});
+
 test("lost coordinator ownership refuses new writes before core executes", async () => {
   let calls = 0;
   const app = await buildServer({ credentials, service: { ...workManagementQueries, execute: async () => { calls++; throw Error("write reached core"); } } as unknown as WorkflowService, canWrite: () => false });
