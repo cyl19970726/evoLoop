@@ -117,7 +117,7 @@ export function AppShell(props: AppShellProps) {
   // One object-list slot at a time: the wide rail, or the drawer on narrow screens.
   const railProps = { ...props, space, sessionState, onSessionState: updateSessionState, onNavigate: afterNavigate, compact };
 
-  return <ContextRailProvider><ContextPanelProvider space={space}>
+  return <ContextRailProvider><ContextPanelProvider space={route.section === "overview" ? "overview" : space}>
     <div className="min-h-dvh bg-sunken text-foreground">
       <div data-ui=""><a href="#workspace-main" onClick={event => { event.preventDefault(); document.getElementById("workspace-main")?.focus(); }}
         className="sr-only z-50 focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:rounded-md focus:bg-raised focus:px-3 focus:py-2 focus:shadow-md">跳到内容</a></div>

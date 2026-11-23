@@ -4,28 +4,28 @@ import { Button, Select, cn } from "@evoloop/ui";
 import { ContextRailContent } from "../../shared/ui/ContextRail";
 import type { Goal, Stage } from "@evoloop/contracts";
 import type { LeaderWorkPage, LeaderWorkTask } from "@evoloop/contracts/work-index";
-import { ArrowRight, Flag, MessageSquare, Target } from "lucide-react";
+import { ArrowRight, Target } from "lucide-react";
 import { api, errorText } from "../../shared/api";
 import { date, href } from "../../shared/ui/shared";
-import { appendLeaderWorkPage, leaderPhaseLabel, loadLeaderWorkStatuses } from "../../shared/leaderWorkLoad";
+import { appendLeaderWorkPage, loadLeaderWorkStatuses } from "../../shared/leaderWorkLoad";
 import type { WorkTaskStatus } from "../../shared/workStatusPresentation";
-import { workItemNextStep } from "../../shared/workPresentation";
 import { isRoleOwnerId } from "../../shared/ownerRole";
-import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
-import { ResponsibleName, RoleName } from "../../shared/ui/RecordName";
-import { readOutcome, selectAttention, type ProjectOutcome } from "./contextPresentation";
-import { MilestonesBlock } from "./MilestonesBlock";
-import { dueCell, stageName, useStageProjection } from "../stages";
+import { RoleName } from "../../shared/ui/RecordName";
+import { readOutcome, type ProjectOutcome } from "./contextPresentation";
+import { VersionFold } from "./MilestonesBlock";
+import { FoldLine, OrganisationLine, OutcomeBlock, PriorityBlock, UseBlock } from "./OverviewTop";
+import { longestStall, organisationText, stalledTasks } from "./overviewFirstScreen";
+import { dueCell, StagesBlock, stageName, useStageProjection } from "../stages";
 import { readOverviewParam, writeOverviewParam } from "./overviewAddress";
 
 interface ContextSnapshot {
   scope: string; goals: Goal[]; stages: Stage[]; goalProblem: string; workProblem: string;
-  rows: LeaderWorkTask[]; statuses: Record<string, WorkTaskStatus>; complete: boolean; goalsComplete: boolean;
+  rows: LeaderWorkTask[]; counts?: Record<string, number>; statuses: Record<string, WorkTaskStatus>; complete: boolean; goalsComplete: boolean;
   outcomes: ProjectOutcome[]; useReadCount: number; useCandidateCount: number; useFailures: number; observedAt: string;
   goalObservedAt?: string; workObservedAt?: string; useObservedAt?: string;
   retainedGoals?: boolean; retainedWork?: boolean; retainedUse?: boolean;
 }
-export function ProjectContext({ token, projectId, refresh, active }: { token: string; projectId: string; refresh: number; active: boolean }) {
+export function ProjectContext({ token, projectId, actorId, refresh, active, flowGlance }: { token: string; projectId: string; actorId: string; refresh: number; active: boolean; flowGlance?: React.ReactNode }) {
   const scope = `${projectId}:${token}`;
   const [snapshot, setSnapshot] = useState<ContextSnapshot | null>(null);
   const [selection, setSelection] = useState<{scope: string; id: string} | null>(() => { const id = readOverviewParam("stage"); return id ? { scope: `${projectId}:${token}`, id } : null; });
@@ -58,6 +58,7 @@ export function ProjectContext({ token, projectId, refresh, active }: { token: s
         (async () => {
           try {
             let page = await client.leaderWork(projectId, "tasks", undefined, true) as LeaderWorkPage<LeaderWorkTask>;
+            value.counts = page.counts;
             const seen = new Set<string>();
             while (current && page.nextCursor && page.items.length < 500) {
               if (seen.has(page.nextCursor)) throw new Error("工作分页游标重复");
@@ -100,7 +101,7 @@ export function ProjectContext({ token, projectId, refresh, active }: { token: s
           value.goalObservedAt = previous.goalObservedAt; value.retainedGoals = true;
         }
         if (value.workProblem && !value.rows.length) {
-          value.rows = previous.rows; value.statuses = previous.statuses;
+          value.rows = previous.rows; value.statuses = previous.statuses; value.counts = previous.counts;
           value.complete = previous.complete;
           value.workObservedAt = previous.workObservedAt; value.retainedWork = true;
         }
@@ -117,11 +118,8 @@ export function ProjectContext({ token, projectId, refresh, active }: { token: s
   const stages = value?.stages.filter(stage => stage.state === "active") ?? [];
   const stage = stages.length === 1 ? stages[0] : stages.find(item => selection?.scope === scope && item.id === selection.id);
   const goal = stage ? value?.goals.find(item => item.id === stage.goalId) : value?.goals.length === 1 ? value.goals[0] : undefined;
-  const attention = value ? selectAttention(value.rows, value.statuses) : null;
-  const use = value?.outcomes[0];
   const card = "flex min-w-0 flex-col gap-2 rounded-xl bg-raised px-4 py-3 border border-border compact:p-5";
   const muted = "text-caption text-muted-foreground";
-  const pill = "w-fit text-caption font-medium text-text-secondary";
   const problem = "rounded-lg bg-warning-soft px-3 py-2 text-caption text-text-secondary";
   const title = (icon: React.ReactNode, text: string, link?: React.ReactNode) => <div className="flex items-center gap-2 text-text-secondary">
     <span aria-hidden="true" className="[&_svg]:size-4">{icon}</span><h2 className="text-label font-semibold text-foreground">{text}</h2>{link}
@@ -142,13 +140,25 @@ export function ProjectContext({ token, projectId, refresh, active }: { token: s
     className="selected-mark block rounded-lg px-3 py-2 text-small text-text-secondary hover:bg-selected hover:text-foreground focus-visible:shadow-[var(--focus-ring)] outline-none">
     <span className="line-clamp-1" title={item.deliverable}>{nameOf(item)}{dueOf(item) ? ` · ${dueOf(item)}` : ""}</span>
   </a>;
-  return <section data-ui="" className="project-context flex flex-col gap-2" aria-label="目标、当前取舍与使用反馈" aria-busy={reading}>
+  const now = Date.now();
+  const stalled = value ? stalledTasks(value.rows, now) : [];
+  const work = !value ? "reading" as const : value.workProblem ? "failed" as const : "ready" as const;
+  const outcomeState = !value ? "reading" as const : (value.workProblem || value.useFailures) && !value.outcomes.length ? "failed" as const : "ready" as const;
+  const goalTitle = goal?.outcome ?? (stages.length > 1 ? `当前有 ${stages.length} 个正在推进的阶段` : reading && !value ? "正在核对项目目标…" : value?.goalProblem ? "目标与阶段暂未核对完整" : value?.goals.length ? "项目有多个目标，请进入目标与阶段核对" : "项目目标尚未读回或登记");
+  return <section data-ui="" className="project-context flex flex-col gap-3" aria-label="首屏：要你处理的、使用与结果、阶段" aria-busy={reading}>
     {stages.length > 1 && <ContextRailContent>
       <nav aria-label="正在推进的阶段" className="flex flex-col gap-0.5 pt-2">
         <span className="px-3 pb-1.5 pt-2 text-caption text-muted-foreground">正在推进的阶段 · {stages.length}</span>
         {stages.map(railLink)}
       </nav>
     </ContextRailContent>}
+    <PriorityBlock projectId={projectId} actorId={actorId} enabled={active && !!actorId} stalled={stalled} work={work} />
+    <UseBlock projectId={projectId} actorId={actorId} enabled={active && !!actorId} />
+    <OutcomeBlock projectId={projectId} outcomes={value?.outcomes ?? []} state={outcomeState} />
+    {value?.retainedUse && <p className={problem}>结果是否有效显示的是上次核对的反馈，读于 {value.useObservedAt ? date(value.useObservedAt) : "上次读取"}；本次尚未确认它仍是当前交付。</p>}
+    <div className="@container border-t border-border pt-3"><StagesBlock projectId={projectId} active={active} /></div>
+    <OrganisationLine text={value ? organisationText(value.counts, longestStall(value.rows, now)) : "组织自己在处理：正在读取"}>{flowGlance}</OrganisationLine>
+    <FoldLine label="当前目标" summary={`目标：${goalTitle}`} data-overview-goal="">
     <section className={cn(card, "overview-goal")} aria-label="当前目标">
       {title(<Target />, "当前目标", <a href={href(projectId, "journey")} className="ml-auto flex items-center gap-1 text-caption text-text-secondary hover:text-foreground">目标与阶段 <ArrowRight size={13} aria-hidden="true" /></a>)}
       <h3 className="line-clamp-2 text-heading font-semibold text-foreground compact:line-clamp-none" title={goal?.outcome}>{goal?.outcome ?? (stages.length > 1 ? `当前有 ${stages.length} 个正在推进的阶段` : reading && !value ? "正在核对项目目标…" : value?.goalProblem ? "目标与阶段暂未核对完整" : value?.goals.length ? "项目有多个目标，请进入目标与阶段核对" : "项目目标尚未读回或登记")}</h3>
@@ -169,38 +179,8 @@ export function ProjectContext({ token, projectId, refresh, active }: { token: s
       {value?.retainedGoals && <p className={problem}>保留上次目标与阶段，读于 {value.goalObservedAt ? date(value.goalObservedAt) : "上次读取"}，本次未能确认最新状态。</p>}
       {value && !value.goalsComplete && <p className={muted}>目标列表仅覆盖已读部分。</p>}
     </section>
-    <MilestonesBlock projectId={projectId} active={active} />
-    <div className="@container">
-      <div className="grid gap-3 @2xl:grid-cols-2">
-        <section className={cn(card, "overview-attention")} aria-label="本次优先核对">
-          {title(<Flag />, "本次优先核对")}
-          {attention ? <>
-            <span className={pill}>{leaderPhaseLabel[attention.phase]}</span>
-            <h3 className="text-body font-semibold"><a href={href(projectId, "task", attention.taskId)} className="text-foreground hover:underline">{attention.title}</a></h3>
-            <p className="text-small text-text-secondary">{workItemNextStep(attention)}</p>
-            <p className={muted}>下一责任：<ResponsibleName projectId={projectId} item={attention} /></p>
-            {attention.review?.decision === "deferred" && <details className="text-small"><summary className="cursor-pointer text-text-secondary">已暂缓的原因</summary><p className="mt-1 text-text-secondary">{attention.review.reason}</p></details>}
-            <a className="mt-auto flex w-fit items-center gap-1 text-small font-medium text-foreground hover:underline" href={`${href(projectId, "task", attention.taskId)}${attention.delivery ? "?tab=delivery" : ""}`}>{attention.delivery ? "核对交付与使用" : "查看当前工作"} <ArrowRight size={14} aria-hidden="true" /></a>
-            <FullIdentifiers rows={[{ label: "任务", value: attention.taskId }, { label: "下一责任", value: attention.responsible.id }]} />
-          </> : <p className="text-small text-text-secondary">{!value || reading ? "正在核对当前工作…" : value.workProblem || !value.complete ? "已读范围尚不能确定当前需核对事项，请进入任务列表。" : "现在没有等你判断的事。"}</p>}
-          {value?.workProblem && <details className={problem}><summary className="cursor-pointer">工作来源或使用回读存在缺项</summary>{value.workProblem}</details>}
-          {value?.retainedWork && <p className={problem}>以上为上次工作，读于 {value.workObservedAt ? date(value.workObservedAt) : "上次读取"}，请回原任务核对当前状态。</p>}
-        </section>
-        <section className={cn(card, "overview-use")} aria-label="最近使用反馈">
-          {title(<MessageSquare />, "最近使用反馈")}
-          {use ? <>
-            <span className={pill}>{use.observation.observerKind === "human" ? "真人" : "智能体"} · {({ used: "已使用", failed: "使用失败", notUsed: "未使用" } as const)[use.observation.result]}</span>
-            <h3 className="text-body font-semibold"><a href={`${href(projectId, "task", use.taskId)}?tab=delivery`} className="text-foreground hover:underline">{use.title}</a></h3>
-            <p className="text-small text-text-secondary">{use.observation.reason.slice(0, 200)}{use.observation.reason.length > 200 ? "…" : ""}</p>
-            <p className={muted}>{use.observation.observerKind === "human" ? "真人" : "智能体"}登记于 {date(use.observation.createdAt)} · 本次技术检查{use.delivery.technicalResult === "passed" ? "通过" : "失败"}</p>
-            <details className="text-small"><summary className="cursor-pointer text-text-secondary">实际使用的完整证据</summary><div className="mt-1 flex flex-col gap-1 text-text-secondary"><p>{use.observation.evidence}</p><p>{use.observation.reason}</p></div></details>
-            <FullIdentifiers rows={[{ label: "任务", value: use.taskId }, { label: "交付", value: use.delivery.id }, { label: "观察者", value: use.observation.observer }]} />
-          </> : <p className="text-small text-text-secondary">{!value || reading ? "正在核对当前交付的使用…" : value.workProblem || value.useFailures ? "当前交付的使用来源未能核实。请到原任务核对；读取失败不代表没有使用。" : "已读范围尚无可展示的当前交付使用观察。技术通过和任务关闭都不替代实际使用。"}</p>}
-          {value?.retainedUse && <p className={problem}>保留上次核对的反馈，读于 {value.useObservedAt ? date(value.useObservedAt) : "上次读取"}；本次尚未确认它仍是当前交付。</p>}
-          {value && <p className={muted}>从最近变化的 {value.useReadCount} 项已登记使用的交付核对；已读工作中共 {value.useCandidateCount} 项候选{value.useFailures ? `，${value.useFailures} 项来源未核实` : ""}。{!value.complete ? "工作索引未完整读取。" : ""}</p>}
-        </section>
-      </div>
-    </div>
+    </FoldLine>
+    <VersionFold projectId={projectId} active={active} />
     <p className={muted}>{value ? `目标与证据读于 ${date(value.observedAt)}${reading ? " · 正在重新核对" : ""}` : "目标与使用证据尚未读回"}。各来源分别读取，完整依据在原对象中查阅。</p>
   </section>;
 }
