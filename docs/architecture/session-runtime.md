@@ -136,6 +136,7 @@ stateDiagram-v2
 
 - Codex 调用一次 `thread/archive`，再在归档列表里核到同一 Thread 才记为 `closed`。
 - Claude 由适配器在账本里登记归档，此后拒绝新 Turn；原生对话记录保留。
+- **原生端已没有这条线程（`native_absent`）。** Codex 的 `thread/read` 被正常应答的子进程明确答复“读不到或无法加载”（`thread_unavailable` 或 `rollout_not_found`），并且归档、未归档两份列表里都没有同一 Thread，才记为 `closed`；这时没有归档，所以不写 `thread/archive`、不标已归档，事件写“native_absent: …”，退役状态读数的 `closeBasis` 为 `native_absent`、`nativeArchiveVerified` 为 false。足以说明线程不存在的理由：读线程是原生端自己的答复，两份列表各自对精确的 Thread、Session、目录核对过，缺一不可。读线程超时或断线、子进程没在运行、线程仍在未归档列表里却读不了、列表读不到、其他错误，都保持 `closing` 并保留故障。
 
 标记为“临时”的 Session 关闭前还要有一条退役决定（schema 062 的 `session_retirement_decision`），并且它名下没有未释放的 Task 分派和未结束的验收安排。Leader 负责核对业务责任，数据库触发器负责核对运行状态。退役与验收接力的合同见[接口合同](contracts.md#验收接力与临时-session-退役)。
 
