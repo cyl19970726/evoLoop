@@ -142,6 +142,17 @@ test("overview finish: 每日简报 entry, phase links on the organisation line,
     const overflow = await view.page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     assert.ok(overflow <= 0, `${width}px ${scheme}: horizontal overflow ${overflow}`);
     const top = await view.page.evaluate(() => Math.round(document.querySelector("[data-overview-block=priority]")?.getBoundingClientRect().top ?? -1));
+    if (width === 390) {
+      // The entry must not push the first screen down: the same data without any brief puts the block at the same place or lower.
+      const bare = await open(width, height, { briefs: [], holds: holdFor(four), scheme });
+      await bare.page.waitForFunction(() => /运行中 \d/.test(document.querySelector("[data-overview-block=organisation] summary")?.textContent ?? ""), null, { timeout: 15000 });
+      await bare.page.waitForTimeout(600);
+      assert.equal(await bare.page.locator("[data-overview-latest-brief]").count(), 0);
+      const without = await bare.page.evaluate(() => Math.round(document.querySelector("[data-overview-block=priority]")?.getBoundingClientRect().top ?? -1));
+      assert.ok(top <= without, `${scheme}: with the 每日简报 entry the block is at ${top}px, without it ${without}px`);
+      assert.equal(await bare.page.getByRole("button", { name: "重新读取" }).count(), 1, "the icon-only 重新读取 keeps its name");
+      await bare.context.close();
+    }
     if (shots) { await view.page.screenshot({ path: `${shots}/overview-${width}-${scheme}.png` }); console.log(`overview ${width} ${scheme}: priority block top ${top}`); }
     await view.context.close();
   }

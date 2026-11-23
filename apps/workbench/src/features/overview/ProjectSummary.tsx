@@ -202,14 +202,15 @@ export function ProjectSummary({ token, projectId, actorId, refresh, active, flo
   const empty = (text: string) => <p className={muted}>{text}</p>;
   const card = "flex min-w-0 flex-col rounded-xl bg-raised px-4 py-3 border border-border compact:px-5";
   return <div data-ui="" className="project-overview mx-auto flex w-full max-w-[980px] flex-col gap-3 px-4 py-3 compact:gap-5 compact:px-8 compact:py-7">
-    <header className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
-      <div className="min-w-0 flex-1 basis-60">
-        <h1 className="text-title font-semibold text-foreground" tabIndex={-1}>项目总览</h1>
-        <p className="mt-1 text-small text-text-secondary" data-page-role="">总览：差距与下一判断。阶段全文、任务与回看在<a className="text-primary hover:underline" href={href(projectId, "journey")}>目标与阶段</a>。</p>
-        <p className={cn(muted, "mt-1")}>{read}</p>
+    {/* Phone width: the title and the actions share one row and the two lines under the title use the whole width (Task cfa6c763: the first screen must not move down). */}
+    <header className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 sm:flex sm:justify-between sm:gap-3">
+      <div className="contents min-w-0 sm:block">
+        <h1 className="col-start-1 row-start-1 text-title font-semibold text-foreground" tabIndex={-1}>项目总览</h1>
+        <p className="col-span-2 mt-1 text-small text-text-secondary" data-page-role="">总览：差距与下一判断。阶段全文、任务与回看在<a className="text-primary hover:underline" href={href(projectId, "journey")}>目标与阶段</a>。</p>
+        <p className={cn(muted, "col-span-2 mt-1")}>{read}</p>
       </div>
-      <div className="flex shrink-0 flex-wrap items-center gap-3"><LatestBriefLink projectId={projectId} active={active} /><LatestReviewLink projectId={projectId} active={active} />
-        <Button onClick={() => setReread(value => value + 1)} disabled={pending}><RefreshCw aria-hidden="true" className={pending ? "animate-spin" : undefined} />重新读取</Button></div>
+      <div className="col-start-2 row-start-1 flex shrink-0 items-center gap-3"><LatestBriefLink projectId={projectId} active={active} /><LatestReviewLink projectId={projectId} active={active} />
+        <Button aria-label="重新读取" title="重新读取" onClick={() => setReread(value => value + 1)} disabled={pending}><RefreshCw aria-hidden="true" className={pending ? "animate-spin" : undefined} /><span className="hidden sm:inline">重新读取</span></Button></div>
     </header>
     {error && <Notice tone="error">摘要读取失败：{error}。{current ? "以下保留上次读回，不能视为当前状态。" : "请重试或进入原页面核对。"}</Notice>}
     {current?.failedNames ? <Notice tone="waiting">有 {current.failedNames} 个名称未读回，显示为“名称暂不可读”；完整标识在各项的来源里，原任务与承载入口仍保留。</Notice> : null}
