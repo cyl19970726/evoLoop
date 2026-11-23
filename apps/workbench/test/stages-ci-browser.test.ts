@@ -89,8 +89,14 @@ test("stages: overview block and journey table", { skip }, async t => {
     // Each stage keeps its two rows at 390: the name line and the check method, all of them inside the block.
     if (width < 500) for (const index of [0, 1, 2, 3, 4]) { const box = await rows.nth(index).boundingBox(); assert.ok(box && box.height > 0 && box.x + box.width <= width + 0.5, `row ${index} is drawn inside the width`); }
     const flow = await overflow(page); assert.equal(flow.over <= 0, true, `no horizontal overflow at ${width}`); assert.equal(flow.past, 0);
-    const attention = await page.locator(".overview-attention h2").evaluate(node => Math.round(node.getBoundingClientRect().bottom)).catch(() => null);
-    readings.push({ view: `overview ${width}x${height}`, scrollOver: flow.over, stagesBottom: await page.locator("[data-overview-stages]").evaluate(node => Math.round(node.getBoundingClientRect().bottom)), attentionTitleBottom: attention });
+    // The first screen (docs/frontend/pages/overview.md): the title of 本次优先核对 and its first item stay above the lower edge (the phone's 64px tab bar covers the bottom of 390x844).
+    const edge = height - (width >= 1000 ? 0 : 64);
+    const read = await page.evaluate(`(() => { const r = s => { const e = document.querySelector(s); return e ? Math.round(e.getBoundingClientRect().bottom) : null; };
+      return { stagesBottom: r("[data-overview-stages]"), titleBottom: r(".overview-attention h2"), itemBottom: r(".overview-attention h3 a") }; })()`) as { stagesBottom: number; titleBottom: number; itemBottom: number };
+    readings.push({ view: `overview ${width}x${height}, five stages`, scrollOver: flow.over, edge, ...read });
+    // At 390 the five stages (two rows each, none hidden) alone are taller than the screen below the goal: that width is recorded, not asserted, until the requirement is decided.
+    if (width >= 1000) assert.ok(read.titleBottom <= edge, `the 本次优先核对 title is on the first screen at ${width}x${height} (bottom ${read.titleBottom}, edge ${edge})`);
+    if (width >= 1000) assert.ok(read.itemBottom <= edge, `its first item is on the first screen at ${width}x${height} (bottom ${read.itemBottom}, edge ${edge})`);
     if (shots) await page.screenshot({ path: `${shots}/overview-${width}-light.png` });
     // Clicking a row lands on that stage's row in the journey page, opened and in the address.
     await rows.nth(2).click(); await page.locator("[data-stages] [data-stage-row]").first().waitFor();
@@ -154,6 +160,11 @@ test("stages: overview block and journey table", { skip }, async t => {
     const clamped = await page.locator("[data-stages] [data-stage-row]").first().evaluate(node => [...node.querySelectorAll("*")].some(e => /line-clamp/.test(e.className?.toString?.() ?? "")));
     assert.equal(clamped, false, "the check method is not truncated on this page");
     const first = page.locator("[data-stages] [data-stage-row]").first();
+    if (width >= 1000) assert.equal(await page.locator("[data-stages] [data-stage-table] > [aria-hidden]").evaluate(node => getComputedStyle(node).display), "grid", "the journey table has its column header at 1440");
+    // One set of status words: the service's, in the side list and the information panel too; and one count of tasks outside stages.
+    const everything = await page.locator("main, [aria-label='目标与阶段的信息']").evaluateAll(nodes => nodes.map(node => (node as HTMLElement).innerText).join("\n"));
+    assert.doesNotMatch(everything, /推进中|已回看/, "the old lifecycle words are not on the page");
+    assert.match(everything, /未归属阶段的任务[\s\S]*未关闭、未归属[\s\S]*明确不属于阶段/);
     const top = await first.evaluate(node => Math.round(node.getBoundingClientRect().top));
     assert.ok(top < height, `the table starts on the first screen at ${width}x${height} (top ${top})`);
     await first.click();

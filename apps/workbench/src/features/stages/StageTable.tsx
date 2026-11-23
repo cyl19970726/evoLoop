@@ -7,8 +7,8 @@ import { ChevronRight } from "lucide-react";
 import { Button, StatusTag, cn } from "@evoloop/ui";
 import { checkCell, dueCell, isCurrent, overdueNote, stageName, statusTone, taskCell, NO_TASKS } from "./stagesPresentation";
 
-const wide = "@3xl:grid-cols-[minmax(0,1.4fr)_3.5rem_minmax(0,2.2fr)_8rem_9.5rem]";
-const rowBase = "grid w-full min-w-0 grid-cols-1 items-start gap-x-3 gap-y-0.5 rounded-md px-3 py-2 text-left text-small text-text-secondary no-underline";
+const wide = "@xl:grid-cols-[minmax(6.5rem,1fr)_3rem_minmax(0,2.4fr)_7rem_7.5rem]";
+const rowBase = "grid w-full min-w-0 grid-cols-1 items-start gap-x-3 gap-y-0.5 rounded-md px-3 py-1.5 text-left text-small text-text-secondary no-underline";
 
 export interface StageTableProps {
   projection: StageProjection;
@@ -25,7 +25,7 @@ export interface StageTableProps {
 export function StageTable({ projection, stages, deliverables, hrefFor, expandable, label }: StageTableProps) {
   const full = !!expandable;
   return <div className="@container" data-stage-table="">
-    <div aria-hidden="true" className={cn("hidden gap-x-3 px-3 pb-1 text-caption text-muted-foreground @3xl:grid", wide)}>
+    <div aria-hidden="true" className={cn("hidden gap-x-3 px-3 pb-1 text-caption text-muted-foreground @xl:grid", wide)}>
       <span>名称</span><span>到期日</span><span>怎样算到了</span><span>任务</span><span>状态</span></div>
     <ul aria-label={label} className="m-0 flex list-none flex-col p-0">{stages.map(stage => {
       const current = isCurrent(projection, stage);
@@ -34,11 +34,11 @@ export function StageTable({ projection, stages, deliverables, hrefFor, expandab
       const name = stageName(stage, deliverables?.get(stage.id));
       const cells = <>
         <span className="min-w-0 text-foreground [overflow-wrap:anywhere]">
-          {current && <span data-current-mark="" className="mr-1.5 text-caption font-semibold text-primary">当前</span>}<span className={cn(current && "font-semibold")}>{name}</span>
+          {current && <span data-current-mark="" className="mr-1.5 whitespace-nowrap text-caption font-semibold text-primary">当前</span>}<span className={cn(current && "font-semibold")}>{name}</span>
         </span>
-        <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5 @3xl:contents">
+        <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5 @xl:contents">
           <span title={due.title} className="tabular-nums">{due.text}</span>
-          <span className={cn("order-last col-span-full min-w-0 text-text-secondary [overflow-wrap:anywhere] @3xl:order-none @3xl:col-span-1", !full && "line-clamp-2")} data-check="">{checkCell(stage.checkMethod)}</span>
+          <span className={cn("order-last col-span-full min-w-0 text-text-secondary [overflow-wrap:anywhere] @xl:order-none @xl:col-span-1", !full && "line-clamp-2")} data-check="">{checkCell(stage.checkMethod)}</span>
           <span className={cn(taskCell(stage.tasks) === NO_TASKS && "text-muted-foreground")}>{taskCell(stage.tasks)}</span>
           <span className="min-w-0"><StatusTag tone={statusTone[stage.status]} label={stage.statusLabel} />
             {stage.status === "overdue_awaiting_review" && <span className="block text-caption text-muted-foreground" data-overdue-note="">{overdueNote(projection)}</span>}</span>

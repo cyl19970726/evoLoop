@@ -7,7 +7,7 @@ import { LadderRow } from "./LadderView";
 import { StageTable } from "./StageTable";
 import { NO_STAGES, stageRows } from "./stagesPresentation";
 
-const card = "flex min-w-0 flex-col gap-1.5 rounded-xl bg-raised px-4 py-2.5 border border-border compact:px-5";
+const card = "flex min-w-0 flex-col gap-1 rounded-xl bg-raised px-4 py-2 border border-border compact:px-5";
 const muted = "text-caption text-muted-foreground";
 
 export function StagesBlock({ projectId, active }: { projectId: string; active: boolean }) {
