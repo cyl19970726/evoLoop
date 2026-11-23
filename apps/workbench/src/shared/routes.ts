@@ -2,7 +2,7 @@
 import { appHistory, currentPath, onNavigate } from "./navigation";
 
 /** `not-found` is an address inside a project that names no page (a mistyped or outdated link); it is never linked to. */
-export type Section = "overview" | "work" | "create-task" | "knowledge" | "sessions" | "task" | "document" | "documents" | "inbox" | "journey" | "discussions" | "reviews" | "collaboration" | "runtime" | "arrangement" | "schedules" | "roles" | "repository" | "operations" | "evaluations" | "settings" | "connectors" | "not-found";
+export type Section = "overview" | "work" | "create-task" | "knowledge" | "sessions" | "task" | "document" | "documents" | "inbox" | "journey" | "discussions" | "reviews" | "collaboration" | "runtime" | "arrangement" | "schedules" | "roles" | "repository" | "operations" | "evaluations" | "settings" | "connectors" | "go" | "not-found";
 export type Route = { projectId: string | null; section: Section; id?: string; revision?: string; action?: string; session?: string };
 
 
@@ -22,6 +22,8 @@ export function parseRoute(path: string): Route {
   if (parts[0] !== "p" || !parts[1]) return { projectId: null, section: "overview" };
   if (parts.length === 2) return { projectId: parts[1], section: "overview" };
   const section = parts[2];
+  // `/p/{project}/go/{text}`: whatever a pasted id, id prefix or PR number names (Task 5eb93990). `id` is the text, decoded.
+  if (section === "go" && parts.length === 4 && parts[3]) { let text = parts[3]; try { text = decodeURIComponent(text); } catch { /* kept as written */ } return { projectId: parts[1], section: "go", id: text }; }
   const objectSection = section === "tasks" || section === "documents" || section === "evaluations";
   if (parts.length > 4 || parts.length === 4 && !objectSection || !objectSection && !singleSections.includes(section ?? "") || section === "tasks" && !parts[3])
     return { projectId: parts[1], section: "not-found" };
@@ -80,6 +82,6 @@ export function installLegacyTeamRedirect(): () => void {
 }
 
 export function href(projectId: string, section: Section, id?: string, revision?: string): string {
-  const part = section === "task" ? `tasks/${id}` : section === "create-task" ? "tasks/new" : section === "document" ? `documents/${id}` : section === "evaluations" && id ? `evaluations/${id}` : section;
+  const part = section === "task" ? `tasks/${id}` : section === "create-task" ? "tasks/new" : section === "document" ? `documents/${id}` : section === "evaluations" && id ? `evaluations/${id}` : section === "go" && id ? `go/${encodeURIComponent(id)}` : section;
   return `/p/${projectId}/${part}${revision ? `?revision=${encodeURIComponent(revision)}` : ""}`;
 }

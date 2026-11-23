@@ -11,6 +11,7 @@ import { href, parseRoute, type Route, type Section } from "../../shared/routes"
 import { readThemePreference, setThemePreference, subscribeTheme, themeLabels, type ThemePreference } from "../../shared/theme";
 import { currentPath, navigate, onAddressChange } from "../../shared/navigation";
 import { ProviderHoldBar } from "./ProviderHoldBar";
+import { JumpButton, JumpHost, JumpIconButton } from "./JumpHost";
 import { SessionNavigation, emptySessionNavigationState, type SessionNavigationState } from "../../features/sessions/SessionNavigation";
 import { ContextPanelColumn, ContextPanelProvider } from "../../shared/ui/ContextPanel";
 import { ContextRailProvider, ContextRailSlot } from "../../shared/ui/ContextRail";
@@ -129,7 +130,9 @@ export function AppShell(props: AppShellProps) {
         <IconButton ref={menuButton} label="打开项目导航" icon={<Menu size={19} />} onClick={() => setDrawer(true)} />
         <span className="min-w-0 flex-1 truncate font-medium">{title}</span>
         <span className="max-w-[40%] truncate text-small text-muted-foreground">{props.projectTitle}</span>
+        <JumpIconButton />
       </header>
+      <JumpHost token={props.token} projectId={projectId} />
       <Sheet open={drawer && compact} onOpenChange={setDrawer}>
         {/* `mobile-navigation` marks the drawer as the scroll container the Session list keeps its position in. */}
         <SheetContent side="left" className="mobile-navigation w-[300px] max-w-[85vw] gap-0 bg-sunken p-0" onCloseAutoFocus={drawerCloseFocus}>
@@ -197,6 +200,8 @@ function ContextRail(props: AppShellProps & { space: Space; sessionState: Sessio
         </span>
         <ChevronsUpDown size={14} aria-hidden="true" className="shrink-0 text-muted-foreground" />
       </a>
+      {/* 跳到 (Task 5eb93990): an id, an id prefix or a PR number opens the object; ⌘K / Ctrl+K opens the same box anywhere. */}
+      <JumpButton className="mb-2" />
     </div>
     {space === "agents"
       ? <div className={cn("flex-1", !inDrawer && "min-h-0 overflow-y-auto")}>

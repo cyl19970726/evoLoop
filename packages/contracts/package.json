@@ -28,6 +28,7 @@
     "./queues": "./dist/queues.js",
     "./references": "./dist/references.js",
     "./evaluation": "./dist/evaluation.js",
+    "./object-jump": "./dist/object-jump.js",
     "./orchestration": "./dist/orchestration.js",
     "./ordinary-run-submission": "./dist/ordinary-run-submission.js",
     "./artifact-reference": "./dist/artifact-reference.js",

@@ -6,6 +6,7 @@ import * as agents from "./agents.mjs";
 import * as team from "./team.mjs";
 import * as spaces from "./spaces.mjs";
 import * as configuration from "./configuration.mjs";
+import { jump } from "./jump.mjs";
 
 const ok = value => ({ status: 200, value });
 const missing = message => ({ status: 404, value: { message } });
@@ -29,6 +30,7 @@ function projectRoutes(params) {
     "/acceptance-relay/mine": { items: [] },
     "/tasks": work.taskListPage(),
     "/work-management/index": params.get("view") === "documents" ? work.documentWorkIndex() : work.workIndex(includeClosed),
+    "/jump": jump(params.get("q") ?? ""),
     "/documents": page(work.documentList({ kind: params.get("kind"), status: params.get("status"), search: params.get("search") ?? "" })),
     "/goals": page([work.goalRecord("g1"), work.goalRecord("g2")]),
     "/stages": ["s1", "s2", "s3"].map(work.stageRecord),
