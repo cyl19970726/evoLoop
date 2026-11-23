@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { LEGACY, assertValidList, listBrowserTests, repoRoot } from "./browser-tests.mjs";
+import { LEGACY, assertValidList, listBrowserTests, parseShard, repoRoot, shardOf } from "./browser-tests.mjs";
 
 // The set CI ran before discovery existed (the old one-line list in package.json); it must not change.
 const BEFORE = [
@@ -66,4 +66,17 @@ test("package.json test:browser asks discovery instead of listing files", () => 
   const script = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")).scripts["test:browser"];
   assert.match(script, /scripts\/lib\/browser-tests\.mjs/);
   assert.doesNotMatch(script, /\.test\.ts\s+\S*\.test\.ts/, "the files must not be listed back on one line");
+});
+
+test("shards partition the list: every file runs in exactly one shard, for any shard count", () => {
+  const all = listBrowserTests(repoRoot);
+  for (const count of [1, 2, 3, 5]) {
+    const parts = Array.from({ length: count }, (_, i) => shardOf(all, `${i + 1}/${count}`));
+    assert.deepEqual(parts.flat().sort(), [...all].sort(), `${count} shards must cover the list exactly once`);
+    assert.ok(parts.every(part => part.length > 0));
+  }
+});
+
+test("a malformed shard spec is rejected instead of running everything or nothing", () => {
+  for (const bad of ["", "0/2", "3/2", "1/0", "a/b", "1", undefined]) assert.throws(() => parseShard(bad), /bad shard/);
 });

@@ -55,11 +55,31 @@ export function assertValidList(list) {
   return list;
 }
 
+/**
+ * The files shard `index` of `count` runs (1-based). Round-robin over the sorted list, so every file lands in exactly one shard
+ * and a new file needs no list edit. `spec` is "I/N", e.g. "1/2".
+ */
+export function parseShard(spec) {
+  const m = /^(\d+)\/(\d+)$/.exec(spec ?? "");
+  if (!m || Number(m[2]) < 1 || Number(m[1]) < 1 || Number(m[1]) > Number(m[2])) throw new Error(`bad shard "${spec}": expected I/N with 1 <= I <= N`);
+  return { index: Number(m[1]), count: Number(m[2]) };
+}
+export function shardOf(list, spec) {
+  const { index, count } = parseShard(spec);
+  return list.filter((_, i) => i % count === index - 1);
+}
+
 const isMain = () => { try { return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1]); } catch { return false; } };
 if (isMain()) {
   const rootArg = process.argv.indexOf("--root");
   const root = rootArg > 0 ? resolve(process.argv[rootArg + 1]) : repoRoot;
   // Any failure exits non-zero BEFORE anything is printed, so `files=$(…) && …` in test:browser stops instead of running without them.
-  try { process.stdout.write(assertValidList(listBrowserTests(root)).map(path => `${path}\n`).join("")); }
+  // `--shard I/N` (or EVOLOOP_BROWSER_SHARD=I/N) prints one shard of the same list; an empty shard fails like an empty list.
+  const shardArg = process.argv.indexOf("--shard");
+  const shard = shardArg > 0 ? process.argv[shardArg + 1] : process.env.EVOLOOP_BROWSER_SHARD || undefined;
+  try {
+    const all = assertValidList(listBrowserTests(root));
+    process.stdout.write((shard ? assertValidList(shardOf(all, shard)) : all).map(path => `${path}\n`).join(""));
+  }
   catch (error) { process.stderr.write(`browser-tests: ${error.message}\n`); process.exit(1); }
 }

@@ -61,9 +61,16 @@ jobs:
   # The built workbench over the screenshot fixture, in a real browser: the pages a hook-order mistake breaks must read back.
   # Playwright stays out of the dependencies (docs/frontend/architecture.md); it is installed beside the checkout, and the
   # runner's own Chrome is used so no browser is downloaded. EVOLOOP_BROWSER_TEST_REQUIRED turns a missing module into a failure.
+  # Two shards, each on its own runner: the files split round-robin (scripts/lib/browser-tests.mjs --shard I/N), so a new test file
+  # lands in exactly one shard. The job limit is a backstop only: 16 min >= 1.5 x the longest browser job seen (616 s, cancelled at the
+  # old 10 min limit); a hung test is cut off by the 240 s per-test timeout in `test:browser` long before. See docs/development/browser-ci.md.
   browser:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 16
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ["1/2", "2/2"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -75,6 +82,7 @@ jobs:
       - run: npm install --prefix "$RUNNER_TEMP/playwright" --no-save --no-audit --no-fund playwright-core@1.65.0
       - run: npm run test:browser
         env:
+          EVOLOOP_BROWSER_SHARD: ${{ matrix.shard }}
           EVOLOOP_BROWSER_TEST_REQUIRED: "1"
           EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE: ${{ runner.temp }}/playwright/node_modules/playwright-core/index.js
           EVOLOOP_BROWSER_TEST_EXECUTABLE_PATH: /usr/bin/google-chrome
