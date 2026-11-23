@@ -2,7 +2,6 @@
 // and one relation bar (阶段、来源、承接、交付、依据). Both only say what the existing judgments already say
 // (currentStageText, workItemNextStep, timingDuration, the delivery and observation records); a fact that is not
 // registered is said as not registered, never left out.
-import { Fragment } from "react";
 import type React from "react";
 import type { TaskDetail } from "@evoloop/contracts";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
@@ -14,7 +13,8 @@ import { currentStageText } from "../../shared/leaderWorkLoad";
 import { useProjectQuery } from "../../shared/query";
 import { timingDuration, timingStageLabel, waitingParty } from "../../shared/taskTiming";
 import { taskSectionHref } from "../../shared/taskNavigation";
-import { date, href } from "../../shared/ui/shared";
+import { RelationBar, link, unregistered } from "../../shared/ui/RelationBar";
+import { date, href, stageHref } from "../../shared/ui/shared";
 import { workItemNextStep } from "../../shared/workPresentation";
 import { sessionHref } from "../sessions";
 import type { ReadState } from "./taskFactsPresentation";
@@ -24,8 +24,6 @@ import { taskOrigin } from "./taskOrigin";
 import { useAssignment } from "./TaskRuntimeTab";
 import { useTaskTiming } from "./TaskScheduleSection";
 
-const link = "text-primary hover:underline";
-const unregistered = "未登记";
 /** The stored reason may already start with 不属于阶段 (a schedule's 例行 reason does): then it is the whole text, never wrapped a second time. */
 const noStageText = (reason: string | null | undefined): string => {
   const text = reason?.trim();
@@ -81,7 +79,7 @@ export function TaskRelationBar({ projectId, token, detail, leader, actorId, lin
 
   const ownership = leader?.stageOwnership;
   const stage = ownership?.state === "stage" && leader?.stage
-    ? <a className={link} href={`${href(projectId, "journey")}?stage=${encodeURIComponent(leader.stage.stageId)}`}>{leader.stage.shortName}</a>
+    ? <a className={link} href={stageHref(projectId, leader.stage.stageId)}>{leader.stage.shortName}</a>
     : ownership?.state === "none" ? <span title={ownership.reason ?? undefined}>{noStageText(ownership.reason)}</span>
       : ownership ? "未归属" : unregistered;
 
@@ -110,9 +108,5 @@ export function TaskRelationBar({ projectId, token, detail, leader, actorId, lin
     : unregistered;
 
   const items: [string, string, React.ReactNode][] = [["stage", "阶段", stage], ["source", "来源", source], ["agent", "承接", taking], ["delivery", "交付", delivery], ["basis", "依据", basis]];
-  return <p className="text-label leading-(--leading-body) text-text-secondary [overflow-wrap:anywhere]" data-task-relations="">
-    {items.map(([id, label, value], index) => <Fragment key={id}>
-      {index > 0 && " · "}<span data-relation={id}>{label} {value}</span>
-    </Fragment>)}
-  </p>;
+  return <RelationBar kind="task" items={items.map(([id, label, value]) => ({ id, label, value }))} />;
 }

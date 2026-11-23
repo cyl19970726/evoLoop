@@ -41,7 +41,9 @@ export const knowledge = {
 };
 
 // ---------- schedules (日程) ----------
-const scheduleIds = { daily: id(1400), weekly: id(1401) };
+const scheduleIds = { daily: id(1400), weekly: id(1401), direct: id(1402), skipping: id(1403) };
+/** FIXTURE_ROUTINES=1 adds two more schedules (a direct one whose last task is closed, one that skipped three times in a row); the default lists stay as they are. */
+const extra = () => process.env.FIXTURE_ROUTINES === "1";
 const scheduleRevision = (scheduleId, title, localTime, state) => ({ projectId, scheduleId, id: scheduleId, version: 1, timezone: "Asia/Shanghai",
   rule: { kind: "daily", localTime }, misfire: { kind: "latest" }, overlap: "skip",
   template: { title, content: `${title}：核对来源并留下报告`, acceptance: "报告写明读到的范围", owner: roles.verify.id, acceptanceMode: "human_required", consumer: actorId },
@@ -53,7 +55,18 @@ export const schedules = {
       revision: scheduleRevision(scheduleIds.daily, "每日验收巡检", "09:00", "active") },
     { projectId, id: scheduleIds.weekly, version: 2, currentRevisionId: scheduleIds.weekly, state: "stopped", watermarkUtc: ago(60 * 24 * 2),
       revision: scheduleRevision(scheduleIds.weekly, "试用反馈汇总", "18:00", "stopped") },
+    ...extra() ? [
+      { projectId, id: scheduleIds.direct, version: 1, currentRevisionId: scheduleIds.direct, state: "active", watermarkUtc: ago(60 * 2), revision: scheduleRevision(scheduleIds.direct, "直派整理巡检", "10:00", "active") },
+      { projectId, id: scheduleIds.skipping, version: 1, currentRevisionId: scheduleIds.skipping, state: "active", watermarkUtc: ago(60 * 2), revision: scheduleRevision(scheduleIds.skipping, "连跳巡检", "11:00", "active") },
+    ] : [],
   ],
+  /** GET /schedules/:id/dispatch: a policy for the direct sample, none (交 Leader) for the others. */
+  dispatch: scheduleId => scheduleId === scheduleIds.direct ? { projectId, scheduleId, version: 1, mode: "direct", state: "active", waitLimitMinutes: 30, dailyRunBudget: null,
+    setRevisionId: id(1420), roleRevisionId: id(1421), consecutiveFailures: 0, consecutiveSkips: 0, revertReason: null, actorId, reason: "直派整理", updatedAt: ago(60 * 24) }
+    : scheduleId === scheduleIds.skipping ? { projectId, scheduleId, version: 1, mode: "leader", state: "active", waitLimitMinutes: 30, dailyRunBudget: null,
+      setRevisionId: id(1422), roleRevisionId: id(1423), consecutiveFailures: 0, consecutiveSkips: 3, revertReason: null, actorId, reason: "交 Leader", updatedAt: ago(60 * 24) } : null,
+  dispatches: scheduleId => ({ items: scheduleId !== scheduleIds.direct ? [] : [{ scheduleId, plannedAtUtc: ago(60 * 3), state: "dispatched", reason: "", taskId: tasks.t7.id, sessionId: agents.design.sessionId,
+    entryId: id(1430), templateHash: hash("a"), roleRevisionId: id(1421), executionConfig: {}, decidedAt: ago(60 * 3), dispatchedAt: ago(60 * 3), escalatedAt: null }], nextCursor: null }),
   status: () => ({ state: "running", lastTickAt: ago(1), lastError: null, lastCreated: 1,
     grants: [{ projectId, actorId, scopeId: "scope-verify", roleId: roles.verify.id }] }),
   revisions: scheduleId => [schedules.list().find(s => s.id === scheduleId)?.revision].filter(Boolean),
@@ -90,6 +103,12 @@ export const routineHealth = () => {
       lastTaskOpen: series.latestTask.state !== "done", lastTrigger: { plannedAtUtc: series.latestTask.plannedAtUtc, observedAtUtc: null, outcome: "created", reason: "scheduled",
         task: { taskId: series.latestTask.taskId, title: series.latestTask.title, state: series.latestTask.state } } })),
     item({ id: weekly.id, title: weekly.revision.template.title, state: "stopped", rule: weekly.revision.rule, watermarkUtc: weekly.watermarkUtc }),
+    ...extra() ? [
+      item({ id: scheduleIds.direct, title: "直派整理巡检", state: "active", rule: { kind: "daily", localTime: "10:00" }, nextAtUtc: later(0.5),
+        lastTrigger: { plannedAtUtc: ago(60 * 3), observedAtUtc: ago(60 * 3 - 1), outcome: "created", reason: "scheduled", task: { taskId: tasks.t7.id, title: tasks.t7.title, state: "done" } } }),
+      item({ id: scheduleIds.skipping, title: "连跳巡检", state: "active", rule: { kind: "daily", localTime: "11:00" }, nextAtUtc: later(0.6), consecutiveSkips: 3,
+        lastTrigger: { plannedAtUtc: ago(60 * 3), observedAtUtc: ago(60 * 3 - 1), outcome: "skipped", reason: "PREVIOUS_STILL_OPEN", task: null } }),
+    ] : [],
   ] };
 };
 export const timedFocus = tasks.t2.id;

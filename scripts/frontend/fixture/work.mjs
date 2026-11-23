@@ -55,11 +55,22 @@ export const docs = {
   ].join("") },
 };
 const docList = Object.values(docs);
+// Four samples of the document page's relation bar (任务 · 阶段 · 来源 · 交付 · 依据). They are reachable by address only (not in the lists),
+// so the lists the other pages count stay as they are. a the owning task is in a stage, written by a Run, the artifact of a used delivery,
+// fixed as the basis of two tasks; b no owning task, referenced by three; c nothing at all; d the owning task is in no stage.
+const relationBody = title => `# ${title}\n\n这份文档只用来核对页头的关系条。`;
+export const relationDocs = {
+  a: { id: id(1500), rev: id(1501), title: "关系条样本 A：交付报告", kind: "report", status: "published", body: relationBody("关系条样本 A"), primary: "a", origin: true },
+  b: { id: id(1502), rev: id(1503), title: "关系条样本 B：被三项任务引用", kind: "spec", status: "published", body: relationBody("关系条样本 B") },
+  c: { id: id(1504), rev: id(1505), title: "关系条样本 C：没有任何关系", kind: "spec", status: "draft", body: relationBody("关系条样本 C") },
+  d: { id: id(1506), rev: id(1507), title: "关系条样本 D：任务不属于阶段", kind: "spec", status: "published", body: relationBody("关系条样本 D"), primary: "e" },
+};
 
 export function documentRecord(d) {
   return { projectId, id: d.id, title: d.title, version: d.oldRev ? 2 : 1, currentRevisionId: d.rev,
     adoptedRevisionId: d.status === "published" ? d.rev : null, kind: d.kind, status: d.status,
-    primaryTaskId: d === docs.taskBody ? tasks.t1.id : null, createdAt: ago(60 * 24 * 4), updatedAt: ago(90 + docList.indexOf(d) * 60), origin: null };
+    primaryTaskId: d === docs.taskBody ? tasks.t1.id : d.primary ? nowTasks[d.primary].id : null, createdAt: ago(60 * 24 * 4), updatedAt: ago(90 + docList.indexOf(d) * 60),
+    origin: d.origin ? { taskId: tasks.t1.id, taskRevisionId: revisionId(tasks.t1), runId: runId(tasks.t1) } : null };
 }
 export function revisionRecord(d, revisionId = d.rev) {
   const old = revisionId === d.oldRev;
@@ -102,7 +113,11 @@ const references = d => d === docs.map ? [{ taskId: tasks.t1.id, title: tasks.t1
     { taskId: tasks.t2.id, title: tasks.t2.title, state: "in_progress", relations: ["link"] }]
     : d === docs.rule ? [{ taskId: tasks.t1.id, title: tasks.t1.title, state: "in_progress", relations: ["basis"] }]
       : d === docs.taskBody ? [{ taskId: tasks.t1.id, title: tasks.t1.title, state: "in_progress", relations: ["content"] }]
-        : d === docs.report ? [{ taskId: tasks.t1.id, title: tasks.t1.title, state: "in_progress", relations: ["link"] }] : [];
+        : d === docs.report ? [{ taskId: tasks.t1.id, title: tasks.t1.title, state: "in_progress", relations: ["link"] }]
+          : d === relationDocs.a ? [{ taskId: nowTasks.a.id, relations: ["content"] }, { taskId: nowTasks.c.id, relations: ["delivery"] },
+            { taskId: tasks.t2.id, relations: ["basis"] }, { taskId: nowTasks.b.id, relations: ["basis"] }]
+            : d === relationDocs.b ? [tasks.t1, tasks.t2, tasks.t3].map(t => ({ taskId: t.id, relations: ["link"] }))
+              : d === relationDocs.d ? [{ taskId: nowTasks.e.id, relations: ["content"] }] : [];
 /** The documents view of the work index: use and referencing tasks of each document. */
 export const documentWorkIndex = () => {
   const items = docList.map((d, n) => ({ kind: "document", documentId: d.id, version: d.oldRev ? 2 : 1, title: d.title, documentKind: d.kind,
@@ -112,7 +127,7 @@ export const documentWorkIndex = () => {
     references: references(d), actionKey: `document:${d.id}` }));
   return { items, nextCursor: null, total: items.length, counts: {}, changeSequence: 48, observedAt: ago(1), partial: false };
 };
-export const findDocument = documentId => docList.find(d => d.id === documentId) ?? null;
+export const findDocument = documentId => [...docList, ...Object.values(relationDocs)].find(d => d.id === documentId) ?? null;
 
 // ---------- tasks ----------
 const task = (n, title, state, owner, extra = {}) => ({ id: id(200 + n), n, title, state, owner, kind: "implementation", ...extra });
@@ -135,7 +150,7 @@ const taskList = Object.values(tasks);
 export const nowTasks = {
   a: task(11, "返工：选中行字重", "in_progress", "dev", { phase: "rework", agent: "dev", ack: "accepted", run: "completed", delivery: true, obs: "failed", stage: "s1", basis: true, elapsedMin: 2 * 24 * 60 }),
   b: task(12, "待验收：右栏抽屉", "in_progress", "dev", { phase: "awaiting_acceptance", agent: "dev", ack: "accepted", delivery: true, priorDelivery: true, stage: "s1", basis: true, elapsedMin: 180 }),
-  c: task(13, "已使用：三宽度回归", "in_progress", "dev", { phase: "awaiting_close", agent: "dev", ack: "accepted", delivery: true, obs: "used", stage: "s1", basis: true, elapsedMin: 40,
+  c: task(13, "已使用：三宽度回归", "in_progress", "dev", { phase: "awaiting_close", agent: "dev", ack: "accepted", delivery: true, obs: "used", stage: "s1", basis: true, elapsedMin: 40, docArtifact: "a",
     acceptance: "1. **右栏**随选中项切换，见 `data-task-facts`。\n2. 三个宽度都不出现横向滚动，详见 [设计语言](https://example.test/design)。\n3. <script>window.__ran = true</script> 只作为文字显示。" }),
   d: task(14, "什么都没登记的任务", "todo", "docs", { phase: "unassigned", elapsedMin: 20 }),
   e: task(15, "每日验收巡检（今日）", "in_progress", "verify", { phase: "running", agent: "verify", ack: "accepted", run: "running", noStage: true, scheduleOrigin: true, elapsedMin: 25 }),
@@ -239,7 +254,7 @@ export function taskDetail(t) {
     deliveries: t.delivery ? [...t.priorDelivery ? [{ projectId, id: priorDeliveryId(t), taskId: t.id, taskRevisionId: revisionId(t), runId: runId(t), sourceRunVersion: 2,
       submittedByActorId: "agent-dev", artifactRef: "git:evoloop/workbench", artifactRevision: "3a9d0ce", contentHash: hash("b"),
       technicalResult: "passed", technicalEvidence: "第一轮交付", reason: "第一份交付", actorId: "agent-dev", createdAt: ago(60 * 30) }] : [], { projectId, id: deliveryId(t), taskId: t.id, taskRevisionId: revisionId(t), runId: runId(t), sourceRunVersion: 3,
-      submittedByActorId: "agent-dev", artifactRef: "git:evoloop/workbench", artifactRevision: "4f1c2ab", contentHash: hash("c"),
+      submittedByActorId: "agent-dev", artifactRef: t.docArtifact ? `document:${relationDocs[t.docArtifact].id}@${relationDocs[t.docArtifact].rev}` : "git:evoloop/workbench", artifactRevision: "4f1c2ab", contentHash: hash("c"),
       technicalResult: "passed", technicalEvidence: t === tasks.t1 && refPlain() ? refPlain() : "类型检查、单元测试和三个宽度的浏览器回归通过", reason: "交付右栏信息核对",
       actorId: "agent-dev", createdAt: ago(45) }] : [],
     // FIXTURE_REWORK_OBS: the return opinion a rework round's link points to (?observation=ID), id(881) like agents.mjs's rework dispatch.

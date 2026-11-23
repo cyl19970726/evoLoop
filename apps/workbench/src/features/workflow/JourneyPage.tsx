@@ -5,6 +5,7 @@
 import React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { Goal, GoalRevision, Stage, StageReview, StageRevision } from "@evoloop/contracts";
+import type { StageProjection } from "@evoloop/contracts/stage-projection";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
 import { ChevronRight, Plus, RefreshCw } from "lucide-react";
 import { Button, EmptyState, ErrorState, ListRow, LoadingState, Notice, RefreshingIndicator, Select, StatusTag, cn } from "@evoloop/ui";
@@ -22,9 +23,10 @@ import { ContextRailContent } from "../../shared/ui/ContextRail";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { ResponsibleName, RoleName } from "../../shared/ui/RecordName";
 import { ReturnLink } from "../../shared/ui/ReturnLink";
-import { date, href } from "../../shared/ui/shared";
+import { date, href, stageHref as stageAddress } from "../../shared/ui/shared";
 import { StageLabel, StagesSection, useStageLabelOf, useStageProjection, useStageStatusOf } from "../stages";
 import { CreateTaskView } from "./CreateTaskPage";
+import { StageRelations } from "./StageRelations";
 import { DraftsContext, GoalCreateForm, GoalReviseForm, StageAcceptForm, StageCorrectForm, StageProposeForm, StageReviewForm, goalFieldLabels, type Drafts } from "./JourneyForms";
 import { defaultSelection, goalTree, groupByStage, nextChoiceLabel, orderReviews, orderStageTasks, phaseCounts, reviewStanding, stageNextStep } from "./journeyPresentation";
 import { journeyKey, useGoals, useStageWork, useStages } from "./journeyRead";
@@ -104,7 +106,7 @@ export function JourneyPage({ context, active, propose }: { context: MutationCon
   const fetching = goalsRead.isFetching || stagesRead.isFetching || workRead.isFetching;
   const proposeStage = stage?.state === "active" ? stage.id : stages.find(item => item.state === "active")?.id;
   const proposeHref = `${journeyHref}?action=propose${proposeStage ? `&stage=${proposeStage}` : ""}`;
-  const stageHref = (id: string) => `${journeyHref}?stage=${id}`;
+  const stageHref = (id: string) => stageAddress(projectId, id);
   const goalHref = (id: string) => `${journeyHref}?goal=${id}`;
   const tree = goalTree(goals, stages);
   const stageMeta = (item: Stage) => groups ? `${groups.byStage.get(item.id)?.length ?? 0} 项任务${work?.complete ? "" : "（已读部分）"}` : states.work === "failed" ? "任务暂不可读取" : "正在读取任务";
@@ -185,7 +187,7 @@ export function JourneyPage({ context, active, propose }: { context: MutationCon
       {goalsKnown && !stagesKnown && !goal && (states.stages === "failed" ? <p className="text-small text-text-secondary">阶段没有读回，可以在左栏选一个目标阅读；阶段读回前不判断目标下有哪些阶段。</p>
         : <LoadingState lines={4} label="正在读取阶段" />)}
       {goal && <GoalCard context={context} goal={goal} paused={paused} stageCount={stagesKnown ? stages.filter(item => item.goalId === goal.id).length : stagesUnknown} />}
-      {stage && <StageView context={context} stage={stage} tasks={groups ? groups.byStage.get(stage.id) ?? [] : null} workState={states.work} workError={workRead.error}
+      {stage && <StageView context={context} stage={stage} goal={goal} projection={projectionRead.data} projectionState={projectionRead.data ? "ready" : projectionRead.isError ? "failed" : "loading"} tasks={groups ? groups.byStage.get(stage.id) ?? [] : null} workState={states.work} workError={workRead.error}
         workComplete={!!work?.complete} workProblem={work?.problem} onReread={reread} paused={paused} recordsFresh={recordsFresh} proposeHref={proposeHref} />}
       {!stage && goal && <GoalStages goal={goal} stages={stagesKnown ? stages.filter(item => item.goalId === goal.id) : null} unknown={stagesUnknown} stageHref={stageHref} stageMeta={stageMeta} />}
       {goalsKnown && <details className={cn(card, "text-small")} open={!goals.length}>
@@ -260,8 +262,8 @@ function GoalStages({ goal, stages, unknown, stageHref, stageMeta }: { goal: Goa
   </section>;
 }
 
-function StageView({ context, stage, tasks, workState, workError, workComplete, workProblem, onReread, paused, recordsFresh, proposeHref }: {
-  context: MutationContext; stage: Stage; tasks: LeaderWorkTask[] | null; workState: ReadState; workError: unknown; workComplete: boolean; workProblem: string | undefined;
+function StageView({ context, stage, goal, projection, projectionState, tasks, workState, workError, workComplete, workProblem, onReread, paused, recordsFresh, proposeHref }: {
+  context: MutationContext; stage: Stage; goal: Goal | undefined; projection: StageProjection | undefined; projectionState: "loading" | "failed" | "ready"; tasks: LeaderWorkTask[] | null; workState: ReadState; workError: unknown; workComplete: boolean; workProblem: string | undefined;
   onReread(): void; paused: string | null; recordsFresh: boolean; proposeHref: string;
 }) {
   const projectId = context.projectId;
@@ -283,10 +285,12 @@ function StageView({ context, stage, tasks, workState, workError, workComplete, 
         <h2 className="text-heading font-semibold text-foreground [overflow-wrap:anywhere]">{stage.deliverable}</h2>
         <StatusTag tone={status.tone} label={status.label} />
       </div>
+      <StageRelations projectId={projectId} stageId={stage.id} goal={goal} projection={projection} projectionState={projectionState} tasks={shownTasks}
+        workState={workState === "loading" ? "loading" : workState === "failed" ? "failed" : "ready"} />
       <p className="text-small text-text-secondary"><span className="text-muted-foreground">学习问题　</span>{stage.learningQuestion}</p>
       <p className="text-small text-foreground" data-stage-next=""><span className="font-semibold">下一步：</span>{stageNextStep(stage, shownTasks, workComplete)}</p>
     </section>
-    <section aria-label="阶段下的任务" className={card}>
+    <section aria-label="阶段下的任务" id="stage-tasks" className={`${card} scroll-mt-4`}>
       <div className="flex flex-wrap items-center gap-2">
         <h3 className="flex-1 text-label font-semibold text-foreground">阶段下的任务{shownTasks ? ` · ${shownTasks.length}` : ""}</h3>
         {workState === "checking" && <RefreshingIndicator />}

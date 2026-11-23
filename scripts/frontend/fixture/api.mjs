@@ -106,6 +106,11 @@ export function answer(path, params) {
     if (!value) return missing("没有这个知识页");
     return ok(match[2] === "/history" ? spaces.knowledge.history(match[1]) : match[2] === "/graph" ? spaces.knowledge.graph(match[1]) : value);
   }
+  if ((match = /^\/schedules\/([^/]+)\/(dispatch|dispatches)$/.exec(rest))) {
+    if (match[2] === "dispatches") return ok(spaces.schedules.dispatches(match[1]));
+    const policy = spaces.schedules.dispatch(match[1]);
+    return ok(policy); // 200 with null: no policy registered
+  }
   if ((match = /^\/schedules\/([^/]+)\/(revisions|occurrences)$/.exec(rest)))
     return ok(match[2] === "revisions" ? spaces.schedules.revisions(match[1]) : spaces.schedules.occurrences(match[1]));
   if ((match = /^\/evaluations\/([^/]+)$/.exec(rest))) {

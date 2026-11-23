@@ -1,4 +1,5 @@
 // Public entry of the workflow feature. Code outside features/workflow/ imports only from this file.
+export { observationResultLabel } from "./observationPresentation";
 export { formatScheduled, nextTimingLabel, repeatLabel } from "./taskTimingPresentation";
 export { ResidentQueuePanel } from "./ResidentQueuePanel";
 export { readOwnerRoles } from "./journeyRead";

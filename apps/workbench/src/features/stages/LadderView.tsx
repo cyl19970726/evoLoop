@@ -3,7 +3,7 @@
 import * as React from "react";
 import { ChevronRight } from "lucide-react";
 import { errorText } from "../../shared/api";
-import { href } from "../../shared/ui/shared";
+import { stageHref } from "../../shared/ui/shared";
 import { useLadder } from "./stagesRead";
 import { StatusTag } from "@evoloop/ui";
 import { LADDER_UNREADABLE, NOT_REGISTERED, ladderHeading, ladderLines, ladderMarks } from "./stagesPresentation";
@@ -12,10 +12,10 @@ const muted = "text-caption text-muted-foreground";
 
 function Levels({ projectId, levels }: { projectId: string; levels: NonNullable<ReturnType<typeof useLadder>["data"]>["levels"] }) {
   return <ol className="m-0 flex list-none flex-col gap-1.5 p-0 text-small" data-ladder-levels="">
-    {levels.map(level => <li key={level.key} data-ladder-level={level.key} className="flex flex-col gap-0.5">
+    {levels.map(level => <li key={level.key} id={`ladder-level-${level.key}`} data-ladder-level={level.key} className="flex scroll-mt-4 flex-col gap-0.5">
       <p className="m-0 text-foreground"><span className="font-semibold">{level.key}</span> {level.name} · <span className="text-text-secondary">{ladderLines({ available: true, source: { commit: null }, levels: [level] })[0]!.status}</span></p>
       <p className={`m-0 ${muted}`}>{level.evidenceStages.length
-        ? <>供证据的阶段：{level.evidenceStages.map((stage, index) => <React.Fragment key={stage.id}>{index ? "、" : ""}<a className="text-primary hover:underline" href={`${href(projectId, "journey")}?stage=${stage.id}`} title={stage.shortName}><span className="inline-block max-w-[16rem] truncate align-bottom">{stage.shortName}</span></a></React.Fragment>)}</>
+        ? <>供证据的阶段：{level.evidenceStages.map((stage, index) => <React.Fragment key={stage.id}>{index ? "、" : ""}<a className="text-primary hover:underline" href={stageHref(projectId, stage.id)} title={stage.shortName}><span className="inline-block max-w-[16rem] truncate align-bottom">{stage.shortName}</span></a></React.Fragment>)}</>
         : "暂无阶段补这一级"}</p>
     </li>)}
   </ol>;

@@ -107,8 +107,11 @@ export function snapshot(name) {
     roleTasks: [], queue: name === "dev" ? [{ queueId: id(900), entryId: id(901), taskId: tasks.t4.id, taskTitle: tasks.t4.title, position: 1,
       state: "held", holdCode: "dependency", holdReason: null, dependsOn: [tasks.t2.id],
       source: { kind: "queue", id: id(900), revision: null, evidence: "project-record", href: "" } }] : [],
-    results: name === "dev" ? [{ deliveryId: id(501), taskId: tasks.t1.id, taskTitle: tasks.t1.title, technicalResult: "passed",
-      artifactRef: "git:evoloop/workbench", artifactRevision: "4f1c2ab", contentHash: "c".repeat(64), submittedAt: ago(45), latestUse: null,
+    // FIXTURE_RESULT_AGENT moves the one delivery to another agent; FIXTURE_USE (used | failed | notUsed) says how it was used.
+    results: name === (process.env.FIXTURE_RESULT_AGENT ?? "dev") ? [{ deliveryId: id(501), taskId: tasks.t1.id, taskTitle: tasks.t1.title, technicalResult: "passed",
+      artifactRef: "git:evoloop/workbench", artifactRevision: "4f1c2ab", contentHash: "c".repeat(64), submittedAt: ago(45),
+      latestUse: process.env.FIXTURE_USE ? { result: process.env.FIXTURE_USE, observer: "acceptance-claude-agent", observerKind: "agent", createdAt: ago(40),
+        source: { kind: "observation", id: id(502), revision: null, evidence: "project-record", href: "" } } : null,
       source: { kind: "delivery", id: id(501), revision: null, evidence: "project-record", href: "" } }] : [],
     questions: [], activity: [],
     // A Turn reported its model for the agents that ran; 文档整理 and 设计走查 have no report, so the page shows the target.
