@@ -12,7 +12,7 @@ const heading = "text-label font-semibold text-foreground";
 export function MilestonesBlock({ projectId, active }: { projectId: string; active: boolean }) {
   const version = useProjectQuery(projectId, ["overview", "version"], signal => api().version(signal, projectId), { enabled: active, retry: false });
   const v = versionView(version.data ?? null);
-  return <div className="@container" data-overview-top="">
+  return <div className="@container max-md:order-1" data-overview-top="">
     <div className="flex flex-col gap-2">
       <section className={card} aria-label="线上当前版本" data-overview-version="">
         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5"><h2 className={heading}>线上当前版本</h2>

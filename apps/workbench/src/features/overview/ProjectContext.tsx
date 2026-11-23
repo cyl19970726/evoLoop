@@ -119,7 +119,7 @@ export function ProjectContext({ token, projectId, refresh, active }: { token: s
   const goal = stage ? value?.goals.find(item => item.id === stage.goalId) : value?.goals.length === 1 ? value.goals[0] : undefined;
   const attention = value ? selectAttention(value.rows, value.statuses) : null;
   const use = value?.outcomes[0];
-  const card = "flex min-w-0 flex-col gap-2 rounded-xl bg-raised p-4 border border-border compact:p-5";
+  const card = "flex min-w-0 flex-col gap-2 rounded-xl bg-raised px-4 py-3 border border-border compact:p-5";
   const muted = "text-caption text-muted-foreground";
   const pill = "w-fit text-caption font-medium text-text-secondary";
   const problem = "rounded-lg bg-warning-soft px-3 py-2 text-caption text-text-secondary";
@@ -142,7 +142,7 @@ export function ProjectContext({ token, projectId, refresh, active }: { token: s
     className="selected-mark block rounded-lg px-3 py-2 text-small text-text-secondary hover:bg-selected hover:text-foreground focus-visible:shadow-[var(--focus-ring)] outline-none">
     <span className="line-clamp-1" title={item.deliverable}>{nameOf(item)}{dueOf(item) ? ` · ${dueOf(item)}` : ""}</span>
   </a>;
-  return <section data-ui="" className="project-context flex flex-col gap-3" aria-label="目标、当前取舍与使用反馈" aria-busy={reading}>
+  return <section data-ui="" className="project-context flex flex-col gap-2" aria-label="目标、当前取舍与使用反馈" aria-busy={reading}>
     {stages.length > 1 && <ContextRailContent>
       <nav aria-label="正在推进的阶段" className="flex flex-col gap-0.5 pt-2">
         <span className="px-3 pb-1.5 pt-2 text-caption text-muted-foreground">正在推进的阶段 · {stages.length}</span>
@@ -201,6 +201,6 @@ export function ProjectContext({ token, projectId, refresh, active }: { token: s
         </section>
       </div>
     </div>
-    <p className={muted}>{value ? `目标与证据读于 ${date(value.observedAt)}${reading ? " · 正在重新核对" : ""}` : "目标与使用证据尚未读回"}。各来源分别读取，完整依据在原对象中查阅。</p>
+    <p className={cn(muted, "max-md:order-2")}>{value ? `目标与证据读于 ${date(value.observedAt)}${reading ? " · 正在重新核对" : ""}` : "目标与使用证据尚未读回"}。各来源分别读取，完整依据在原对象中查阅。</p>
   </section>;
 }

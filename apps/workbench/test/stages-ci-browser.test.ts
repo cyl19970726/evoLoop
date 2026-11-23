@@ -97,9 +97,11 @@ test("stages: overview block and journey table", { skip }, async t => {
     const read = await page.evaluate(`(() => { const r = s => { const e = document.querySelector(s); return e ? Math.round(e.getBoundingClientRect().bottom) : null; };
       return { stagesBottom: r("[data-overview-stages]"), titleBottom: r(".overview-attention h2"), itemBottom: r(".overview-attention h3 a") }; })()`) as { stagesBottom: number; titleBottom: number; itemBottom: number };
     readings.push({ view: `overview ${width}x${height}, five stages`, scrollOver: flow.over, edge, ...read });
-    // At 390 the five stages (two rows each, none hidden) alone are taller than the screen below the goal: that width is recorded, not asserted, until the requirement is decided.
-    if (width >= 1000) assert.ok(read.titleBottom <= edge, `the 本次优先核对 title is on the first screen at ${width}x${height} (bottom ${read.titleBottom}, edge ${edge})`);
-    if (width >= 1000) assert.ok(read.itemBottom <= edge, `its first item is on the first screen at ${width}x${height} (bottom ${read.itemBottom}, edge ${edge})`);
+    // Both widths are asserted. At 1440 the item also clears the edge by the 64px of the 有 N 个名称未读回 notice (ProjectSummary) that a project with an unreadable name shows above it; at 390 the stage block follows 本次优先核对 so the item is on the first screen.
+    const reserve = width >= 1000 ? 64 + 8 : 0;
+    assert.ok(read.titleBottom <= edge - reserve, `the 本次优先核对 title is on the first screen at ${width}x${height} (bottom ${read.titleBottom}, edge ${edge}, reserve ${reserve})`);
+    assert.ok(read.itemBottom <= edge - reserve, `its first item is on the first screen at ${width}x${height} (bottom ${read.itemBottom}, edge ${edge}, reserve ${reserve})`);
+    if (width < 500) assert.ok(read.stagesBottom > read.itemBottom, "at 390 the stage block follows 本次优先核对, all five rows still drawn");
     if (shots) await page.screenshot({ path: `${shots}/overview-${width}-light.png` });
     // Clicking a row lands on that stage's row in the journey page, opened and in the address.
     await rows.nth(2).click(); await page.locator("[data-stages] [data-stage-row]").first().waitFor();
