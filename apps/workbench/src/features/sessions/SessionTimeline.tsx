@@ -14,7 +14,7 @@ import type { SessionIdentity } from "@evoloop/contracts/session-identity";
 import type { SessionTarget } from "@evoloop/contracts/session-work";
 import {
   AgentAvatar, AgentMessage, Button, CollapsibleRow, Dialog, DialogContent, DialogDescription, DialogTitle, LiveStatusLine, MessageBubble, Notice,
-  TodoList, ToolSummary, TurnSummary, cn,
+  StatusTag, TodoList, ToolSummary, TurnSummary, cn,
 } from "@evoloop/ui";
 import { errorText } from "../../shared/api";
 import { ActionForm, type MutationContext } from "../../shared/ActionForm";
@@ -29,6 +29,8 @@ import { useSessionTimeline } from "./useSessionTimeline";
 import { ActorIdentifiers } from "../../shared/ui/ActorIdentifiers";
 import { settleEndedTools, workspaceReadingGroups } from "./workspaceTimelineModel";
 import { buildRounds, lastReplyId, roundEntries, timelineRows, type Round } from "./timelineRounds";
+import { nodeHref, nodeMark, nodeText, rowsWithNodes } from "./businessNodes";
+import { useBusinessNodes } from "./useBusinessNodes";
 import { useMessageFacts } from "./useMessageFacts";
 import { CoordinationGroup, CoordinationLine } from "./CoordinationLine";
 import { RoundTimes } from "./RoundTimes";
@@ -173,6 +175,17 @@ function RunStrip({ id, turnId, label, at, href, reworkHref = null }: { id: stri
     {at && <time dateTime={at}>{date(at)}</time>}
     {href && <a className="text-primary hover:underline" href={href}>查看任务与指令</a>}
     {reworkHref && <a className="text-primary hover:underline" href={reworkHref} data-rework-link="">查看退回意见</a>}
+  </article>;
+}
+
+/** One business step of a Task this agent accepted: a status mark and a line of small text, at the level of the round's source line (Task 13518ac6). */
+function BusinessNodeLine({ item, href, me }: { item: import("./businessNodes").NodeActivity; href: string; me: string }) {
+  const mark = nodeMark(item.node);
+  return <article className="workspace-business-node flex flex-wrap items-center gap-x-2 gap-y-0.5 self-center text-caption text-text-secondary" data-business-node={item.node.kind} data-node-id={item.id}>
+    <StatusTag tone={mark.tone} label={mark.label} />
+    <a className="min-w-0 text-text-secondary [overflow-wrap:anywhere] hover:text-foreground hover:underline" href={href}>{nodeText(item.node, me)}</a>
+    {item.node.kind !== "accepted" && <span className="min-w-0 text-muted-foreground [overflow-wrap:anywhere]">「{item.node.title}」</span>}
+    {item.occurredAt && <time dateTime={item.occurredAt}>{date(item.occurredAt)}</time>}
   </article>;
 }
 
@@ -363,7 +376,22 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, titleO
   const rounds = useMemo(() => buildRounds(settledEntries, timeline.pending, timeline.turns, { messages: facts.messages, me: context.principal.actorId }),
     [settledEntries, timeline.pending, timeline.turns, facts.messages, context.principal.actorId]);
   const items = useMemo(() => roundEntries(rounds), [rounds]);
-  const rows = useMemo(() => timelineRows(rounds), [rounds]);
+  const roundRows = useMemo(() => timelineRows(rounds), [rounds]);
+  // The business nodes of the Tasks this agent accepted, from the earliest round on the page: reading history further back brings the nodes of its range.
+  const historyLeft = !!(timeline.nextCursor || timeline.messagesCursor);
+  const since = useMemo(() => {
+    if (!historyLeft) return null;
+    const times = rounds.flatMap(round => { const time = Date.parse(round.at ?? round.sentAt ?? ""); return Number.isNaN(time) ? [] : [time]; });
+    return times.length ? new Date(Math.min(...times)).toISOString() : "";
+  }, [rounds, historyLeft]);
+  const nodesEnabled = timeline.loaded && !timeline.denied && since !== "";
+  const nodeRead = useBusinessNodes(context.projectId, snapshot.session.key, since || null, nodesEnabled,
+    `${refresh}:${timeline.turns.length}:${timeline.live?.activeTurnId ?? ""}`);
+  // The landing waits for the nodes too: they add lines between the rounds and move everything under them.
+  const nodesSettled = !nodesEnabled || nodeRead.loaded || nodeRead.error;
+  const rows = useMemo(() => rowsWithNodes(roundRows, timeline.denied ? [] : nodeRead.nodes), [roundRows, nodeRead.nodes, timeline.denied]);
+  const deliveryFacts = useMemo(() => nodeRead.loaded && !nodeRead.error ? nodeRead.nodes.flatMap(item => item.node.kind === "delivered" && item.occurredAt
+    ? [{ taskId: item.node.taskId, deliveryId: item.node.deliveryId, number: item.node.number, label: item.node.artifact.label, at: item.occurredAt }] : []) : null, [nodeRead]);
   const lastReply = useMemo(() => lastReplyId(rounds), [rounds]);
   // Titles of the Tasks the rounds are for: what the page already knows, then one read for the rest (the newest few).
   const unknownTasks = useMemo(() => [...new Set(rounds.flatMap(round => round.taskId && !knownTitleOf?.(round.taskId) && round.taskId !== snapshot.currentWork?.id ? [round.taskId] : []))].slice(-12).sort(), [rounds, knownTitleOf, snapshot.currentWork?.id]);
@@ -376,7 +404,7 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, titleO
   const titleOf = (taskId: string): string | null => snapshot.currentWork?.id === taskId ? snapshot.currentWork.title : knownTitleOf?.(taskId) ?? taskFacts.data?.[taskId] ?? null;
   const taskLink = (taskId: string, runId: string) => `${taskHref(taskId)}${taskHref(taskId).includes("?") ? "&" : "?"}run=${encodeURIComponent(runId)}`;
   const grantNotice = useMemo(() => grantBlockedNotice(items), [items]);
-  const summaries = useMemo(() => turnSummaries(items, timeline.turns, snapshot.results, waitingTurnIds), [items, timeline.turns, snapshot.results, waitingTurnIds]);
+  const summaries = useMemo(() => turnSummaries(items, timeline.turns, snapshot.results, waitingTurnIds, deliveryFacts), [items, timeline.turns, snapshot.results, waitingTurnIds, deliveryFacts]);
   const [inspector, setInspector] = useState<{ entry: WorkspaceEntry } | { messageId: string } | null>(null);
   const inspectorTrigger = useRef<HTMLElement | null>(null);
   const inspect = (selection: NonNullable<typeof inspector>) => {
@@ -423,7 +451,7 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, titleO
     if (!node) return;
     if (restore.current && timeline.loaded && !timeline.moreBusy && items.length) {
       restorePosition(node, restore.current); restore.current = null;
-    } else if (landing.current && timeline.loaded && facts.settled && !timeline.moreBusy) {
+    } else if (landing.current && timeline.loaded && facts.settled && nodesSettled && !timeline.moreBusy) {
       // Wait for the message list too: it adds the replies and folds the Leader's lines, which moves everything.
       if (timeline.error || timeline.denied) landing.current = false;
       else if (items.length) {
@@ -436,7 +464,7 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, titleO
       restorePosition(node, anchor.current);
       anchor.current = null;
     } else if (!anchor.current && follow.current) node.scrollTop = node.scrollHeight;
-  }, [items, timeline.moreBusy, timeline.turns, timeline.loaded, facts.settled]);
+  }, [items, rows.length, timeline.moreBusy, timeline.turns, timeline.loaded, facts.settled, nodesSettled]);
   const more = async (keepLatest = false) => {
     const node = scroll.current;
     if (node) {
@@ -479,7 +507,10 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, titleO
   const mayReadOriginal = timeline.page?.capabilities.originalToolDetail ?? false;
   const summaryFor = (id: string) => {
     const line = summaries.get(id);
-    return line ? <TurnSummary key={`summary:${id}`} produced={line.produced} delivered={line.delivered} next={line.next} /> : null;
+    const delivered = line?.delivery
+      ? <a className="text-primary hover:underline" href={nodeHref({ kind: "delivered", taskId: line.delivery.taskId, deliveryId: line.delivery.deliveryId, title: "", number: line.delivery.number, artifact: { kind: "other", label: "" }, technicalResult: "passed", by: "" }, taskHref)} data-turn-delivery="">{line.delivered}</a>
+      : line?.delivered;
+    return line ? <TurnSummary key={`summary:${id}`} produced={line.produced} delivered={delivered} next={line.next} /> : null;
   };
   const turnOf = (turnId: string | null) => turnId === null ? undefined : timeline.turns.find(turn => turn.id === turnId);
   /** A reply's time: when the source gave one, else when the Turn finished (its last reply) or began, said as such. */
@@ -539,7 +570,8 @@ export function SessionTimeline({ context, snapshot, onApplied, taskHref, titleO
       {(timeline.nextCursor || timeline.messagesCursor) && <Button variant="ghost" size="compact" className="h-auto self-center px-3 py-1 text-caption font-normal text-primary hover:bg-accent hover:text-primary disabled:text-muted-foreground disabled:opacity-100" disabled={timeline.moreBusy || timeline.reconciling} onClick={() => void more()}>{timeline.reconciling ? "正在校准历史…" : timeline.moreBusy ? "正在读取更早内容…" : "加载更早的消息与活动"}</Button>}
       {!timeline.loaded && <p className="flex items-center gap-2 text-small text-muted-foreground" role="status"><LoaderCircle size={16} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />正在读取对话…</p>}
       {timeline.loaded && !timeline.error && !rows.length && !children && !activeTurn && <div className="session-conversation-empty flex flex-col items-center gap-1.5 py-10 text-center text-small text-muted-foreground"><MessageCircle size={25} aria-hidden="true" /><strong className="text-body font-medium text-foreground">{timeline.page?.partial ? "当前来源尚未提供可读的活动" : "从这里开始沟通"}</strong><span>{timeline.page?.partial ? "这不代表原来没有历史记录，可在读取范围中查看原因。" : "发送消息后，这个智能体的回复与工具活动会连续显示在这里。"}</span></div>}
-      {rows.map(row => row.kind === "coordination-group"
+      {rows.map(row => row.kind === "node" ? <BusinessNodeLine key={row.id} item={row.item} href={nodeHref(row.item.node, taskHref)} me={context.principal.actorId} />
+        : row.kind === "coordination-group"
         ? <CoordinationGroup key={row.id} rounds={row.rounds} projectId={context.projectId} titleOf={titleOf} taskHref={taskHref} onMessage={messageId => inspect({ messageId })} />
         : renderRound(row.round))}
       {activeTurn && (live
