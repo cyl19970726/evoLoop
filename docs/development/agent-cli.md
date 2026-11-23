@@ -158,7 +158,7 @@ npm run --silent cli -- operation "$OPERATION_ID" --project "$PROJECT_ID"
 
 **交付要引用 CI 结果时，在本轮前台等完再提交。** Run 就是本轮对话：本轮结束，Run 也就结束了，放到后台的检查（后台命令、稍后再看的轮询）不会回到这个 Run，等不到的结果不能写进交付。用前台阻塞命令等到结果，例如 `gh pr checks PR号 --watch`，五项作业都出结果后再写报告、再 `ordinary.submit`；本机测试同理。
 
-**PR 与交付文字怎么写，合并门禁才能把它们对上。** PR 描述里写完整的 Task 编号（不写缩写）；交付的 `artifactRef` 写 PR 地址，`artifactRevision` 写 40 位头提交；交付文字（`technicalEvidence` 或 `reason`）里写“#PR 号 加头提交前 8 位”，例如 `#352 975b569d`，这个头必须是交付那一刻 PR 的头：推送之后原交付不再对得上，要按新头重新交付。同样的规则在 `.agents/skills/evoloop-workflow/SKILL.md` 的“Delivering a repository PR”一条里，两处写法一致。
+**PR 与交付文字怎么写，合并门禁才能把它们对上。** PR 描述里写完整的 Task 编号（不写缩写）；交付的 `artifactRef` 写 PR 地址，`artifactRevision` 写 40 位头提交；交付文字（`technicalEvidence` 或 `reason`）里写“#PR 号 加头提交前 8 位”，例如 `#352 975b569d`，这个头必须是交付那一刻 PR 的头：推送之后原交付不再对得上，要按新头重新交付。合并脚本为兼容旧交付仍认 8 位的 Task 前缀和至少 7 位的头提交前缀，新写的一律写完整编号和 8 位。同样的规则在 `.agents/skills/evoloop-workflow/SKILL.md` 的“Delivering a repository PR”一条和 [标准](standards.md) 的“PR 与验收怎样对上”里，三处写法一致。
 
 请求结果未知时保留私有 receipt 和原 JSON，用 `receipts show`／`receipts reconcile` 核原 operation；只有原意图满足 CLI 重试条件时才用 `receipts retry`，不换 ID、作者或正文。提交确认只证明意图保存。执行者在本轮回读 submission 与固定报告后结束 Turn，不等待或轮询自己的 Run 终态。封存器与 Lead 在终态后用 `get /api/projects/PROJECT_UUID/ordinary-runs/RUN_UUID/submission` 读取其状态，再核 `deliveryOperationId` 与 Task Delivery；执行者下次接续时也可读回。`sealed` 须匹配同一 Run、提交作者、产物和结果。`blocked`、`unknown`、`rejected` 或无提交时记录原因并交给责任者恢复，不让 Lead 代写或据聊天末句补造结果。封存者与提交作者分别留痕；Delivery 不代消费者签使用，也不自动关闭 Task。
 
