@@ -780,8 +780,8 @@ const taskAttentionPump = new TaskAttentionPump({pool,canWrite:lease.canWrite,no
     hasPermission(p, projectId, "management") && hasDecisionAuthority(p, projectId, "management"))).flatMap(p=>p.projectIds),
   pollIntervalMs:30000,onError:()=>console.error("Task attention evaluation needs source reconciliation.")});
 // Alerts that leave the workbench (Task 5da8b6d9). Read-only on the system it reports on; the outlet is private configuration.
-const opsAlertPump = new OpsAlertPump({ pool, canWrite: lease.canWrite,
-  settings: async () => { const alerts = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).alerts; return alerts ? { enabled: alerts.enabled, pollIntervalMs: alerts.pollIntervalMs, stallMinutes: alerts.stallMinutes, outlet: alerts.outlet as AlertOutletConfig } : null; },
+const opsAlertPump = new OpsAlertPump({ pool, canWrite: lease.canWrite, scheduling: { status: () => scheduling.status(), intervalMs: 30_000 },
+  settings: async () => { const alerts = (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).alerts; return alerts ? { enabled: alerts.enabled, pollIntervalMs: alerts.pollIntervalMs, stallMinutes: alerts.stallMinutes, schedulingStallMinutes: alerts.schedulingStallMinutes, outlet: alerts.outlet as AlertOutletConfig } : null; },
   projects: async () => (await currentIdentity()).filter(p => p.projectIds.some(projectId =>
     hasPermission(p, projectId, "management") && hasDecisionAuthority(p, projectId, "management"))).flatMap(p => p.projectIds),
   onError: () => console.error("Alert evaluation or delivery needs reconciliation; inspect ops_alert."), onGiveUp: line => console.error(line) });

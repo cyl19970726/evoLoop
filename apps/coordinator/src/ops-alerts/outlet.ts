@@ -15,7 +15,7 @@ export interface AlertMessage {
   projectId: string;
   /** Stable for one episode: the same key means the same alert, so a receiver can de-duplicate or thread on it. */
   key: string;
-  kind: "provider_hold" | "stall";
+  kind: "provider_hold" | "stall" | "scheduling_stall";
   event: "opened" | "resolved";
   /** One-paragraph Chinese text, ready to show as a message body. */
   text: string;
