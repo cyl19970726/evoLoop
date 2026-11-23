@@ -13,7 +13,7 @@ const stateTone = { active: "progress", paused: "idle", stopped: "history" } as 
 // One warning marker for both an overdue routine and skips in a row; no row background.
 const Warn = () => <><TriangleAlert size={13} aria-hidden="true" className="mr-1 inline shrink-0 align-[-2px] text-warning" /><span className="sr-only">需要注意：</span></>;
 // Wide: name | last trigger | skips in a row | next | state. Narrow: two lines (name, state / last trigger, skips, next).
-const columns = "desktop:grid-cols-[minmax(0,2.2fr)_minmax(0,3fr)_5rem_minmax(0,1.3fr)_5rem]";
+const columns = "desktop:grid-cols-[minmax(0,2fr)_minmax(0,3.6fr)_7.5rem_minmax(0,1fr)_5rem]";
 
 export interface RoutineHealthView { health: RoutineHealth | null; loading: boolean; error: string | null }
 
@@ -28,8 +28,8 @@ export function RoutineHealthTable({ view, projectId, actorId, onOpen, onRetry, 
     const schedule = item.kind === "schedule";
     const open = () => { if (schedule) onOpen(item.id); };
     const name = schedule
-      ? <Button variant="link" onClick={open} className="min-w-0 max-w-[55%] shrink-0 justify-start truncate text-small font-medium text-foreground desktop:max-w-full">{item.title}</Button>
-      : <a href={timedTaskHref(projectId, item.lastTrigger?.task?.taskId ?? item.rootTaskId ?? "", { rootTaskId: item.rootTaskId ?? "", title: item.title }, actorId)} className="min-w-0 max-w-[55%] shrink-0 truncate text-small font-medium text-foreground underline desktop:max-w-full">{item.title}</a>;
+      ? <Button variant="link" onClick={open} className="min-w-0 max-w-[65%] shrink-0 justify-start truncate text-small font-medium text-foreground desktop:max-w-full"><span className="truncate">{item.title}</span></Button>
+      : <a href={timedTaskHref(projectId, item.lastTrigger?.task?.taskId ?? item.rootTaskId ?? "", { rootTaskId: item.rootTaskId ?? "", title: item.title }, actorId)} className="min-w-0 max-w-[65%] shrink-0 truncate text-small font-medium text-foreground underline desktop:max-w-full">{item.title}</a>;
     const lastCell = overdue
       ? <><span data-cell="overdue" className="block truncate font-medium" title={last.kind === "none" ? overdue : `${overdue}；上次 ${last.full}`}><Warn />{overdue}</span>
         {last.kind !== "none" && <span className={cn(muted, "hidden truncate desktop:block")}>上次 {last.at} · {last.kind === "skipped" ? `跳过：${last.reason}` : last.task.title}</span>}</>
@@ -41,21 +41,25 @@ export function RoutineHealthTable({ view, projectId, actorId, onOpen, onRetry, 
           <span className={cn(muted, "shrink-0")}>{last.queued ? "排队中" : taskStateLabel[last.task.state as keyof typeof taskStateLabel] ?? last.task.state}</span>
         </span>;
     return <li key={`${item.kind}:${item.id}`} data-routine={item.id} data-kind={item.kind} data-attention={needsAttention(item) ? "" : undefined}
-      className={cn("grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 gap-y-1 border-t border-border py-2.5 first:border-t-0", columns, schedule && "cursor-pointer")}
+      className={cn("grid grid-cols-1 items-baseline gap-x-3 gap-y-1 border-t border-border py-2.5 first:border-t-0", columns, schedule && "cursor-pointer")}
       onClick={event => { if (!(event.target as HTMLElement).closest("a,button")) open(); }}>
-      <div className="flex min-w-0 items-baseline gap-2 desktop:flex-col desktop:gap-0">
+      <div className="flex min-w-0 items-baseline justify-between gap-3 desktop:contents">
+      <div className="flex min-w-0 flex-1 items-baseline gap-2 desktop:flex-col desktop:gap-0">
         {name}
-        <span className={cn(muted, "min-w-0 truncate")}>{periodText(item, it => it.rule ? scheduleRuleText(it.rule, it.timezone, now) : "")}</span>
+        <span className={cn(muted, "hidden min-w-0 truncate desktop:block")}>{periodText(item, it => it.rule ? scheduleRuleText(it.rule, it.timezone, now) : "")}</span>
       </div>
-      <div className="flex justify-end desktop:col-start-5 desktop:row-start-1 desktop:justify-start"><StatusTag tone={stateTone[item.state]} label={routineStateLabel[item.state]} /></div>
+      <div className="flex shrink-0 justify-end desktop:col-start-5 desktop:row-start-1 desktop:justify-start"><StatusTag tone={stateTone[item.state]} label={routineStateLabel[item.state]} /></div>
+      </div>
+      <div className="flex min-w-0 items-baseline justify-between gap-3 desktop:contents">
       <div className="min-w-0 text-small text-foreground desktop:col-start-2 desktop:row-start-1">{lastCell}</div>
-      <div className="flex items-baseline justify-end gap-3 desktop:contents">
+      <div className="flex shrink-0 items-baseline justify-end gap-3 desktop:contents">
         <span data-cell="skips" className="text-small tabular-nums text-foreground desktop:col-start-3 desktop:row-start-1 empty:hidden desktop:empty:block">
-          {item.consecutiveSkips > 0 && <>{warnsSkips(item) && <Warn />}连跳 {item.consecutiveSkips}</>}
+          {item.consecutiveSkips > 0 && <>{warnsSkips(item) && <Warn />}连续跳过 {item.consecutiveSkips} 次</>}
           {item.kind === "timed_series" && item.skippedTotal ? <span className={muted}>累计漏过 {item.skippedTotal}</span> : null}
         </span>
         <span data-cell="next" className="text-small text-text-secondary desktop:col-start-4 desktop:row-start-1 desktop:text-foreground" title={item.nextAtUtc ? routineTime(item.nextAtUtc, item.timezone) : undefined}>
           {item.nextAtUtc && <span className={cn(muted, "desktop:hidden")}>下次 </span>}{item.state === "stopped" ? "—" : nextText(item)}</span>
+      </div>
       </div>
     </li>;
   };

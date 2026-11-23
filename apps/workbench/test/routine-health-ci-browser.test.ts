@@ -85,7 +85,7 @@ test("例行健康: one read, what needs a look first, stopped folded, a row ope
     assert.equal(shown.includes(ids.f), false); assert.equal(shown.includes(ids.sample), false);
     const text = await table.innerText();
     assert.match(text, /应在 .+ 触发，没有记录/, `${label}: overdue says so`);
-    assert.match(text, /连跳 2/); assert.match(text, /上一份任务还没结束，按设置跳过这个时刻/);
+    assert.match(text, /连续跳过 2 次/); assert.match(text, /上一份任务还没结束，按设置跳过这个时刻/);
     assert.match(await table.locator(`[data-routine="${ids.e}"]`).innerText(), /还没有触发过/);
     assert.ok(!/跳过/.test(await table.locator(`[data-routine="${ids.e}"]`).innerText()), "never triggered is not skipped");
     assert.doesNotMatch(await table.locator(`[data-routine="${ids.a}"] [data-cell=skips]`).innerText(), /\d/, "no skip number at 0");
