@@ -216,7 +216,7 @@ export interface LeaderWorkDocumentReference {
   taskId: string;
   title: string;
   state: TaskState;
-  relations: Array<"content" | "link" | "basis">;
+  relations: Array<"content" | "link" | "basis" | "delivery" | "origin">;
 }
 
 /** A process Document's lifecycle projection, never a substitute for adopting a fixed revision. */

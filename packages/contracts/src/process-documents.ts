@@ -18,7 +18,7 @@ const source = z.discriminatedUnion("storage", [
 ]);
 export const documentPayloadCommandSchema = z.strictObject({
   ...common, mode: z.enum(["create", "revise"]), title: z.string().trim().min(1).max(240).optional(),
-  expectedVersion: z.number().int().positive().optional(), kind: z.enum(["task", "issue", "spec", "discussion", "report", "organization_review"]).nullable().optional(), organizationReview: organizationReviewSchema.optional(), source,
+  expectedVersion: z.number().int().positive().optional(), kind: z.enum(["task", "issue", "spec", "discussion", "report", "organization_review", "brief"]).nullable().optional(), organizationReview: organizationReviewSchema.optional(), source,
 }).superRefine((command, ctx) => {
   if (command.format === "markdown" && command.mediaType !== "text/markdown" || command.format === "html" && command.mediaType !== "text/html")
     ctx.addIssue({ code: "custom", message: "format and media type disagree", path: ["mediaType"] });

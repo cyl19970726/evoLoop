@@ -25,7 +25,7 @@ type Environment = Record<string, string | undefined>;
 interface IO { stdout(text: string): void; stderr(text: string): void; stdin?(): AsyncIterable<Uint8Array> }
 class UsageError extends Error { readonly code = "INVALID_INPUT"; }
 interface Args { words: string[]; options: Map<string, string | true> }
-const values = new Set(["hub", "code", "workspace-root", "project", "revision", "limit", "cursor", "turn-cursor", "messages-cursor", "source", "turn-id", "after", "wait-ms", "out", "file", "id", "receipt", "attempt", "task", "state", "phase", "signal", "waiting-on-kind", "waiting-on-id", "stage", "knowledge", "loop", "search", "membership", "importance", "role", "session", "discussion", "message", "kind", "hash", "asset-hash", "model", "effort", "color", "mark", "reason", "evidence-ref", "operation", "provider", "project-skills", "personal", "builtin", "add", "remove", "context-task", "context-revision", "reply-to", "message-id","mode","content","input", "wait", "from", "to", "category"]);
+const values = new Set(["hub", "code", "workspace-root", "project", "revision", "limit", "cursor", "turn-cursor", "messages-cursor", "source", "turn-id", "after", "wait-ms", "out", "file", "id", "receipt", "attempt", "task", "state", "phase", "signal", "waiting-on-kind", "waiting-on-id", "stage", "knowledge", "loop", "search", "membership", "importance", "role", "session", "discussion", "message", "kind", "status", "hash", "asset-hash", "model", "effort", "color", "mark", "reason", "evidence-ref", "operation", "provider", "project-skills", "personal", "builtin", "add", "remove", "context-task", "context-revision", "reply-to", "message-id","mode","content","input", "wait", "from", "to", "category"]);
 const longPollTimeout = (configured: number, waitMs: number) => Math.max(configured, Math.min(300_000, waitMs + 5_000));
 const switches = ["yes", "local-only", "help", "history", "graph", "events", "revisions", "result", "trace", "occurrences", "dispatch", "dispatches", "direct-list", "reviews", "handoffs", "bindings", "route", "hosts", "attempts", "recovery", "inputs", "observation", "documents", "closed", "brief", "stdin", "confirm-review-as-management"];
 function uuid(value: string | undefined, label: string): string {
@@ -59,6 +59,7 @@ function mode(args: Args, names: string[]): string | undefined {
   return selected[0];
 }
 const readModes = ["events", "history", "revisions", "result", "trace", "occurrences", "dispatch", "dispatches", "direct-list", "reviews", "handoffs", "bindings", "route", "hosts", "attempts", "recovery", "inputs", "observation"];
+const documentListKinds = ["task", "issue", "spec", "discussion", "report", "organization_review", "brief", "delivery_report", "other_report"];
 const listPaths: Record<string, string> = { tasks: "tasks", documents: "documents", goals: "goals", stages: "stages", discussions: "discussions", roles: "roles", domains: "domains", "role-templates": "role-templates",
   schedules: "schedules", "resident-queues": "resident-queues", evaluations: "evaluations", knowledge: "knowledge/pages", candidates: "knowledge/candidates", runs: "runtime/runs", sessions: "runtime/sessions", impacts: "impacts" };
 const orchestrationLists: Record<string, string> = { loops: "loops", inbox: "inbox", dispatches: "dispatches" };
@@ -81,6 +82,7 @@ const allCommandSchemas = [...commandSchema.options, ...orchestrationCommandSche
 const help = {
   name: "evoLoop Agent CLI", output: "JSON stdout, diagnostic JSON stderr; no automatic POST retries",
   commands: ["id", "identity migrate --input LEGACY_JSON [--out NEW_JSON --confirm-review-as-management] (converts read/write/review; prints a before/after table and refuses legacy review without explicit confirmation)", "session", "project UUID", `list ${[...Object.keys(listPaths), ...Object.keys(orchestrationLists)].join("|")} --project UUID [--loop UUID for inbox/dispatches] [--limit 1..100] [--cursor CURSOR]`,
+    "list documents --project UUID [--kind brief|organization_review|delivery_report|other_report|task|spec|discussion|issue|report] [--status draft|published|archived|active] [--search TITLE_TEXT] [--limit 1..100 --cursor OPAQUE_CURSOR] (read only; newest current revision first)",
     "list discussions --project UUID [--kind allocation|direction|task_collaboration] [--limit 1..100 --cursor UUID] (read only)",
     "allocations --project UUID (--role UUID | --session owned:UUID|external:UUID | --discussion UUID) [--limit 1..50 --cursor OPAQUE] (read only; does not assign a Task or Session)",
     "work list --project UUID [--limit 1..50 --cursor CURSOR --search TEXT --membership current|historical|unclassified|all]",
@@ -589,9 +591,10 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
     catch (error) { throw new UsageError(error instanceof Error ? error.message : "Invalid allocation relation filter."); }
   }
   if (action === "list") {
-    check(args, 2, ["project", "limit", "cursor", "task", "knowledge", "loop", "kind"]);
+    check(args, 2, ["project", "limit", "cursor", "task", "knowledge", "loop", "kind", "search", "status"]);
     const entity = args.words[1]!, orchestrationList = orchestrationLists[entity], suffix = listPaths[entity];
-    if (args.options.has("kind") && entity !== "discussions") throw new UsageError("--kind applies only to list discussions.");
+    if (args.options.has("kind") && entity !== "discussions" && entity !== "documents") throw new UsageError("--kind applies only to list discussions and list documents.");
+    if ((args.options.has("search") || args.options.has("status")) && entity !== "documents") throw new UsageError("--search and --status apply only to list documents.");
     if (orchestrationList) {
       if (args.options.has("task") || args.options.has("knowledge") || args.options.has("limit") || args.options.has("cursor"))
         throw new UsageError("Orchestration list accepts only --project and --loop for inbox/dispatches.");
@@ -601,7 +604,16 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
     }
     if (!suffix || args.options.has("loop")) throw new UsageError("Unknown list or unsupported --loop; use help.");
     const query = new URLSearchParams();
-    if (args.options.has("kind")) {
+    if (entity === "documents") {
+      // Newest current revision first; the server filters, searches titles over every document and counts.
+      const kind = option(args, "kind"), status = option(args, "status"), search = option(args, "search");
+      if (args.options.has("kind") && (!kind || !documentListKinds.includes(kind))) throw new UsageError(`--kind must be one of ${documentListKinds.join(", ")}.`);
+      if (args.options.has("status") && (!status || !["draft", "published", "archived", "active"].includes(status))) throw new UsageError("--status must be draft, published, archived, or active.");
+      if (args.options.has("search") && !search?.trim()) throw new UsageError("--search needs a non-empty title text.");
+      if (kind) query.set("kind", kind);
+      if (status) query.set("status", status);
+      if (search) query.set("search", search.trim());
+    } else if (args.options.has("kind")) {
       const kind = option(args, "kind");
       if (!kind || !["allocation", "direction", "task_collaboration"].includes(kind))
         throw new UsageError("--kind must be allocation, direction, or task_collaboration.");
@@ -611,7 +623,7 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
       if (!["tasks", "documents", "goals", "discussions", "roles", "evaluations", "knowledge", "candidates"].includes(entity)) throw new UsageError("This endpoint is not paginated; omit --limit/--cursor.");
       const limit = Number(option(args, "limit") ?? 50); if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new UsageError("--limit must be 1..100.");
       query.set("limit", String(limit)); const cursor = option(args, "cursor");
-      if (cursor) query.set("cursor", ["knowledge", "candidates"].includes(entity) ? cursor : uuid(cursor, "Cursor"));
+      if (cursor) query.set("cursor", ["knowledge", "candidates", "documents"].includes(entity) ? cursor : uuid(cursor, "Cursor"));
     }
     if (args.options.has("task") || args.options.has("knowledge")) {
       if (entity !== "evaluations") throw new UsageError("--task/--knowledge filters apply only to evaluations.");

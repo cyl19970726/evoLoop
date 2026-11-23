@@ -39,7 +39,7 @@ import type { ScheduleDefinition } from "@evoloop/contracts/scheduling";
 import type { DocumentPayloadRevision, RegisteredDocumentBlob } from "@evoloop/contracts/process-documents";
 import type { GitSourceRef } from "@evoloop/contracts/sources";
 import type {
-  BasisDecision, BasisRetention, BasisSet, Document, DocumentDecision, DocumentRevision, DocumentRevisionMetadata, DocumentStatusFilter, DocumentTaskReference, Impact,
+  BasisDecision, BasisRetention, BasisSet, Document, DocumentDecision, DocumentListKind, DocumentRevision, DocumentRevisionMetadata, DocumentStatusFilter, DocumentTaskReference, Impact,
   Operation, OutboxEvent, Page, Project, Task, TaskDocumentLink, TaskRevision,
 } from "@evoloop/contracts";
 import type { ConsumerObservation, Delivery, Goal, GoalRevision, Stage, StageMilestone, TaskStageLink, StageReview, TaskJudgement, TaskProposal, StageRevision, TaskClosure } from "@evoloop/contracts";
@@ -89,6 +89,19 @@ function decodeDocumentRevisionCursor(value: string, projectId: string, document
     return parsed as unknown as DocumentRevisionCursor;
   } catch {
     throw new DomainError("INVALID_CURSOR", "文档修订游标无效或不属于这份文档；请从第一页重新读取");
+  }
+}
+interface DocumentListCursor { v: 1; t: string; id: string }
+const encodeDocumentListCursor = (value: DocumentListCursor): string => Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+function decodeDocumentListCursor(value: string): DocumentListCursor {
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Record<string, unknown>;
+    if (parsed.v !== 1 || typeof parsed.t !== "string" || typeof parsed.id !== "string" ||
+      !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$/.test(parsed.t) ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(parsed.id)) throw new Error("shape");
+    return parsed as unknown as DocumentListCursor;
+  } catch {
+    throw new DomainError("INVALID_CURSOR", "文档列表游标无效；请从第一页重新读取");
   }
 }
 const documentProjection = `SELECT d.*, t.task_id AS primary_task_id, current_revision.organization_review,
@@ -526,15 +539,34 @@ class PgReader implements Reader {
       [this.projectId, documentId, revisionId]);
     return r.rows[0]?.adopted === true;
   }
-  async listDocuments(limit: number, cursor?: string, kind?: Document["kind"],
-    status?: DocumentStatusFilter): Promise<Page<Document>> {
+  /**
+   * Newest current revision first, ties by document id, paged by a (time, id) cursor: a page boundary never repeats or skips a
+   * document. A document that gains a revision moves to the front on the next read. 交付报告 is a relation (a Delivery names the
+   * document as its artifact, the same two spellings listDocumentTaskReferences reads), not a stored kind.
+   */
+  async listDocuments(limit: number, cursor?: string, kind?: DocumentListKind,
+    status?: DocumentStatusFilter, search?: string): Promise<Page<Document>> {
     pageLimit(limit);
-    const r = await this.client.query(`${documentProjection}
-      WHERE d.project_id=$1 AND ($2::uuid IS NULL OR d.document_id>$2::uuid)
+    const after = cursor === undefined ? null : decodeDocumentListCursor(cursor);
+    const stored = kind === "delivery_report" || kind === "other_report" ? null : kind ?? null;
+    const needle = search?.trim() ? search.trim() : null;
+    const r = await this.client.query(`SELECT x.*, to_char(x.document_updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS sort_key
+      FROM (${documentProjection}
+      WHERE d.project_id=$1
+        AND ($2::timestamptz IS NULL OR (current_revision.created_at, d.document_id) < ($2::timestamptz, $6::uuid))
         AND ($4::text IS NULL OR d.kind=$4::text)
         AND ($5::text IS NULL OR ($5::text='active' AND d.status<>'archived') OR d.status=$5::text)
-      ORDER BY d.document_id LIMIT $3`, [this.projectId, cursor ?? null, limit + 1, kind ?? null, status ?? null]);
-    return page(r.rows, limit, rowDocument, (x) => x.document_id);
+        AND ($7::text IS NULL OR position(lower($7::text) in lower(d.title)) > 0)
+        AND ($8::text IS NULL OR ($8::text='delivery_report') = EXISTS (SELECT 1 FROM delivery dl
+          WHERE dl.project_id=d.project_id AND (starts_with(dl.artifact_ref, 'document:' || d.document_id::text || '@')
+            OR starts_with(dl.artifact_ref, '#/p/' || d.project_id::text || '/documents/' || d.document_id::text || '?revision='))))
+        AND ($8::text IS DISTINCT FROM 'other_report' OR d.kind='report')
+      ORDER BY current_revision.created_at DESC, d.document_id DESC LIMIT $3) x
+      ORDER BY x.document_updated_at DESC, x.document_id DESC`,
+    [this.projectId, after?.t ?? null, limit + 1, stored, status ?? null, after?.id ?? null, needle,
+      kind === "delivery_report" || kind === "other_report" ? kind : null]);
+    return page(r.rows, limit, row => ({ ...rowDocument(row), updatedAt: iso(row.document_updated_at) }),
+      x => encodeDocumentListCursor({ v: 1, t: x.sort_key, id: x.document_id }));
   }
   async getTask(id: string): Promise<Task | null> {
     const r = await this.client.query(`SELECT t.*,dr.body AS content,tr.state AS legacy_state,
