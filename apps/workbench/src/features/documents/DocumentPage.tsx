@@ -22,6 +22,7 @@ import { readingProse, readingSource } from "../../shared/ui/readingProse";
 import { useRereadOnReturn } from "../../shared/ui/rereadOnReturn";
 import { date, documentReturnHref } from "../../shared/ui/shared";
 import { DocumentFacts } from "./DocumentFacts";
+import { DocumentRelations } from "./DocumentRelations";
 import { documentOrigin, taskLinkFrom } from "./taskLinks";
 import { DocumentRail } from "./DocumentRail";
 import { DocumentRevise, canRevise } from "./DocumentRevise";
@@ -115,8 +116,8 @@ function Reader({ context, projectId, detail, revision, body, rail, back, checki
         <span>正在读 <strong className="font-medium text-foreground">{standing.label}</strong></span>
         {numbered && <span data-revision-number="">{numbered}</span>}
         <time dateTime={revision.createdAt} className="text-muted-foreground">{date(revision.createdAt)}</time>
-        {document.primaryTaskId && <a href={taskLinkFrom(projectId, document.primaryTaskId, from)} className="text-primary hover:underline">所属任务 →</a>}
       </p>
+      <DocumentRelations projectId={projectId} detail={detail} from={from} />
       {review && <p className="text-caption text-muted-foreground">观察期间：{new Date(review.observedFrom).toLocaleString("zh-CN", { timeZone: zone })} 至 {new Date(review.observedTo).toLocaleString("zh-CN", { timeZone: zone })} · {zone}
         {review.previous && <> · <a href={href(projectId, "document", review.previous.documentId, review.previous.revisionId)} className="text-primary hover:underline">上一轮复盘</a></>}</p>}
       {standing.historical ? <Notice tone="waiting" className={html ? "py-2" : undefined} title={standing.note}

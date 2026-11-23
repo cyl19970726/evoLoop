@@ -2,6 +2,7 @@
 // (the command's discussion, task, goal, stage or document ID, in that order, else the project ID; app/App.tsx) and the
 // command type; which kind of object the ID names follows from the type. Pure, so the page and its tests agree.
 import type { ReactNode } from "react";
+import { stageHref } from "../../shared/routes";
 
 /** The page title: the same words as 待我处理 in the navigation and the narrow top bar (app/shell/spaces.ts). */
 export const operationsTitle = "结果未知的操作";
@@ -98,7 +99,7 @@ export function originHref(projectId: string, kind: OriginKind, id: string, acto
     case "task": return `${projectPath(projectId)}/tasks/${key}?${back}`;
     case "document": return `${projectPath(projectId)}/documents/${key}?${back}`;
     case "goal": return `${projectPath(projectId)}/journey?goal=${key}&${back}`;
-    case "stage": return `${projectPath(projectId)}/journey?stage=${key}&${back}`;
+    case "stage": return `${stageHref(projectId, id)}&${back}`;
     case "discussion": return `${projectPath(projectId)}/discussions?discussion=${key}&${back}`;
   }
 }

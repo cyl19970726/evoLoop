@@ -4,11 +4,9 @@ import React, { type RefObject } from "react";
 import { ChevronRight } from "lucide-react";
 import type { DocumentDetail, DocumentRevision, DocumentTaskReference } from "@evoloop/contracts";
 import { ListRow, Notice, RefreshingIndicator, StatusTag } from "@evoloop/ui";
-import { api } from "../../shared/api";
 import { revisionLine, revisionNumberText, revisionStateText } from "../../shared/documentRevisions";
 import type { DocumentRevisionList } from "../../shared/useDocumentRevisions";
 import { RevisionListStatus } from "../../shared/ui/RevisionListStatus";
-import { useProjectQuery } from "../../shared/query";
 import { useRevisionOrigin } from "../../shared/useRevisionOrigin";
 import { href } from "../../shared/routes";
 import { ContextPanelContent, useContextPanel } from "../../shared/ui/ContextPanel";
@@ -22,11 +20,12 @@ import {
   lifecycleLabel, lifecycleTone, publicationText, readingStanding, referenceText, relationLabel, taskStateLabel, taskStateTone,
 } from "./documentPresentation";
 import { readProblem } from "./useDocumentList";
+import { referencingTasksId } from "./DocumentRelations";
+import { itemLimit, pageLimit, useReferencingTasks } from "./useReferencingTasks";
 
-const pageLimit = 20, itemLimit = 1000;
 
-function Block({ title, children, defaultOpen = true }: { title: string; children: React.ReactNode; defaultOpen?: boolean }) {
-  return <details open={defaultOpen} className="group border-b border-border py-3 first:pt-0 last:border-b-0">
+function Block({ title, children, defaultOpen = true, id }: { title: string; children: React.ReactNode; defaultOpen?: boolean; id?: string }) {
+  return <details id={id} open={defaultOpen} className="group border-b border-border py-3 first:pt-0 last:border-b-0">
     <summary className="flex cursor-pointer list-none items-center gap-1.5 text-label font-semibold text-foreground outline-none focus-visible:shadow-[var(--focus-ring)] [&::-webkit-details-marker]:hidden">
       <ChevronRight size={14} aria-hidden="true" className="text-muted-foreground transition-transform duration-150 group-open:rotate-90 motion-reduce:transition-none" />{title}
     </summary>
@@ -37,27 +36,6 @@ function Block({ title, children, defaultOpen = true }: { title: string; childre
 /** A labelled fact. */
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return <div className="flex flex-col gap-0.5"><span className="text-caption text-muted-foreground">{label}</span><div className="text-label text-foreground">{children}</div></div>;
-}
-
-/** Every task that references the document, read page by page up to a limit that is said when reached. */
-function useReferencingTasks(projectId: string, documentId: string) {
-  return useProjectQuery(projectId, ["document", documentId, "tasks"], async signal => {
-    let cursor: string | undefined;
-    const seen = new Set<string>();
-    const tasks = new Map<string, DocumentTaskReference>();
-    let pages = 0;
-    do {
-      const page = await api().documentTasks(projectId, documentId, cursor, signal);
-      if (page.items.length > 50 || page.items.some(item => item.projectId !== projectId)) throw new Error("关联任务分页响应无效");
-      for (const task of page.items) tasks.set(task.id, task);
-      pages++;
-      if (page.nextCursor && (page.nextCursor === cursor || seen.has(page.nextCursor))) throw new Error("分页游标重复，关联任务读取未完成");
-      if (page.nextCursor) seen.add(page.nextCursor);
-      cursor = page.nextCursor ?? undefined;
-      if (cursor && (pages >= pageLimit || tasks.size >= itemLimit)) return { tasks: [...tasks.values()], partial: true };
-    } while (cursor);
-    return { tasks: [...tasks.values()], partial: false };
-  });
 }
 
 /**
@@ -127,7 +105,7 @@ export function DocumentFacts({ projectId, detail, revision, body, actorId, revi
         : <p className="text-label text-text-secondary">创建时没有登记来源任务。</p>}
       {document.primaryTaskId && <a href={taskLinkFrom(projectId, document.primaryTaskId, from)} className="mt-2 block text-label text-primary hover:underline">所属任务 →</a>}
     </Block>
-    <Block title="引用它的任务">
+    <Block title="引用它的任务" id={referencingTasksId}>
       {tasks.isFetching && tasks.data && <RefreshingIndicator label="正在核对引用它的任务；下面是上次读到的" className="mb-2" />}
       {tasks.isPending && <p role="status" className="text-label text-muted-foreground">正在读取引用它的任务…</p>}
       {tasks.isError && <Notice tone="error" className="mb-2">引用它的任务这次没有读完整：{readProblem(tasks.error, "引用它的任务")}。{tasks.data ? "下面是上次读到的，不能当作当前完整结果。" : ""}</Notice>}

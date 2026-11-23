@@ -28,6 +28,7 @@ import {
 } from "./presentation";
 import { currentPath, navigate, onNavigate } from "../../shared/navigation";
 import { RoutineHealthTable } from "./RoutineHealthTable";
+import { ScheduleRelations, type HealthRead } from "./ScheduleRelations";
 import { TimedTasksSection } from "./TimedTasksSection";
 import { DispatchFacts, TriggerList, useScheduleDispatch } from "./ScheduleDispatch";
 import { triggerRows } from "./dispatch";
@@ -193,13 +194,14 @@ export function SchedulingPanel({ context, refresh }: { context: MutationContext
       : !selectedSchedule
       ? <RoutineHealthTable view={{ health: healthRead.data ?? null, loading: healthRead.isFetching, error: healthRead.isError ? errorText(healthRead.error) : null }}
         projectId={context.projectId} actorId={context.principal.actorId} onOpen={select} onRetry={() => void healthRead.refetch()} />
-      : <><Button variant="ghost" className="w-fit" onClick={toTable}>返回例行健康</Button><ScheduleCard key={`${readKey}:${selectedSchedule.id}:${selectedSchedule.version}`} definition={selectedSchedule} context={formContext} grants={status?.grants ?? []} names={names} status={status} fresh={fresh} loading={loading} onResult={(result) => setLastResults(previous => ({ ...previous, [`${selectedSchedule.id}:${selectedSchedule.version}`]: result }))} /></>}
+      : <><Button variant="ghost" className="w-fit" onClick={toTable}>返回例行健康</Button><ScheduleCard key={`${readKey}:${selectedSchedule.id}:${selectedSchedule.version}`} definition={selectedSchedule} onHealth={toTable}
+          health={healthRead.data ? { status: "ready", item: healthRead.data.items.find(item => item.kind === "schedule" && item.id === selectedSchedule.id) ?? null } : healthRead.isError ? { status: "failed" } : { status: "loading" }} context={formContext} grants={status?.grants ?? []} names={names} status={status} fresh={fresh} loading={loading} onResult={(result) => setLastResults(previous => ({ ...previous, [`${selectedSchedule.id}:${selectedSchedule.version}`]: result }))} /></>}
     <TimedTasksSection context={context} status={status} focus={focusedTiming} />
     {(showCreate || !selectedSchedule) && <ContextPanelContent><div className="flex flex-col gap-4"><PanelSection title="协调器与授权"><CoordinatorFacts status={status} fresh={fresh} loading={loading} projectId={context.projectId} /></PanelSection></div></ContextPanelContent>}
   </div>;
 }
 
-function ScheduleCard({ definition, context, grants, names, status, fresh, loading, onResult }: { definition: ScheduleDefinition; context: MutationContext; grants: SchedulingGrant[]; names: ScheduleRoleNames; status: SchedulingStatus | null; fresh: boolean; loading: boolean; onResult(result: string): void }) {
+function ScheduleCard({ definition, context, grants, names, status, fresh, loading, onResult, health, onHealth }: { health: HealthRead; onHealth(): void; definition: ScheduleDefinition; context: MutationContext; grants: SchedulingGrant[]; names: ScheduleRoleNames; status: SchedulingStatus | null; fresh: boolean; loading: boolean; onResult(result: string): void }) {
   const historyScope = JSON.stringify([context.token, context.projectId, definition.id, definition.version]);
   const [historySnapshot, setHistorySnapshot] = useState<{ scope: string; revisions: ScheduleRevision[]; occurrences: Occurrence[] } | null>(null);
   const history = historySnapshot?.scope === historyScope ? historySnapshot : null;
@@ -262,7 +264,8 @@ function ScheduleCard({ definition, context, grants, names, status, fresh, loadi
         <span className="rounded-md bg-field px-2.5 py-0.5 text-caption text-muted-foreground" data-kind="schedule">日程定义 · 规则</span>
         <span className={cn("text-caption", stateTone[definition.state])}>{stateLabel[definition.state]} · v{definition.version}</span>
       </div>
-      <p className="flex items-center gap-1.5 text-small text-text-secondary"><CalendarClock size={15} aria-hidden="true" />{ruleText(revision.rule, revision.timezone)} · 责任 <RoleName projectId={context.projectId} roleId={revision.template.owner} /></p>
+      <p className="flex items-center gap-1.5 text-small text-text-secondary"><CalendarClock size={15} aria-hidden="true" />{ruleText(revision.rule, revision.timezone)}</p>
+      <ScheduleRelations projectId={context.projectId} definition={definition} health={health} dispatch={dispatch} taskHref={taskHref} onHealth={onHealth} />
       <p className={muted}>上次已读结果：{last ? `${occurrenceLabel(last)} · 观察于 ${date(last.observedAtUtc)}` : busy ? "正在核对发生记录…" : history ? "尚无发生记录" : "发生记录待核"}</p>
     </header>
     {!fresh && <UiNotice tone="waiting">这是上次读回的定义；当前规则与授权正在核对或读取失败。保存、暂停和恢复暂不可用。</UiNotice>}

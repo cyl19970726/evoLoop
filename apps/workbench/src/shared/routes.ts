@@ -81,6 +81,22 @@ export function installLegacyTeamRedirect(): () => void {
   return onNavigate(() => { redirectLegacyTeam(); });
 }
 
+/** One role on 职责. */
+export function roleHref(projectId: string, roleId: string): string {
+  return `/p/${projectId}/roles?role=${encodeURIComponent(roleId)}`;
+}
+
+/** One agent's column on 统筹安排. */
+export function arrangementAgentHref(projectId: string, sessionKey: string): string {
+  return `/p/${projectId}/arrangement#${arrangementAgentId(sessionKey)}`;
+}
+export const arrangementAgentId = (sessionKey: string) => `agent-${encodeURIComponent(sessionKey)}`;
+
+/** One stage on 目标与阶段: the address every page that names a stage links to. */
+export function stageHref(projectId: string, stageId: string): string {
+  return `/p/${projectId}/journey?stage=${encodeURIComponent(stageId)}`;
+}
+
 export function href(projectId: string, section: Section, id?: string, revision?: string): string {
   const part = section === "task" ? `tasks/${id}` : section === "create-task" ? "tasks/new" : section === "document" ? `documents/${id}` : section === "evaluations" && id ? `evaluations/${id}` : section === "go" && id ? `go/${encodeURIComponent(id)}` : section;
   return `/p/${projectId}/${part}${revision ? `?revision=${encodeURIComponent(revision)}` : ""}`;

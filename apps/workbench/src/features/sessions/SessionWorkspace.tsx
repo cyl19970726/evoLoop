@@ -49,6 +49,7 @@ import { observedRunTaskLink } from "./taskRunLink";
 import { sessionTaskReturn, sourceParams } from "./sessionReturn";
 import { ReturnLink } from "../../shared/ui/ReturnLink";
 import { SessionTimeline, clearSessionTimelineViews } from "./SessionTimeline";
+import { SessionRelations } from "./SessionRelations";
 import { SourceLimitations } from "./SourceLimitations";
 import { clearSessionTimelineReads } from "./useSessionTimeline";
 
@@ -567,6 +568,11 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
           () => { panel?.setOpen(true); setCloseOpen(value => !value); }, { "aria-expanded": closeOpen, "aria-controls": "session-close-panel" })}
       </div>
     </header>
+    <div className="mb-2 shrink-0 px-1.5 compact:text-center" data-session-relations="">
+      <SessionRelations projectId={projectId} sessionKey={session.key} roles={session.roles} now={{ task: now.task, badge: now.badge }} held={!!held} taskHref={taskHref}
+        stage={!now.task || now.task.id !== currentTaskId ? { status: "none" } : timing.data ? { status: "ready", leader: timing.data } : timing.isError ? { status: "failed" } : { status: "loading" }}
+        line={line} result={recentResult} resultsRead={snapshotRead.isError && !snapshot ? "failed" : "ready"} />
+    </div>
     <div className="flex shrink-0 flex-col gap-2 empty:hidden">
       {snapshotRead.isError && <Notice tone="error">{errorText(snapshotRead.error)}。下面是上次读回，当前待核对；请重新读取。</Notice>}
       {changesError && <Notice tone="error">{changesError}。下面是上次读回，当前待核对。</Notice>}

@@ -14,6 +14,16 @@ import { date } from "../../shared/ui/shared";
 import { originRunSummary } from "./documentPresentation";
 import { readProblem } from "./useDocumentList";
 
+/** The Run the document names as its source, read back and kept only when it belongs to the registered fixed task revision. The right column and the relation bar share this one read. */
+export function useOriginRun(projectId: string, documentId: string, origin: Origin | null | undefined) {
+  return useProjectQuery(projectId, ["document", documentId, "origin-run", origin?.runId, origin?.taskId, origin?.taskRevisionId], async signal => {
+    const value = await request<RuntimeRunRecord>("", `/api/projects/${encodeURIComponent(projectId)}/runtime/runs/${encodeURIComponent(origin!.runId!)}`, 15000, { signal });
+    const verified = verifiedOriginRun(projectId, origin!, value);
+    if (!verified) throw new Error("读回的运行与登记的固定任务修订不一致");
+    return verified;
+  }, { enabled: !!origin?.runId });
+}
+
 export function DocumentOrigin({ projectId, documentId, origin, from }: { projectId: string; documentId: string; origin: Origin; from?: ReturnFrom | null }) {
   const task = useProjectQuery(projectId, ["document", documentId, "origin-task", origin.taskId, origin.taskRevisionId], async () => {
     const value = await api().taskRevision(projectId, origin.taskId, origin.taskRevisionId);
@@ -21,12 +31,7 @@ export function DocumentOrigin({ projectId, documentId, origin, from }: { projec
     if (!verified) throw new Error("读回的任务与登记的固定修订不一致");
     return verified;
   });
-  const run = useProjectQuery(projectId, ["document", documentId, "origin-run", origin.runId, origin.taskId, origin.taskRevisionId], async signal => {
-    const value = await request<RuntimeRunRecord>("", `/api/projects/${encodeURIComponent(projectId)}/runtime/runs/${encodeURIComponent(origin.runId!)}`, 15000, { signal });
-    const verified = verifiedOriginRun(projectId, origin, value);
-    if (!verified) throw new Error("读回的运行与登记的固定任务修订不一致");
-    return verified;
-  }, { enabled: !!origin.runId });
+  const run = useOriginRun(projectId, documentId, origin);
   const runData = run.data;
   const staleRun = !!runData && (run.isFetching || run.isError);
   return <div className="flex flex-col gap-2 text-label text-text-secondary">

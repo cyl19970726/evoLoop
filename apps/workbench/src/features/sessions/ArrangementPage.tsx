@@ -3,7 +3,7 @@
 // prove. The Leader's own overview document has no marker yet, so the page says so instead of guessing one.
 // A read that is still running or failed is never shown as "free", "no conflict" or 0; a failed reread that keeps
 // the previous answer says it is the previous answer.
-import { Suspense, useContext, useEffect, useState, type ReactNode } from "react";
+import { Suspense, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { CalendarClock, MessageSquare, RefreshCw, TriangleAlert } from "lucide-react";
 import { AgentAvatar, Button, EmptyState, ErrorState, LoadingState, Notice, cn } from "@evoloop/ui";
 import type { LeaderWorkPage, LeaderWorkTask } from "@evoloop/contracts/work-index";
@@ -15,6 +15,7 @@ import { queueClient } from "../../shared/queueClient";
 import { appendLeaderWorkPage } from "../../shared/leaderWorkLoad";
 import { withReturn, type ReturnFrom } from "../../shared/returnLink";
 import { useProjectQuery } from "../../shared/query";
+import { arrangementAgentId } from "../../shared/routes";
 import { date, href } from "../../shared/ui/shared";
 import { ContextPanelContent, useContextPanel } from "../../shared/ui/ContextPanel";
 import { readSessionDirectoryPages } from "./useSessionDirectoryGroup";
@@ -107,7 +108,17 @@ function BoardRow({ projectId, row, claimed, stale, tasks, queues, from }: {
   const nothingText = tasks === "loading" ? "正在读取任务" : tasks === "failed" ? "任务未读取"
     : queues === "ready" || queues === "stale" ? "没有在做、分派或排队的工作"
       : `没有在做或分派的工作；排队${queues === "loading" ? "正在读取" : "未读取"}`;
-  return <li className="arrangement-row grid grid-cols-1 gap-3 border-t border-border py-3 first:border-t-0 @2xl:grid-cols-[minmax(200px,1.1fr)_repeat(3,minmax(0,1fr))] @2xl:gap-4">
+  // A link from an agent's relation bar lands on this row: it scrolls into view and is marked while the address names it.
+  const rowId = arrangementAgentId(session.key);
+  const ref = useRef<HTMLLIElement | null>(null);
+  const [targeted, setTargeted] = useState(() => window.location.hash === `#${rowId}`);
+  useEffect(() => {
+    const check = () => { const hit = window.location.hash === `#${rowId}`; setTargeted(hit); if (hit) ref.current?.scrollIntoView({ block: "center" }); };
+    check();
+    window.addEventListener("hashchange", check);
+    return () => window.removeEventListener("hashchange", check);
+  }, [rowId]);
+  return <li id={rowId} ref={ref} data-targeted={targeted ? "" : undefined} className="arrangement-row data-[targeted]:bg-selected grid grid-cols-1 gap-3 border-t border-border py-3 first:border-t-0 @2xl:grid-cols-[minmax(200px,1.1fr)_repeat(3,minmax(0,1fr))] @2xl:gap-4">
     <div className="flex min-w-0 items-start gap-2.5">
       <AgentAvatar seed={session.key} roleSeed={session.roles[0]?.id ?? session.title} size={34} />
       <div className="min-w-0">

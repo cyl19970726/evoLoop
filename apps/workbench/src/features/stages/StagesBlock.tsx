@@ -1,7 +1,7 @@
 // The overview's 阶段 block (docs/frontend/milestones-design.md §4): this project's own stages, one row each, replacing the roadmap-phase block. Rows link into
 // 目标与阶段 at that stage; the verification ladder is one folded line at the right of the title; below the table, how many open Tasks have no stage.
 import { errorText } from "../../shared/api";
-import { href } from "../../shared/ui/shared";
+import { href, stageHref } from "../../shared/ui/shared";
 import { useStageProjection } from "./stagesRead";
 import { LadderRow } from "./LadderView";
 import { StageTable } from "./StageTable";
@@ -26,7 +26,7 @@ export function StagesBlock({ projectId, active }: { projectId: string; active: 
     {projection.isError && !data && <p className={muted} role="status">阶段这次没有读到（{errorText(projection.error)}）。读不到不代表没有阶段。</p>}
     {rows && !rows.main.length && <p className="m-0 text-small text-text-secondary" data-no-stages="">{NO_STAGES}。<a className="text-primary hover:underline" href={journey}>到目标与阶段提出阶段</a></p>}
     {data && rows && rows.main.length > 0 && <>
-      <StageTable projection={data} stages={rows.main} label="阶段" hrefFor={stage => `${journey}?stage=${stage.id}`} />
+      <StageTable projection={data} stages={rows.main} label="阶段" hrefFor={stage => stageHref(projectId, stage.id)} />
     </>}
   </section>;
 }
