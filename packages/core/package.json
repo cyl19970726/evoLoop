@@ -21,7 +21,8 @@
     "./usage": "./dist/usage.js",
     "./context-budget": "./dist/context-budget.js",
     "./session-observation": "./dist/session-observation/index.js",
-    "./allocation-relations": "./dist/allocation-relations/index.js"
+    "./allocation-relations": "./dist/allocation-relations/index.js",
+    "./resubmission-guard": "./dist/resubmission-guard.js"
   },
   "scripts": {
     "test": "node --import tsx --test test/*.test.ts"
