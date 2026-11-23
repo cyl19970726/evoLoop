@@ -154,8 +154,8 @@ test("migration 118 over existing data: old tables unchanged, ladder keys and ow
   await f.pool.query(readFileSync(new URL("../../packages/adapter-postgres/rollback/118_drop_stage_milestone_task_stage.sql", import.meta.url), "utf8"));
   const gone = await f.pool.query("SELECT count(*) AS n FROM information_schema.tables WHERE table_schema=$1 AND table_name IN ('stage_milestone','stage_milestone_history','task_stage','task_stage_history')", [f.schema]);
   assert.equal(Number(gone.rows[0].n), 0);
-  const links = await f.workflow.listStagePhaseLinks(f.decider, f.projectId);
-  assert.deepEqual(links.map(link => link.phaseKey), ["M0.5", "M1"], "the old phase-key milestone read still works");
+  const links = await f.pool.query("SELECT phase_key FROM stage_phase_key WHERE project_id=$1 ORDER BY phase_key", [f.projectId]);
+  assert.deepEqual(links.rows.map(row => row.phase_key), ["M0.5", "M1"], "the old phase-key rows still read");
   assert.equal((await f.workflow.getStage(f.decider, f.projectId, a)).state, "reviewed");
   const finalAfter = await Promise.all(watched.map(table => f.pool.query(`SELECT md5(string_agg(t::text, '|' ORDER BY t::text)) AS h, count(*) AS n FROM ${table} t`).then(r => `${r.rows[0].n}:${r.rows[0].h}`)));
   assert.deepEqual(finalAfter, before, "the old tables are unchanged after the rollback too");

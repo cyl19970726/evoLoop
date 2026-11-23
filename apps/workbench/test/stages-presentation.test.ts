@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { StageProjection, StageProjectionStage } from "@evoloop/contracts/stage-projection";
-import { dueCell, groupTasks, isCurrent, isUnowned, ladderSummary, overdueNote, stageName, stageRows, taskCell, unownedLine } from "../src/features/stages/stagesPresentation.ts";
+import { dueCell, groupTasks, isCurrent, isUnowned, ladderHeading, ladderMarks, stageLabel, overdueNote, stageName, stageRows, taskCell, unownedLine } from "../src/features/stages/stagesPresentation.ts";
 
 const zero = { inProgress: 0, blocked: 0, notStarted: 0, closed: 0, total: 0 };
 const stage = (id: string, extra: Partial<StageProjectionStage> = {}) => ({ id, shortName: null, dueOn: null, inMainTable: true, tasks: zero, ...extra }) as unknown as StageProjectionStage;
@@ -54,7 +54,17 @@ test("only open Tasks the service marks unassigned go in the unassigned area", (
   assert.equal(isUnowned({ taskState: "todo", stageOwnership: { state: "none", reason: "x" } } as never), false);
   assert.equal(isUnowned({ taskState: "todo" } as never), false);
 });
-test("the ladder summary lists a level with no recorded status as 未登记", () => {
-  const text = ladderSummary({ available: true, source: { commit: "a".repeat(40) }, levels: [{ key: "M0", name: "最小闭环", status: null, evidenceStages: [] }] } as never);
-  assert.equal(text, "M0 未登记");
+test("the folded ladder row names each level by its number; only a level with no status carries a mark (未登记)", () => {
+  const level = (key: string, status: string | null) => ({ key, name: key, status, evidenceStages: [] });
+  const marks = ladderMarks({ available: true, source: { commit: null }, levels: [level("M0", "旧机上任务、交付、验收各有记录，共三十个字以上的整句说明"), level("M0.5", null), level("M1", "10-30 以来每天都有一份验收结论，已连续多日"), level("M2", "进行中"), level("M3", "未开始，没有证据"), level("M4", "常驻主机已运行，三十个字以上的整句说明")] } as never);
+  assert.deepEqual(marks.map(mark => [mark.key, mark.registered]), [["M0", true], ["M0.5", false], ["M1", true], ["M2", true], ["M3", true], ["M4", true]]);
+  assert.equal(ladderHeading({ available: true, source: { commit: null }, levels: marks.map(mark => ({ key: mark.key })) } as never), "验证阶梯 · 6 级");
+});
+test("a stage without a short name keeps the first line of its text, without the 名称： label", () => {
+  assert.equal(stageName({ id: "12345678-aaaa", shortName: null }, "名称：旧阶段的名字\n交付：x"), "旧阶段的名字");
+  assert.equal(stageName({ id: "12345678-aaaa", shortName: null }, "没有前缀的第一行\n第二行"), "没有前缀的第一行");
+  assert.equal(stageName({ id: "12345678-aaaa", shortName: null }, "名称: 英文冒号"), "英文冒号");
+  assert.deepEqual(stageLabel({ id: "a", shortName: "团队试用", dueOn: "2026-12-09" }, { id: "a", deliverable: "x" }), { name: "团队试用", due: { text: "12-09", title: "2026-12-09" } });
+  assert.equal(stageLabel(undefined, { id: "a", deliverable: "名称：旧\n" }).due, null, "an unread projection says nothing about the date");
+  assert.equal(stageLabel({ id: "a", shortName: null, dueOn: null }, { id: "a", deliverable: "旧" }).due?.text, "未定");
 });

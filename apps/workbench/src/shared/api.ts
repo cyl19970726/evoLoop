@@ -187,7 +187,6 @@ export function api(token = "", timeoutMs = 15000) {
     stageProjection: (p: string, signal?: AbortSignal, timeZone?: string) => call<import("@evoloop/contracts/stage-projection").StageProjection>(`${projectPath(p)}/stages/milestones${timeZone ? `?timeZone=${encodeURIComponent(timeZone)}` : ""}`, { signal }),
     /** The project's verification ladder (M0 …): `available:false` is "this project has none"; an unreadable repository is the error LADDER_UNREADABLE. */
     ladder: (p: string, signal?: AbortSignal) => call<import("@evoloop/contracts/milestones").LadderView>(`${projectPath(p)}/ladder`, { signal }),
-    milestones: (p: string, signal?: AbortSignal) => call<import("@evoloop/contracts/milestones").MilestonesView>(`${projectPath(p)}/milestones`, { signal }),
     stageReviews: (p: string, id: string) => call<StageReview[]>(`${projectPath(p)}/stages/${key(id)}/reviews`),
     discussions: (p: string, cursor?: string, kind?: DiscussionRecord["kind"]) => call<Page<DiscussionRecord>>(`${projectPath(p)}/discussions?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}${kind ? `&kind=${key(kind)}` : ""}`),
     discussion: (p: string, id: string) => call<DiscussionRecord>(`${projectPath(p)}/discussions/${key(id)}`),

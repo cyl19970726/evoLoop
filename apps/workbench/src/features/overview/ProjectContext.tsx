@@ -15,7 +15,7 @@ import { readOutcome, type ProjectOutcome } from "./contextPresentation";
 import { VersionFold } from "./MilestonesBlock";
 import { FoldLine, OrganisationLine, OutcomeBlock, PriorityBlock, UseBlock } from "./OverviewTop";
 import { feedbackCandidates, longestStall, organisationText, priorityLimit, stalledTasks } from "./overviewFirstScreen";
-import { dueCell, StagesBlock, stageName, useStageProjection } from "../stages";
+import { StageLabel, StagesBlock, useStageLabelOf, useStageProjection } from "../stages";
 import { readOverviewParam, writeOverviewParam } from "./overviewAddress";
 
 interface ContextSnapshot {
@@ -128,18 +128,17 @@ export function ProjectContext({ token, projectId, actorId, refresh, active, flo
   const choose = (id: string) => { setSelection({ scope, id }); if (active) writeOverviewParam("stage", id); };
   // A stage is named by its short name and due date (the stage projection); one without a short name keeps the first line of its text.
   const projection = useStageProjection(projectId, active);
-  const projected = new Map((projection.data?.stages ?? []).map(entry => [entry.id, entry]));
-  const nameOf = (item: Stage) => { const known = projected.get(item.id); return stageName(known ?? { id: item.id, shortName: null }, item.deliverable); };
-  const dueOf = (item: Stage) => { const known = projected.get(item.id); return known?.dueOn ? dueCell(known.dueOn).text : null; };
+  const labelOf = useStageLabelOf(projectId, active);
+  const nameOf = (item: Stage) => labelOf(item).name;
   const stageButton = (item: Stage) => <Button variant="row" key={item.id} aria-pressed={stage?.id === item.id} onClick={() => choose(item.id)}
     className="rounded-lg px-3 py-2 text-small aria-pressed:bg-accent aria-pressed:font-semibold aria-pressed:text-foreground">
-    <span className="line-clamp-2" title={item.deliverable}>{nameOf(item)}{dueOf(item) ? ` · ${dueOf(item)}` : ""}</span>
+    <span title={item.deliverable} className="block min-w-0"><StageLabel {...labelOf(item)} /></span>
   </Button>;
   // The left list: one line per stage, the stage the service calls 当前 drawn as a selected item; a click lands on that stage's row in 目标与阶段.
   const railLink = (item: Stage) => <a key={item.id} href={`${href(projectId, "journey")}?stage=${item.id}`} data-rail-stage={item.id}
     aria-current={projection.data?.currentStageId === item.id ? "true" : undefined}
     className="selected-mark block rounded-lg px-3 py-2 text-small text-text-secondary hover:bg-selected hover:text-foreground focus-visible:shadow-[var(--focus-ring)] outline-none">
-    <span className="line-clamp-1" title={item.deliverable}>{nameOf(item)}{dueOf(item) ? ` · ${dueOf(item)}` : ""}</span>
+    <span title={item.deliverable} className="block min-w-0"><StageLabel {...labelOf(item)} /></span>
   </a>;
   const now = Date.now();
   const stalled = value ? stalledTasks(value.rows, now) : [];
