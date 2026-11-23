@@ -34,13 +34,13 @@ export function clampWidth(value: number): number {
   return Math.min(panelWidth.max, Math.max(panelWidth.min, Math.round(value)));
 }
 
-/** Per-space memory: open/closed and width. Wide screens start open, narrower ones closed. */
+/** Per-space memory: open/closed and width. Wide screens start open, narrower ones closed; the overview starts closed at every width (its first screen is the decision, 总览 docs), and a reader's own choice is kept as everywhere. */
 export function readPanelState(store: Store | null, space: Space, wide: boolean): PanelState {
   try {
     const saved = JSON.parse(store?.getItem(`evoloop:panel:${space}`) ?? "null") as Partial<PanelState> | null;
     if (saved && typeof saved.open === "boolean" && typeof saved.width === "number") return { open: saved.open, width: clampWidth(saved.width) };
   } catch { /* fall back to defaults */ }
-  return { open: wide, width: panelWidth.initial };
+  return { open: wide && space !== "overview", width: panelWidth.initial };
 }
 
 /** Opening an object: an existing tab is reused, a new one goes first, and at most five stay (oldest dropped). */
