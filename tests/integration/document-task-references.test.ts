@@ -57,7 +57,7 @@ test("document reverse Task lookup returns current exact references in UUID page
   const ids: string[] = [];
   for (let index = 0; index < 51; index++) {
     const taskId = randomUUID(); ids.push(taskId);
-    await send({ type: "task.create", taskId, title: `Reference ${index}`, content: `task body ${index}`,
+    await send({ type: "task.create", taskId, title: `Reference ${index}`, content: `task body ${index}\n关闭后下一步：无`,
       acceptance: "Current reference appears", owner: ownerRoleId, documentIds: [sourceDocumentId] });
     if (index === 0) {
       await send({ type: "task.start", taskId, expectedVersion: 1,
@@ -67,7 +67,7 @@ test("document reverse Task lookup returns current exact references in UUID page
 
   const historyOnlyBasisTaskId = randomUUID();
   ids.push(historyOnlyBasisTaskId);
-  await send({ type: "task.create", taskId: historyOnlyBasisTaskId, title: "Historical basis only", content: "history body",
+  await send({ type: "task.create", taskId: historyOnlyBasisTaskId, title: "Historical basis only", content: "history body\n关闭后下一步：无",
     acceptance: "Historical basis is excluded", owner: ownerRoleId, documentIds: [sourceDocumentId] });
   await send({ type: "task.start", taskId: historyOnlyBasisTaskId, expectedVersion: 1,
     basis: [{ documentId: sourceDocumentId, revisionId: source.revisionId }], reason: "Set historical basis" });
@@ -78,7 +78,7 @@ test("document reverse Task lookup returns current exact references in UUID page
     basis: [], reason: "Drop old source from current revision" });
 
   const contentTaskId = randomUUID();
-  await send({ type: "task.create", taskId: contentTaskId, title: "Primary content match", content: "unique private task body",
+  await send({ type: "task.create", taskId: contentTaskId, title: "Primary content match", content: "unique private task body\n关闭后下一步：无",
     acceptance: "Primary document is discoverable", owner: ownerRoleId });
   const contentTask = await service.getTask(owner, projectId, contentTaskId);
   const endpoint = (documentId: string) => `/api/projects/${projectId}/documents/${documentId}/tasks`;

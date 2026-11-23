@@ -147,7 +147,7 @@ test("real CLI Leader writes connect to the HTTP round, recovery, authorization 
 
   for (const [taskId, title] of [[prerequisiteTaskId, "Accepted prerequisite"], [dependentTaskId, "Dependent delivery"]] as const) {
     const created = await command(workerToken, {
-      projectId, operationId: randomUUID(), type: "task.create", taskId, title, content: `# ${title}`,
+      projectId, operationId: randomUUID(), type: "task.create", taskId, title, content: `# ${title}\n关闭后下一步：无`,
       acceptance: "Acceptance owner uses the fixed result", owner: roleId,
       acceptanceMode: "independent_agent", consumer: consumer.actorId, useRequired: true,
     });
@@ -288,7 +288,7 @@ test("real CLI Leader writes connect to the HTTP round, recovery, authorization 
   await trusted.beginDispatch(projectId, prerequisiteRunId);
   await trusted.bindTurn(projectId, prerequisiteRunId, { id: `turn-${prerequisiteRunId}` },
     { kind: "startReply", operationId: runBefore.operationId });
-  const reportId=randomUUID(), reportBody='Fixed leader round artifact';
+  const reportId=randomUUID(), reportBody='Fixed leader round artifact\n下次同类工作先要知道的事：无';
   const report=await workflow.execute(lead,{type:'document.create',projectId,operationId:randomUUID(),
     documentId:reportId,title:'Fixed leader round artifact',body:reportBody,kind:'report'});
   assert.equal(report.status,'applied',JSON.stringify(report));
@@ -303,6 +303,15 @@ test("real CLI Leader writes connect to the HTTP round, recovery, authorization 
     runId: prerequisiteRunId, taskId: prerequisiteTaskId, sessionId,
     taskRevisionId: runBefore.taskRevisionId, runInputHash: runBefore.inputHash, deliveryIntent,
   };
+  // Task 3797cbdd: a report original without the “下次同类工作先要知道的事” line is refused on the ordinary submission route; nothing is recorded.
+  const bareBody='Report without the required line', bareId=randomUUID();
+  const bare=await workflow.execute(lead,{type:'document.create',projectId,operationId:randomUUID(),documentId:bareId,title:'Bare report',body:bareBody,kind:'report'});
+  assert.equal(bare.status,'applied',JSON.stringify(bare));
+  const noLine=await app.inject({method:'POST',url:`/api/projects/${projectId}/ordinary-runs/submissions`,
+    headers:{authorization:`Bearer ${workerToken}`},payload:{...submission,deliveryIntent:{...deliveryIntent,
+      artifactRef:`document:${bareId}@${bare.revisionId!}`,artifactRevision:bare.revisionId!,contentHash:hash(bareBody)}}});
+  assert.equal(noLine.statusCode,409,noLine.body);
+  assert.equal(noLine.json().code,'REPORT_NEXT_TIME_LINE_REQUIRED');
   const missingRevision=await app.inject({method:'POST',url:`/api/projects/${projectId}/ordinary-runs/submissions`,
     headers:{authorization:`Bearer ${workerToken}`},payload:{...submission,deliveryIntent:{...deliveryIntent,artifactRef:`document:${reportId}`}}});
   assert.equal(missingRevision.statusCode,409,missingRevision.body);
