@@ -18,7 +18,8 @@ import { waitingText, workItemNextStep } from "../../shared/workPresentation";
 import { href } from "../../shared/ui/shared";
 import { sessionHref } from "../sessions";
 import { PhaseCounts, ReconciliationDetails, useAgentNames, type AgentNameState } from "./TaskReconciliation";
-import { emptyListText, TaskListNotices } from "./TaskRail";
+import { emptyListText, ListFooter, TaskListNotices } from "./TaskRail";
+import { stateFilterLabels } from "./taskListModel";
 import { assignmentSessionKey, assignmentStatusLabel, isClosedTask, matchingProjection, type TaskListView } from "./taskExperience";
 import { legacyDecisionLabel, taskNextStep } from "./taskListPresentation";
 import { tableOrigin } from "./taskOrigin";
@@ -56,8 +57,8 @@ async function readAttention(projectId: string) {
   return { items, complete: !cursor };
 }
 
-export function TaskTable({ projectId, list, view, selectedId, onSelect, linkFor, stacked = false, actorId }: {
-  projectId: string; list: TaskListRead; view: TaskListView; selectedId: string | null; onSelect(taskId: string): void;
+export function TaskTable({ projectId, list, view, selectedId, onSelect, onPhase, linkFor, stacked = false, actorId }: {
+  projectId: string; list: TaskListRead; view: TaskListView; selectedId: string | null; onSelect(taskId: string): void; onPhase(phase: string): void;
   linkFor(taskId: string, tab?: string): string; stacked?: boolean; actorId?: string;
 }) {
   const [chosenColumns, setColumns] = React.useState(readColumns);
@@ -95,7 +96,8 @@ export function TaskTable({ projectId, list, view, selectedId, onSelect, linkFor
   ];
   const roleNames = Object.fromEntries(Object.entries(ownerNames).map(([id, value]) => [id, value.title]));
   return <div className="flex flex-col gap-4">
-    <PhaseCounts counts={list.index.first?.counts} />
+    <PhaseCounts counts={list.index.first?.counts} selected={view.phase} onSelect={onPhase} />
+    {view.filter !== "open" && <p className="-mt-2 text-caption text-muted-foreground" data-count-scope="">上面的数字是全部未关闭工作的各阶段计数，点一个会回到“未完成”并只看这个阶段；它不是下面这张“{stateFilterLabels[view.filter] ?? view.filter}”表的计数。</p>}
     <TaskListNotices list={list} query={view.query.trim()} />
     {attention.error && <p role="status" className="text-caption text-muted-foreground">关注项暂不可读：{errorText(attention.error)}</p>}
     {attention.data && !attention.data.complete && <p role="status" className="text-caption text-muted-foreground">关注项超过当前已读范围；未显示的任务仍需打开核对。</p>}
@@ -136,7 +138,7 @@ export function TaskTable({ projectId, list, view, selectedId, onSelect, linkFor
     {!list.loading && !list.firstError && !rows.length && !list.searching && !list.awaitingAssignments && !list.searchError &&
       <EmptyState {...emptyListText(list, view)} />}
     {!list.loading && !list.firstError && <div className="flex items-center gap-3 text-caption text-muted-foreground">
-      <span className="flex-1">已载入 {list.tasks.length} 项 · 匹配 {rows.length} 项</span>
+      <ListFooter list={list} matched={rows.length} />
       {list.hasMore && <Button size="compact" disabled={list.loadingMore || list.searching} onClick={() => void list.loadMore()}>{list.loadingMore || list.searching ? "加载中…" : "加载更多"}</Button>}
     </div>}
     <ReconciliationDetails projectId={projectId} page={list.index.first ? { ...list.index.first, items: Object.values(list.index.items) } : null}

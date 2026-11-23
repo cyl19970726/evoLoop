@@ -81,7 +81,7 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
       }
       else if (url.pathname === `${p}/impacts`) value=[];
       else if (url.pathname === `${p}/orchestration/work-status`) value={items:(url.searchParams.get("taskIds")??"").split(",").filter(Boolean).map(taskId=>({taskId,cognition:false,hasClosure:false,readyForAcceptance:false}))};
-      else if (url.pathname === `${p}/work-management/index`) value={items:[{kind:"task",taskId,version:1,
+      else if (url.pathname === `${p}/work-management/index`) { const row={kind:"task",taskId,version:1,
         currentRevisionId:taskId,workChangeSequence:4,title:"澄清分工页待办",taskKind:"implementation",taskState:"todo",phase:"ready",
         nextAction:"核对当前版本后按既有 assignment/queue 规则安排执行",
         responsible:{kind:"role",id:roleA,label:`负责 Role ${roleA}`},assignment:null,latestRun:null,delivery:null,
@@ -94,7 +94,10 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
         dates:{createdAt:stamp,businessChangedAt:stamp,startedAt:null,completedAt:null,observedAt:stamp},
         latestProgress:{sequence:4,entityKind:"delivery",entityId:"30000032-0000-4000-8000-000000000032",
           eventName:"交付已登记",changedAt:stamp},
-        timing,actionKey:`task:${taskId}:v1:ready:4`}],nextCursor:null,total:1,counts:{ready:1,review_deferred:1},changeSequence:4,observedAt:stamp,partial:false};
+        timing,actionKey:`task:${taskId}:v1:ready:4`};
+        // The open-work index lists every open task, including the one the Task pages only reach on a later page.
+        const offId="30000009-0000-4000-8000-000000000009";
+        value={items:[row,{...row,taskId:offId,currentRevisionId:offId,title:"跨页任务",owner:offPageRole,review:null,responsible:{kind:"role",id:offPageRole,label:`负责 Role ${offPageRole}`},actionKey:`task:${offId}:v1:ready:4`}],nextCursor:null,total:2,counts:{ready:2},changeSequence:4,observedAt:stamp,partial:false}; }
       else if (url.pathname === `${p}/work-management/tasks/${taskId}`) value={kind:"task",taskId,version:1,currentRevisionId:taskId,
         workChangeSequence:4,title:"澄清分工页待办",taskKind:"implementation",taskState:"todo",phase:"ready",nextAction:"等待维护者发布",
         responsible:{kind:"role",id:roleA,label:"负责职责"},assignment:null,latestRun:null,delivery:null,pendingImpactCount:0,queueHold:null,
@@ -153,7 +156,8 @@ test("Task list resolves only displayed Role owners and rejects stale or failed 
   assert.match(await main.getByRole("row").filter({hasText:"未知职责"}).innerText(),/未找到已登记职责|负责职责待核对/);
   const initialReads:string[]=await (await fetch(`${base}/__fixture/reads`)).json();
   assert.equal(initialReads.includes("acceptance-owner"),false);
-  assert.equal(initialReads.includes(offPageRole),false);
+  // 未完成 lists every open task from the index, so the off-page task's Role is displayed (and read) from the start.
+  assert.equal(initialReads.includes(offPageRole),true);
   // Search lives in the inner rail; the table follows it.
   const search=page.getByRole("searchbox",{name:"搜索任务"});
   await search.fill("跨页任务");
