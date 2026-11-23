@@ -9,8 +9,8 @@ import { api, errorDiagnostic, errorText } from "../../shared/api";
 import { appendLeaderWorkPage } from "../../shared/leaderWorkLoad";
 import { queryKeys, useProjectPages, useProjectQuery } from "../../shared/query";
 import { visibleWorkGroups, type WorkTaskStatus } from "../../shared/workStatusPresentation";
-import { isMyCurrentWork, type TaskListView } from "./taskExperience";
-import { isMine, matchesFilters, sortTasks, sortUsesProjection } from "./taskListModel";
+import { isMyCurrentWork, matchingProjection, type TaskListView } from "./taskExperience";
+import { isMine, matchesFilters, matchesPhase, sortTasks, sortUsesProjection, taskOfProjection } from "./taskListModel";
 
 const pageLimit = 50;
 const autoPageLimit = 10;
@@ -48,22 +48,44 @@ export function useTaskList(projectId: string, view: TaskListView, actorId: stri
     if (page.items.length > pageLimit) throw new Error("任务分页响应超过每页上限");
     return page;
   });
-  const tasks = useMemo(() => {
+  const pagedTasks = useMemo(() => {
     const seen = new Set<string>(), merged: Task[] = [];
     for (const page of pages.data?.pages ?? []) for (const task of page.items) if (!seen.has(task.id)) { seen.add(task.id); merged.push(task); }
     return merged;
   }, [pages.data]);
 
-  // Work statuses, one read per loaded page.
-  const loaded = pages.data?.pages ?? [];
-  const statusReads = useQueries({ queries: loaded.map((page, index) => {
-    const ids = page.items.map(task => task.id);
-    return {
-      queryKey: queryKeys.project(projectId, "tasks", "work-status", pages.data?.pageParams[index] ?? "first", ids.join(",")),
-      queryFn: ({ signal }: { signal: AbortSignal }) => api().workStatuses(projectId, ids, signal),
-      enabled: ids.length > 0, retry: false,
-    };
-  }) });
+  // The open-work index (open tasks, up to 500 rows read at a time) is the source of the 未完成 list: every open task is
+  // listed, the page header's counts come from the same read, and a partial read is said to be partial.
+  const [indexLimit, setIndexLimit] = useState(indexItemLimit);
+  const indexRead = useProjectQuery(projectId, ["tasks", "leader-index", indexLimit], () => readProjectionIndex(projectId, indexLimit), { keepPrevious: true });
+  const indexItems = useMemo(() => Object.fromEntries((indexRead.data?.page.items ?? []).map(item => [item.taskId, item])), [indexRead.data]);
+  const indexFailed = indexRead.isError && !indexRead.data;
+  const openMode = view.filter === "open" && !indexFailed;
+  const tasks = useMemo(() => {
+    if (!openMode) return pagedTasks;
+    const known = new Map(pagedTasks.map(task => [task.id, task]));
+    const rows = (indexRead.data?.page.items ?? []).filter(item => item.taskState === "todo" || item.taskState === "in_progress").map(item => {
+      const paged = known.get(item.taskId);
+      return paged && paged.version === item.version && paged.currentRevisionId === item.currentRevisionId ? paged : taskOfProjection(projectId, item);
+    });
+    // Once the index is read whole, an open task it has no row for yet is still listed from the loaded pages, never dropped;
+    // after a partial read the rows are exactly the ones read, so the count and the footer agree.
+    if (indexRead.data?.problem || indexRead.data?.page.nextCursor) return rows;
+    const listed = new Set((indexRead.data?.page.items ?? []).map(item => item.taskId));
+    return [...rows, ...pagedTasks.filter(task => (task.state === "todo" || task.state === "in_progress") && !listed.has(task.id))];
+  }, [openMode, pagedTasks, indexRead.data, projectId]);
+
+  // Work statuses, one read per 50 listed tasks.
+  const chunks = useMemo(() => {
+    const out: string[][] = [];
+    for (let at = 0; at < tasks.length; at += pageLimit) out.push(tasks.slice(at, at + pageLimit).map(task => task.id));
+    return out;
+  }, [tasks]);
+  const statusReads = useQueries({ queries: chunks.map(ids => ({
+    queryKey: queryKeys.project(projectId, "tasks", "work-status", ids[0] ?? "", ids.join(",")),
+    queryFn: ({ signal }: { signal: AbortSignal }) => api().workStatuses(projectId, ids, signal),
+    enabled: ids.length > 0, retry: false,
+  })) });
   const statuses = useMemo(() => {
     const next: Record<string, WorkTaskStatus> = {};
     for (const read of statusReads) for (const item of read.data?.items ?? []) next[item.taskId] = item;
@@ -74,7 +96,7 @@ export function useTaskList(projectId: string, view: TaskListView, actorId: stri
   // until its statuses actually arrive.
   const statusErrors = useRef(new Map<string, string>());
   statusReads.forEach((read, index) => {
-    const page = String(pages.data?.pageParams[index] ?? "first");
+    const page = String(chunks[index]?.[0] ?? index);
     if (read.error) statusErrors.current.set(page, errorDiagnostic(read.error));
     else if (read.data) statusErrors.current.delete(page);
   });
@@ -92,9 +114,6 @@ export function useTaskList(projectId: string, view: TaskListView, actorId: stri
 
   // Current-work projections: the open-task index, plus single reads for listed tasks the index leaves out (closed ones).
   // Open work is read 500 rows at a time; beyond that the reader asks for more (继续读取) instead of waiting forever.
-  const [indexLimit, setIndexLimit] = useState(indexItemLimit);
-  const indexRead = useProjectQuery(projectId, ["tasks", "leader-index", indexLimit], () => readProjectionIndex(projectId, indexLimit), { keepPrevious: true });
-  const indexItems = useMemo(() => Object.fromEntries((indexRead.data?.page.items ?? []).map(item => [item.taskId, item])), [indexRead.data]);
   const index: ProjectionIndex = {
     first: indexRead.data?.first ?? null, items: indexItems, loading: indexRead.isPending,
     complete: !!indexRead.data && !indexRead.data.page.nextCursor && !indexRead.data.page.partial && !indexRead.data.problem,
@@ -103,6 +122,7 @@ export function useTaskList(projectId: string, view: TaskListView, actorId: stri
     reading: indexRead.isFetching, readMore: () => setIndexLimit(limit => limit + indexItemLimit),
   };
   const filtered = useMemo(() => tasks.filter(task => matchesFilters(task, view, statuses[task.id])), [tasks, view.query, view.filter, view.kind, statuses]);
+  // Open work only: a phase (or review mark) narrows the open list; it means nothing for closed or cancelled tasks.
   const wanted = options.projectionsFor === "none" && !sortUsesProjection(view.sort) ? [] : filtered;
   const missing = indexRead.data ? [...wanted, ...tasks.filter(task => options.extraIds?.includes(task.id))]
     .filter((task, position, all) => !indexItems[task.id] && all.findIndex(other => other.id === task.id) === position) : [];
@@ -117,23 +137,24 @@ export function useTaskList(projectId: string, view: TaskListView, actorId: stri
     [indexItems, singles.map(item => `${item.taskId}:${item.workChangeSequence}`).join(",")]);
 
   // The visible list.
-  const scoped = view.scope === "mine" ? filtered.filter(task => isMine(task, projections[task.id], actorId)) : filtered;
+  const inScope = view.scope === "mine" ? filtered.filter(task => isMine(task, projections[task.id], actorId)) : filtered;
+  const scoped = view.phase && view.filter === "open" ? inScope.filter(task => matchesPhase(view.phase, matchingProjection(task, projections[task.id]))) : inScope;
   const visible = useMemo(() => sortTasks(scoped, view.sort, projections), [scoped, view.sort, projections]);
   const classificationUnavailable = !!statusProblem && !Object.keys(statuses).length;
   const groups = visibleWorkGroups(visible, statuses, classificationUnavailable);
   const mineCount = Object.values(projections).filter(item => isMyCurrentWork(item, actorId)).length;
   const awaitingAssignments = view.scope === "mine" && !index.complete && !index.error;
-  const loading = pages.isPending;
-  const firstError = pages.isError && !pages.data ? errorText(pages.error) : "";
+  const loading = openMode ? indexRead.isPending : pages.isPending;
+  const firstError = !openMode && pages.isError && !pages.data ? errorText(pages.error) : "";
   const pageError = pages.isFetchNextPageError ? errorText(pages.error) : pages.repeatedCursor ? "任务分页游标重复，无法确认后续结果" : "";
-  const hasMore = !!pages.hasNextPage;
-  const needsFilteredPage = !visible.length && !awaitingAssignments;
+  const hasMore = !openMode && !!pages.hasNextPage;
+  const needsFilteredPage = !openMode && !visible.length && !awaitingAssignments;
 
   // Continue reading when the filters leave the loaded pages empty, or while a search runs: bounded, on screen only.
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState("");
   const counts = useRef({ pages: 0, items: 0 });
-  counts.current = { pages: loaded.length, items: tasks.length };
+  counts.current = { pages: pages.data?.pages.length ?? 0, items: pagedTasks.length };
   const query = view.query.trim();
   useEffect(() => {
     if (!active || loading || firstError || (!query && !needsFilteredPage) || !hasMore) { setSearching(false); setSearchError(""); return; }
@@ -151,7 +172,7 @@ export function useTaskList(projectId: string, view: TaskListView, actorId: stri
     }, 180);
     return () => { live = false; window.clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, loading, firstError, query, view.filter, view.kind, view.scope, needsFilteredPage, hasMore, loaded.length]);
+  }, [active, loading, firstError, query, view.filter, view.kind, view.scope, needsFilteredPage, hasMore, pages.data?.pages.length]);
 
   async function loadMore() {
     if (pages.isFetchingNextPage) return;
@@ -186,10 +207,13 @@ export function useTaskList(projectId: string, view: TaskListView, actorId: stri
     return () => { live = false; };
   }, [active, client, index.first?.changeSequence, projectId]);
 
+  /** The 未完成 list's footer facts: how many open tasks were read, and whether that is all of them. */
+  const openList = openMode ? { read: (indexRead.data?.page.items ?? []).length, complete: index.complete, truncated: index.truncated,
+    error: index.error, reading: indexRead.isFetching, retry: () => void indexRead.refetch() } : null;
   return {
-    tasks, visible, groups, statuses, projections, index, mineCount,
+    openList, tasks, visible, groups, statuses, projections, index, mineCount,
     loading, checking: pages.checking, firstError, pageError, hasMore, loadingMore: pages.isFetchingNextPage, loadMore, reread,
-    observedAt: pages.dataUpdatedAt ? new Date(pages.dataUpdatedAt) : null,
+    observedAt: (openMode ? indexRead.dataUpdatedAt : pages.dataUpdatedAt) ? new Date(openMode ? indexRead.dataUpdatedAt : pages.dataUpdatedAt) : null,
     statusProblem, statusRetrying, retryStatuses,
     awaitingAssignments, searching: searching || (needsFilteredPage && hasMore && !query && !searchError && !firstError && !pageError),
     searchError: searchError || pageError,
