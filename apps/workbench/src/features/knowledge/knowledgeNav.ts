@@ -1,21 +1,15 @@
-// 知识空间 takes a place in the menu only once the project has a knowledge backend. The signal is the service's own: the capabilities read
-// answers; a refusal with 409 KNOWLEDGE_NOT_CONFIGURED, any other failure, or a read that has not finished lists nothing.
-// Kept free of the page's own modules: the shell loads this on every page, so it only touches the small shared clients.
-import { ApiError } from "../../shared/api";
-import { knowledgeClient } from "../../shared/knowledgeClient";
-import { useProjectQuery } from "../../shared/query";
+// 知识空间 takes a place in the menu only once the project has a knowledge backend. The signal is the service's own judgment of the project
+// (`GET /projects/:id/capabilities`, the key `knowledge`, the same rule the knowledge routes use), so a project without a backend is answered with
+// a 200 and no page carries a refused request or a console error for it. Only an explicit "configured" lists it; "not configured", an unknown
+// state, a failed read or a read that has not finished lists nothing.
+// Kept free of the page's own modules: the shell loads this on every page, so it only touches the small shared reads.
+import type { ProjectCapabilitiesView } from "../../shared/api";
+import { useProjectCapabilities } from "../../shared/projectConfiguration";
 
-const notConfiguredCode = "KNOWLEDGE_NOT_CONFIGURED";
-
-export async function readKnowledgeConfigured(projectId: string): Promise<"none" | "configured" | "unknown"> {
-  try { await knowledgeClient("", projectId).capabilities(); return "configured"; }
-  catch (error) {
-    const code = error instanceof ApiError && error.status === 409 ? (error.detail as { code?: string } | undefined)?.code : undefined;
-    return code === notConfiguredCode ? "none" : "unknown";
-  }
-}
+export const knowledgeConfiguredIn = (view: ProjectCapabilitiesView): boolean =>
+  view.status === "available" && view.items.some(item => item.key === "knowledge" && item.state === "configured");
 
 export function useKnowledgeConfigured(projectId: string, enabled: boolean): boolean {
-  const read = useProjectQuery(projectId, ["nav", "knowledge"], () => readKnowledgeConfigured(projectId), { enabled: enabled && !!projectId, retry: false });
-  return read.data === "configured";
+  const read = useProjectCapabilities(projectId, { enabled: enabled && !!projectId, retry: false });
+  return !!read.data && knowledgeConfiguredIn(read.data);
 }
