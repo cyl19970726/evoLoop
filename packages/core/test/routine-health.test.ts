@@ -80,3 +80,39 @@ test("a timed series is a routine too: its next time, its open Task and its miss
   assert.equal(health.items.at(-1)!.title, "已停止");
   assert.equal(health.complete, false);
 });
+
+test("a Task nobody took up: only an active routine whose last Task is still to do, unclaimed, and older than two hours; ordered with the skips", () => {
+  // The eight routines of Task 27f49bab plus a paused one. `claimed` stands for the store's answer: a Task with an assignment, a queue entry or a Run is not in it.
+  const todo = (hoursAgo: number) => { const made = { taskId: randomUUID(), title: "例行任务", state: "todo" }; return { made, since: hours(hoursAgo) }; };
+  const a = definition("a 三小时没人接"), b = definition("b 一小时"), c = definition("c 在队伍里"), d = definition("d 已有分派"), e = definition("e 进行中"),
+    f = definition("f 连续跳过 3 次"), g = definition("g 应触发没有记录", { watermarkUtc: hours(5) }), paused = definition("暂停的", { state: "paused" }), edge = definition("恰好两小时"), over = definition("两小时零一分");
+  const madeA = todo(3), madeB = todo(1), madeC = todo(5), madeD = todo(5), madeEdge = todo(2), madeOver = { ...todo(2), since: hours(2 + 1 / 60) }, madePaused = todo(9);
+  const inProgress = { taskId: randomUUID(), title: "在做", state: "in_progress" };
+  const lastOf = (made: { taskId: string; title: string; state: string }, at: number): Pick<ScheduleHealthFacts, "last" | "lastTask"> =>
+    ({ last: { plannedAtUtc: hours(at), observedAtUtc: hours(at), state: "created", reason: "due", task: made }, lastTask: made });
+  const series = (title: string, state: "todo" | "done", hoursAgo: number): TaskTimingSeriesSummary => ({ projectId: "p", seriesId: randomUUID(), rootTaskId: randomUUID(), version: 1,
+    seriesState: "active", title, timezone: "UTC", repeat: "daily", executeAtUtc: hours(hoursAgo), nextAtUtc: "2026-11-24T07:30:00.000Z", skippedCount: 0, occurrenceCount: 4,
+    latestTask: { taskId: seriesTasks.get(title)!.taskId, title: `${title}任务`, state, plannedAtUtc: hours(hoursAgo) } } as TaskTimingSeriesSummary);
+  const seriesTasks = new Map([["h 每日重复", { taskId: randomUUID(), since: hours(26) }], ["i 每日重复，有人接", { taskId: randomUUID(), since: hours(26) }]]);
+  const built = (unreceived: Array<{ taskId: string; sinceUtc: string }>) => buildRoutineHealth({ projectId: "p", now, complete: true,
+    schedules: [a, b, c, d, e, f, g, paused, edge, over],
+    facts: [fact(a.id, lastOf(madeA.made, 3)), fact(b.id, lastOf(madeB.made, 1)), fact(c.id, lastOf(madeC.made, 5)), fact(d.id, lastOf(madeD.made, 5)), fact(e.id, lastOf(inProgress, 4)),
+      fact(f.id, { ...lastOf({ taskId: randomUUID(), title: "旧的", state: "done" }, 9), consecutiveSkips: 3 }), fact(g.id), fact(paused.id, lastOf(madePaused.made, 9)),
+      fact(edge.id, lastOf(madeEdge.made, 2)), fact(over.id, lastOf(madeOver.made, 2))],
+    series: [series("h 每日重复", "todo", 26), series("i 每日重复，有人接", "todo", 26)], unreceived });
+  const unclaimed = [madeA, madeB, madeEdge, madeOver, madePaused].map(entry => ({ taskId: entry.made.taskId, sinceUtc: entry.since }));
+  const health = built([...unclaimed, { taskId: seriesTasks.get("h 每日重复")!.taskId, sinceUtc: seriesTasks.get("h 每日重复")!.since }]);
+  const by = (title: string) => health.items.find(item => item.title === title)!;
+  assert.deepEqual(Object.fromEntries(health.items.map(item => [item.title, item.lastTaskUnreceived?.sinceUtc ?? null])), {
+    "a 三小时没人接": hours(3), "b 一小时": null, "c 在队伍里": null, "d 已有分派": null, "e 进行中": null, "f 连续跳过 3 次": null, "g 应触发没有记录": null,
+    "暂停的": null, "恰好两小时": null, "两小时零一分": hours(2 + 1 / 60), "h 每日重复": hours(26), "i 每日重复，有人接": null }, "only (a), (h) and the one just past the threshold carry the fact; the threshold is 'more than two hours'; a paused routine never");
+  // (g) first, then (f)(a)(h) and the one past the threshold in one group (by next time), then the rest.
+  const titles = health.items.map(item => item.title);
+  assert.equal(titles[0], "g 应触发没有记录");
+  assert.deepEqual(new Set(titles.slice(1, 5)), new Set(["f 连续跳过 3 次", "a 三小时没人接", "h 每日重复", "两小时零一分"]));
+  assert.ok(titles.indexOf("b 一小时") > 4 && titles.indexOf("c 在队伍里") > 4 && titles.indexOf("e 进行中") > 4);
+  // The store's answer decides: a Task it does not return (assigned, queued or run) is not flagged, whatever its age.
+  assert.equal(by("c 在队伍里").lastTaskUnreceived, null);
+  assert.equal(built([]).items.filter(item => item.lastTaskUnreceived).length, 0);
+  assert.equal(buildRoutineHealth({ projectId: "p", now, complete: true, schedules: [a], facts: [fact(a.id, lastOf(madeA.made, 3))], series: [] }).items[0]!.lastTaskUnreceived, null, "no answer from the store: not guessed");
+});

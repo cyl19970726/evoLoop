@@ -3,9 +3,13 @@
 import { dailyRuleInstant, scheduleWallClock, scheduleZoneFormat, type ScheduleDefinition, type ScheduleRevision } from "@evoloop/contracts/scheduling";
 import { routineOverdueGraceMinutes, type RoutineHealth, type RoutineHealthItem, type ScheduleHealthFacts } from "@evoloop/contracts/routine-health";
 import type { TaskTimingSeriesSummary } from "@evoloop/contracts/task-timing";
+import type { UnreceivedTask } from "@evoloop/contracts/routine-health";
+import { trialAttentionThresholdMs } from "../task-attention.js";
 
 const MINUTE = 60_000;
 const DAY = 86_400_000;
+/** How long a made Task may wait with nobody taking it up: the Task attention policy's figure for a Task nobody was assigned, not a second number. */
+export const routineUnreceivedAfterMs = trialAttentionThresholdMs.unassigned!.stageOverdueMs!;
 const closed = (state: string | undefined) => state === "done" || state === "cancelled";
 
 /** The first planned instant of a rule strictly after `afterMs`, or null: none left (a one-time rule passed, authorization expired) or the zone is unknown. */
@@ -43,11 +47,17 @@ export function overdueExpectedAt(definition: ScheduleDefinition, nowMs: number)
   return expected !== null && expected <= nowMs - routineOverdueGraceMinutes * MINUTE ? expected : null;
 }
 
-const rank = (item: RoutineHealthItem) => item.state === "stopped" ? 4 : item.overdue ? 0 : item.consecutiveSkips >= 2 ? 1 : item.lastTaskOpen ? 2 : 3;
+const rank = (item: RoutineHealthItem) => item.state === "stopped" ? 4 : item.overdue ? 0 : item.consecutiveSkips >= 2 || item.lastTaskUnreceived ? 1 : item.lastTaskOpen ? 2 : 3;
 
 export function buildRoutineHealth(input: { projectId: string; schedules: ScheduleDefinition[]; facts: ScheduleHealthFacts[]; series: TaskTimingSeriesSummary[];
-  now: string; complete: boolean }): RoutineHealth {
+  /** Tasks nobody has taken up (see the reader); omitted when the store does not read them. */
+  unreceived?: UnreceivedTask[]; now: string; complete: boolean }): RoutineHealth {
   const nowMs = Date.parse(input.now);
+  const unreceivedAt = new Map((input.unreceived ?? []).map(entry => [entry.taskId, entry.sinceUtc]));
+  const waiting = (active: boolean, task: { taskId: string; state: string } | null | undefined) => {
+    const since = active && task && task.state === "todo" ? unreceivedAt.get(task.taskId) : undefined;
+    return since !== undefined && nowMs - Date.parse(since) > routineUnreceivedAfterMs ? { sinceUtc: since } : null;
+  };
   const factsOf = new Map(input.facts.map(fact => [fact.scheduleId, fact]));
   const items: RoutineHealthItem[] = [];
   for (const definition of input.schedules) {
@@ -59,7 +69,8 @@ export function buildRoutineHealth(input: { projectId: string; schedules: Schedu
       lastTrigger: fact?.last ? { plannedAtUtc: fact.last.plannedAtUtc, observedAtUtc: fact.last.observedAtUtc, outcome: fact.last.state, reason: fact.last.reason, task: fact.last.task } : null,
       consecutiveSkips: fact?.consecutiveSkips ?? 0, skippedTotal: null,
       nextAtUtc: next === null ? null : new Date(next).toISOString(), overdue: expected === null ? null : { expectedAtUtc: new Date(expected).toISOString() },
-      lastTaskOpen: !!fact?.lastTask && !closed(fact.lastTask.state), watermarkUtc: definition.watermarkUtc });
+      lastTaskOpen: !!fact?.lastTask && !closed(fact.lastTask.state), watermarkUtc: definition.watermarkUtc,
+      lastTaskUnreceived: waiting(definition.state === "active", fact?.lastTask) });
   }
   for (const series of input.series) {
     const active = series.seriesState === "active";
@@ -74,7 +85,8 @@ export function buildRoutineHealth(input: { projectId: string; schedules: Schedu
     items.push({ kind: "timed_series", id: series.seriesId, title: series.title, state: active ? "active" : "stopped", rule: null, timezone: series.timezone,
       repeat: series.repeat, rootTaskId: series.rootTaskId, misfire: null,
       lastTrigger: { plannedAtUtc: latest.plannedAtUtc, observedAtUtc: null, outcome: "created", reason: "", task: { taskId: latest.taskId, title: latest.title, state: latest.state } },
-      consecutiveSkips: 0, skippedTotal: series.skippedCount, nextAtUtc: next, overdue, lastTaskOpen: !closed(latest.state), watermarkUtc: null });
+      consecutiveSkips: 0, skippedTotal: series.skippedCount, nextAtUtc: next, overdue, lastTaskOpen: !closed(latest.state), watermarkUtc: null,
+      lastTaskUnreceived: waiting(active, latest) });
   }
   items.sort((a, b) => rank(a) - rank(b)
     || (a.nextAtUtc === null ? Infinity : Date.parse(a.nextAtUtc)) - (b.nextAtUtc === null ? Infinity : Date.parse(b.nextAtUtc))

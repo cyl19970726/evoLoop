@@ -11,6 +11,8 @@ import { useTaskName } from "../../shared/ui/RecordName";
 import { nameOnly } from "../../shared/workPresentation";
 import { holdSummary, holdTarget } from "../../shared/providerHoldPresentation";
 import { HoldSentence } from "../../shared/ui/HoldSentence";
+import { routineAttention } from "../scheduling";
+import { isSampleTitle } from "../../shared/sampleObjects";
 import { decisionKindText, decisionLink, inboxTaskLink, useInboxReads, useRequirementText as requirementText } from "../workflow";
 import { latestReview, moreText, type OrganisationParts, outcomeText, priorityLimit, priorityTitle, type StalledTask } from "./overviewFirstScreen";
 import type { ProjectOutcome } from "./contextPresentation";
@@ -18,8 +20,8 @@ import type { ProjectOutcome } from "./contextPresentation";
 const muted = "text-caption text-muted-foreground";
 const block = "flex min-w-0 flex-col gap-0.5 border-t border-border pt-2.5 first:border-t-0 first:pt-0";
 
-function Row({ to, children, tag, when }: { to: string; children: ReactNode; tag?: ReactNode; when?: ReactNode }) {
-  return <li className="border-t border-border first:border-t-0">
+function Row({ to, children, tag, when, ...attributes }: { to: string; children: ReactNode; tag?: ReactNode; when?: ReactNode; "data-overview-routine"?: string }) {
+  return <li className="border-t border-border first:border-t-0" {...attributes}>
     <a href={to} className="-mx-2 flex flex-col gap-0.5 rounded-md px-2 py-1.5 hover:bg-field/60 focus-visible:shadow-[var(--focus-ring)] outline-none compact:flex-row compact:items-baseline compact:gap-3">
       <span className="min-w-0 flex-1 text-small text-foreground">{children}</span>
       {tag}
@@ -55,6 +57,9 @@ export function PriorityBlock({ projectId, actorId, enabled, stalled, work }: { 
   const reads = useInboxReads(projectId, actorId, enabled);
   const { acceptance, impacts, decisions, alerts, holds } = reads;
   const held = holdSummary(holds.data);
+  // 例行工作: one more read, the same one the schedule page's health table makes; a failed read is said as a failed kind, never as "all well".
+  const routines = useProjectQuery(projectId, ["routine-health", "overview"], signal => api().routineHealth(projectId, signal), { enabled });
+  const routine = routines.data ? routineAttention(routines.data.items, isSampleTitle, Date.parse(routines.data.observedAt)) : null;
   const rows: ReactNode[] = [];
   if (held) {
     // One row for the whole hold, in the very sentence of the bar above every page (same count, same name). One affected agent opens that agent; several (or none)
@@ -72,14 +77,16 @@ export function PriorityBlock({ projectId, actorId, enabled, stalled, work }: { 
     lead="依据有新版待你复核" tab="basis" when={`发现于 ${date(item.createdAt)}`} />);
   (alerts.data ?? []).forEach((item, index) => rows.push(<Row key={`usage:${item.kind}:${item.sessionId ?? "day"}:${index}`}
     to={item.sessionId ? `/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${item.sessionId}`)}` : `/p/${projectId}/inbox#inbox-usage`}>{item.kind === "budget" ? "今日用量" : "智能体上下文"}：{item.text}</Row>));
+  if (routine) rows.push(<Row key="routine" to={`/p/${projectId}/schedules#routine-health`} data-overview-routine="">
+    例行工作 {routine.count} 条不正常：{routine.first.title}，{routine.first.text}</Row>);
   for (const task of stalled) rows.push(<Row key={`stalled:${task.taskId}`} to={href(projectId, "task", task.taskId)}
     tag={<StatusTag tone="blocked" label={`卡了 ${task.days} 天`} />}>{task.title}：{task.reason}</Row>);
-  const failedKinds = [["运行问题", holds.isError], ["待我决定", decisions.isError], ["待我验收", acceptance.isError], ["依据变化", impacts.isError], ["用量告警", alerts.isError], ["卡住的任务", work === "failed"]]
+  const failedKinds = [["运行问题", holds.isError], ["待我决定", decisions.isError], ["待我验收", acceptance.isError], ["依据变化", impacts.isError], ["用量告警", alerts.isError], ["例行工作", routines.isError], ["卡住的任务", work === "failed"]]
     .filter(([, failed]) => failed).map(([name]) => name as string);
   // The usage alerts are derived from a source that may be absent without being a failure, so "the whole column" is the four reads that must exist.
   const noneRead = [holds, decisions, acceptance, impacts].every(read => read.isError);
-  const unread = [holds, decisions, acceptance, impacts, alerts].some(read => read.data === undefined && !read.isError) || work === "reading";
-  const retry = <Button variant="ghost" size="compact" onClick={() => { for (const read of [holds, decisions, acceptance, impacts, alerts]) void read.refetch(); }} className="-ml-2">重试</Button>;
+  const unread = [holds, decisions, acceptance, impacts, alerts, routines].some(read => read.data === undefined && !read.isError) || work === "reading";
+  const retry = <Button variant="ghost" size="compact" onClick={() => { for (const read of [holds, decisions, acceptance, impacts, alerts, routines]) void read.refetch(); }} className="-ml-2">重试</Button>;
   return <section aria-label="要你决定或处理的" data-overview-block="priority" className={block}>
     <BlockHead title={priorityTitle(failedKinds.length || unread ? null : rows.length)}
       aside={<a href={`/p/${projectId}/inbox`} className={`${muted} text-primary hover:underline`}>全部在待我处理</a>} />

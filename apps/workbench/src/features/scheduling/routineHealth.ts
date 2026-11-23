@@ -3,6 +3,8 @@
 import type { RoutineHealthItem, RoutineLastTrigger } from "@evoloop/contracts/routine-health";
 import { readerZone } from "../../shared/zonedTime";
 import { dispatchReasonKnown, dispatchReasonText } from "./dispatch";
+import { overdueText, shortTime, unreceivedText, warnsSkips, waitedText, needsAttention } from "./routineAttention";
+export { overdueText, shortTime, unreceivedText, warnsSkips, waitedText, needsAttention };
 import { occurrenceReasonKnown, occurrenceReasonText, scheduleTime } from "./presentation";
 
 export const routineStateLabel = { active: "在跑", paused: "已暂停", stopped: "已停止" } as const;
@@ -17,17 +19,6 @@ export function skipReasonText(reason: string): string {
 /** The full time of an instant, in the routine's own zone with the reader's clock added when it differs (kept as the cell's hover text). */
 export const routineTime = (value: string, timezone: string, reader = readerZone()): string => scheduleTime(value, timezone, reader);
 
-/** A table-sized time, "11/23 09:00", on the routine's clock (the reader's when the zone cannot be read). The full time is in the hover text. */
-export function shortTime(value: string, timezone: string, reader = readerZone()): string {
-  const at = new Date(value);
-  if (Number.isNaN(at.getTime())) return value;
-  const parts = (zone: string) => new Intl.DateTimeFormat("en-GB", { timeZone: zone, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(at);
-  let found: Intl.DateTimeFormatPart[];
-  try { found = parts(timezone); } catch { found = parts(reader); }
-  const part = (type: string) => found.find(item => item.type === type)?.value ?? "";
-  return `${part("month")}/${part("day")} ${part("hour")}:${part("minute")}`;
-}
-
 export type LastTriggerText =
   | { kind: "none"; text: string }
   | { kind: "created"; at: string; full: string; task: NonNullable<RoutineLastTrigger["task"]>; queued: boolean }
@@ -41,14 +32,6 @@ export function lastTriggerView(item: RoutineHealthItem, reader = readerZone()):
   if (last.outcome === "skipped" || !last.task) return { kind: "skipped", at, full, reason: skipReasonText(last.reason) };
   return { kind: "created", at, full, task: last.task, queued: last.outcome === "queued" };
 }
-
-/** “应在〈时间〉触发，没有记录”: an active routine that should have fired and left no record. */
-export const overdueText = (item: RoutineHealthItem, reader = readerZone()): string | null =>
-  item.overdue ? `应在 ${shortTime(item.overdue.expectedAtUtc, item.timezone, reader)} 触发，没有记录` : null;
-
-/** Two skips in a row or more share the overdue warning marker; one skip is a fact, not yet a warning. */
-export const warnsSkips = (item: RoutineHealthItem): boolean => item.consecutiveSkips >= 2;
-export const needsAttention = (item: RoutineHealthItem): boolean => !!item.overdue || warnsSkips(item);
 
 /** Next time, or why there is none. A stopped routine never reaches here (it is folded). */
 export function nextText(item: RoutineHealthItem, reader = readerZone()): string {
