@@ -13,7 +13,7 @@ export function MilestonesBlock({ projectId, active }: { projectId: string; acti
   const version = useProjectQuery(projectId, ["overview", "version"], signal => api().version(signal, projectId), { enabled: active, retry: false });
   const v = versionView(version.data ?? null);
   return <div className="@container" data-overview-top="">
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-2">
       <section className={card} aria-label="线上当前版本" data-overview-version="">
         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5"><h2 className={heading}>线上当前版本</h2>
         <p className="m-0 flex flex-wrap gap-x-3 text-caption">{v.links.map(link => <a key={link.href} className="text-primary hover:underline" href={link.href} target="_blank" rel="noreferrer">{link.label}</a>)}</p>

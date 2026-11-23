@@ -8,7 +8,7 @@ import { Button, StatusTag, cn } from "@evoloop/ui";
 import { checkCell, dueCell, isCurrent, overdueNote, stageName, statusTone, taskCell, NO_TASKS } from "./stagesPresentation";
 
 const wide = "@xl:grid-cols-[minmax(6.5rem,1fr)_3rem_minmax(0,2.4fr)_7rem_7.5rem]";
-const rowBase = "grid w-full min-w-0 grid-cols-1 items-start gap-x-3 gap-y-0.5 rounded-md px-3 py-1.5 text-left text-small text-text-secondary no-underline";
+const rowBase = "grid w-full min-w-0 grid-cols-1 items-start gap-x-3 gap-y-0.5 rounded-md px-3 py-1 text-left text-small leading-tight text-text-secondary no-underline";
 
 export interface StageTableProps {
   projection: StageProjection;

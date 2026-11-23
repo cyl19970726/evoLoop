@@ -64,9 +64,12 @@ test("stages: overview block and journey table", { skip }, async t => {
   const readings: unknown[] = [];
 
   // Five stages due 12-02, 12-07, 12-09, 12-14, 12-16; only the one the service names is current; two have tasks.
+  // Names and check methods as long as the project's real ones (about 6-14 characters, and one to three sentences), so the first-screen reading is the real one.
+  const names = ["组织连续 7 天不用你催", "分工按负载收紧", "新版任务与文档页可真实使用", "第二个项目接入试用", "对外说明可交付"];
+  const checks = ["组织里连续 7 天，没有人需要催着才推进工作；负责人逐日在工作台上能看到每项任务的下一责任。由验收者写结论。", "两个以上职责在同一周内按负载重新分配任务，没有职责被连续三天空等；记录分配理由和结果。", "使用者自己沿三条路径用一遍工作台：打开总览、处理待办、交付一项任务；任何一条卡住就算没到。", "接入第二个项目并跑通第一个任务，从登记到验收全程用工作台完成，不靠手工补记录。", "对外说明初稿经使用者通读，能回答三个常见问题，且没有一处需要口头补充。"];
   const five = (value: Json) => {
     const base = value.stages.find((stage: Json) => stage.inMainTable);
-    const make = (n: number, due: string, tasks: Json, extra: Json = {}) => ({ ...base, id: `7a00000${n}-0000-4000-8000-00000000000${n}`, shortName: `阶段${n}`, dueOn: due, checkMethod: `第 ${n} 个阶段的检查办法，写得稍长一些，用来看两行截断和完整展开`, status: "accepted_no_tasks", statusLabel: "已接受无任务", latestReview: null, tasks, state: "active", inMainTable: true, ...extra });
+    const make = (n: number, due: string, tasks: Json, extra: Json = {}) => ({ ...base, id: `7a00000${n}-0000-4000-8000-00000000000${n}`, shortName: names[n - 1], dueOn: due, checkMethod: checks[n - 1], status: "accepted_no_tasks", statusLabel: "已接受还没有任务", latestReview: null, tasks, state: "active", inMainTable: true, ...extra });
     const zero = { inProgress: 0, blocked: 0, notStarted: 0, closed: 0, total: 0 };
     const stages = [make(1, "2026-12-02", { inProgress: 2, blocked: 1, notStarted: 0, closed: 0, total: 3 }, { status: "in_progress", statusLabel: "进行中" }), make(2, "2026-12-07", zero), make(3, "2026-12-09", { inProgress: 0, blocked: 0, notStarted: 2, closed: 0, total: 2 }), make(4, "2026-12-14", zero), make(5, "2026-12-16", zero)];
     return { ...value, stages, currentStageId: stages[0]!.id, currentNote: null };
