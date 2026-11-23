@@ -750,7 +750,7 @@ export function leaderWorkTaskFromRow(row: QueryResultRow, observedAt: string): 
   return {
     kind: "task", taskId: row.task_id, version: int(row.version),
     currentRevisionId: row.current_revision_id, workChangeSequence: int(row.work_change_sequence ?? 0),
-    title: row.title, taskKind: row.kind, taskState: row.state,
+    title: row.title, taskKind: row.kind, taskState: row.state, owner: row.owner ?? null,
     phase, nextAction: stoppedRunAction(row, phase, reworkAnswerAction(row, phase, conventionAction(row, phase, taskAction(phase)))),
     responsible: conventionResponsible(row, phase, taskResponsibility(row, phase, timing)), assignment,
     consumerAnswer: phase === "rework" && row.delivery_id && consumerRejected(row) ? row.consumer_conclusion_result as "notUsed" | "failed" : null,

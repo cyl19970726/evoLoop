@@ -1,4 +1,5 @@
 import type { ObservedSession, ObservedTask, SessionResult } from "@evoloop/contracts/session-observation";
+import type { StatusTone } from "@evoloop/ui";
 import type { NativeProgressView } from "./NativeSessionPanel";
 
 type StatusSource = Pick<ObservedSession, "kind" | "runtimeState" | "busy"> & {
@@ -107,24 +108,61 @@ export function idleDuration(ms: number): string {
   return hours < 24 ? `${hours} 小时` : `${Math.floor(hours / 24)} 天`;
 }
 
-/** Header wording for people, from the same facts as sessionHeaderStatusLabel; it never promotes a record to live work. */
-export function agentHeaderStatus(session: StatusSource, progress: NativeProgressView | null,
+/**
+ * The one judgement behind an agent's status, for the directory row and the page header alike (Task f1e8829a): which of these the
+ * agent is in, and the tone of its mark. Both places derive their words from `kind`; neither decides it again. Only facts the directory
+ * read carries are used (busy, current Task, awaiting reader, lifecycle, dispatch) plus the two read at project level (the provider
+ * hold and whether the native connection is available); a fact that was not read says 状态未读到 or 状态待核对, never 空闲.
+ */
+export type AgentStatusKind = "held" | "waiting" | "unusable" | "unread" | "lifecycle" | "unverified" | "working" | "replying" | "idle";
+export interface AgentStatusFacts { holdReason?: string | null; runtimeAvailable?: boolean | null }
+export interface AgentStatus { kind: AgentStatusKind; tone: StatusTone; waitingOnMe: boolean }
+const kindTone: Record<AgentStatusKind, StatusTone> = {
+  held: "blocked", waiting: "waiting", unusable: "blocked", unread: "unknown", lifecycle: "blocked", unverified: "unknown",
+  working: "progress", replying: "progress", idle: "idle",
+};
+export function agentStatus(session: StatusSource & Pick<ObservedSession, "currentTask"> & { awaitingReader?: boolean }, facts: AgentStatusFacts = {}): AgentStatus {
+  const kind = ((): AgentStatusKind => {
+    const owned = session.kind === "owned";
+    if (owned && facts.holdReason) return "held";
+    if (owned && session.awaitingReader === true) return "waiting";
+    if (unusableLabel(session)) return "unusable";
+    if (!owned || session.busy === null || session.busy === undefined) return "unread";
+    if (session.runtimeState !== "ready") return "lifecycle";
+    if (facts.runtimeAvailable === false) return "unverified";
+    if (session.busy) return session.currentTask?.title ? "working" : "replying";
+    return "idle";
+  })();
+  return { kind, tone: kindTone[kind], waitingOnMe: kind === "waiting" };
+}
+
+/** Header wording for people: the same judgement as the directory row (agentStatus), in the long form; native detail only refines it. */
+export function agentHeaderStatus(session: StatusSource & Pick<ObservedSession, "currentTask"> & { awaitingReader?: boolean }, progress: NativeProgressView | null,
   currentRead: boolean, runtimeAvailable: boolean | null, facts: HeaderFacts = {}): string {
-  if (session.kind !== "owned" || session.runtimeState !== "ready") return agentStatusLabel(session);
-  if (facts.holdReason) return `已暂停（${facts.holdReason}）`;
-  if (runtimeAvailable === false) return "连接不可用 · 状态待核对";
-  if (!currentRead || runtimeAvailable !== true || progress?.freshness !== "live") return agentStatusLabel(session);
-  const turn = progress.turn;
-  if (progress.status === "active" && turn?.status === "inProgress") {
-    if (session.busy !== true) return "运行记录不一致，待核对";
-    if (turn.source?.kind === "message") return replyingPhrase(facts.replyingTo ?? null);
-    if (turn.source?.kind === "run") return turn.source.id === session.latestBusinessRun?.id && session.latestBusinessRun.state === "running"
-      ? facts.taskTitle ? `正在做任务「${facts.taskTitle}」（${facts.dispatch ?? "来源待核对"}）` : "正在执行任务" : "正在执行 · 任务记录待核对";
-    return "正在运行 · 来源待核对";
+  const { kind } = agentStatus(session, { holdReason: facts.holdReason, runtimeAvailable });
+  const title = facts.taskTitle ?? session.currentTask?.title ?? null;
+  const doing = () => title ? `正在做任务「${title}」（${facts.dispatch ?? "来源待核对"}）` : "正在执行任务";
+  switch (kind) {
+    case "held": return `已暂停（${facts.holdReason}）`;
+    case "waiting": return "等你处理";
+    case "unusable": return unusableLabel(session)!;
+    case "unread": case "lifecycle": return agentStatusLabel(session);
+    case "unverified": return "连接不可用 · 状态待核对";
+    default: break;
   }
-  if (session.busy === true) return "有在途工作 · 执行待核对";
-  if (progress.status === "idle" && turn?.status !== "inProgress" && session.busy === false) return facts.idleFor ? `空闲 · 已 ${facts.idleFor}` : "空闲";
-  return "执行状态待核对";
+  if (currentRead && runtimeAvailable === true && progress?.freshness === "live") {
+    const turn = progress.turn;
+    if (progress.status === "active" && turn?.status === "inProgress") {
+      if (session.busy !== true) return "运行记录不一致，待核对";
+      if (turn.source?.kind === "message") return replyingPhrase(facts.replyingTo ?? null);
+      if (turn.source?.kind === "run") return turn.source.id === session.latestBusinessRun?.id && session.latestBusinessRun.state === "running"
+        ? doing() : "正在执行 · 任务记录待核对";
+      return "正在运行 · 来源待核对";
+    }
+  }
+  if (kind === "working") return doing();
+  if (kind === "replying") return replyingPhrase(facts.replyingTo ?? null);
+  return facts.idleFor ? `空闲 · 已 ${facts.idleFor}` : "空闲";
 }
 
 /** The activity feed needs an exact live binding; busy and latest Run alone are insufficient. */
@@ -181,4 +219,15 @@ export function sessionIdleSummary(session: StatusSource): string {
   if (session.kind === "external") return session.busy === false ? "外部观察为空闲" : "外部会话状态需核对";
   if (session.runtimeState !== "ready" || session.busy !== false) return sessionStatusLabel(session);
   return "项目记录无在途占用，原生状态待核";
+}
+
+/** The directory row's sentence for an agent: the short form of the judgement agentStatus makes (the header writes the long form). */
+export interface RowStatus { tone: StatusTone; text: string; waitingOnMe: boolean }
+export function agentRowStatus(session: ObservedSession, facts: AgentStatusFacts = {}): RowStatus {
+  const status = agentStatus(session, facts);
+  const text = ({
+    held: `已暂停（${facts.holdReason}）`, waiting: "等你处理", unusable: unusableLabel(session) ?? "", unread: "状态未读到",
+    lifecycle: agentStatusLabel(session), unverified: "状态待核对", working: `正在做 ${session.currentTask?.title}`, replying: "在回复消息", idle: "空闲",
+  } satisfies Record<AgentStatusKind, string>)[status.kind];
+  return { tone: status.tone, text, waitingOnMe: status.waitingOnMe };
 }

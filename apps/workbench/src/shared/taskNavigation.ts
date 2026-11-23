@@ -30,7 +30,7 @@ export function taskListReturn(hash: string, projectId: string, taskId: string):
 }
 
 /** The task list's filters and sort travel with the task's address, so the inner rail keeps them (tasks.md 列表). */
-export const taskListKeys = ["q", "state", "kind", "scope", "sort"] as const;
+export const taskListKeys = ["q", "state", "kind", "scope", "sort", "phase"] as const;
 
 /** The address of one task tab: the verified Session return, the list backlink and the list view are kept. */
 export function taskTabHref(path: string, projectId: string, taskId: string, section: TaskSection, actorId?: string): string {

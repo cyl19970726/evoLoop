@@ -6,6 +6,20 @@ import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
 import { phaseOrder, phaseStatus, taskStateStatus } from "../../shared/taskStatus";
 import { cognitionSummary, type WorkTaskStatus } from "../../shared/workStatusPresentation";
 import { isMyCurrentWork, matchingProjection, type TaskListView, type TaskSort } from "./taskExperience";
+
+/** A listed Task built from the work index row, for open work the paged Task list has not reached; it carries what rows show. */
+export function taskOfProjection(projectId: string, item: LeaderWorkTask): Task {
+  return { projectId, id: item.taskId, version: item.version, currentRevisionId: item.currentRevisionId, title: item.title, content: "",
+    contentDocumentId: "", contentRevisionId: "", kind: item.taskKind, acceptance: "", owner: item.owner ?? "", state: item.taskState };
+}
+
+/** Whether a task is in the chosen phase (or carries the chosen Leader review mark); "" is every phase. */
+export function matchesPhase(phase: string, item: LeaderWorkTask | undefined): boolean {
+  if (!phase) return true;
+  if (!item) return false;
+  if (phase === "review_acknowledged" || phase === "review_deferred") return item.review?.decision === phase.slice("review_".length);
+  return item.phase === phase;
+}
 import { taskTimestamp, taskTypeLabel } from "./taskWorkspacePresentation";
 
 export const sortLabels: Record<TaskSort, string> = {
@@ -43,7 +57,9 @@ const time = (value: string | null | undefined) => {
 export function sortValue(task: Task, sort: TaskSort, projection: LeaderWorkTask | undefined): number | null {
   const item = matchingProjection(task, projection);
   switch (sort) {
-    case "default": return stateOrder[task.state];
+    // Open work with a projection goes by how urgent its phase is (phaseOrder); the rest keeps the state order, after it.
+    case "default": return item && (task.state === "todo" || task.state === "in_progress") ? Math.max(0, phaseOrder.indexOf(item.phase))
+      : (item ? phaseOrder.length : phaseOrder.length + 1) + stateOrder[task.state];
     case "priority": return item?.plan?.priority ?? null;
     case "due": return time(item?.plan?.dueAt);
     case "progress": { const value = time(item?.latestProgress?.changedAt); return value === null ? null : -value; }
@@ -58,8 +74,11 @@ export function sortValue(task: Task, sort: TaskSort, projection: LeaderWorkTask
 
 /** Stable sort: equal values and missing values keep the order the server listed them in. */
 export function sortTasks(tasks: readonly Task[], sort: TaskSort, projections: Record<string, LeaderWorkTask>): Task[] {
-  return tasks.map((task, index) => ({ task, index, value: sortValue(task, sort, projections[task.id]) }))
-    .sort((a, b) => a.value === null ? b.value === null ? a.index - b.index : 1 : b.value === null ? -1 : a.value - b.value || a.index - b.index)
+  // In the default order, within one phase the task that has waited longest (its business state changed earliest) comes first.
+  const waited = (task: Task) => sort === "default" ? time(matchingProjection(task, projections[task.id])?.dates.businessChangedAt) ?? Infinity : 0;
+  return tasks.map((task, index) => ({ task, index, value: sortValue(task, sort, projections[task.id]), waited: waited(task) }))
+    .sort((a, b) => a.value === null ? b.value === null ? a.index - b.index : 1 : b.value === null ? -1
+      : a.value - b.value || (a.waited === b.waited ? 0 : a.waited < b.waited ? -1 : 1) || a.index - b.index)
     .map(entry => entry.task);
 }
 

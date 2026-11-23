@@ -147,6 +147,8 @@ export interface LeaderWorkTask {
   title: string;
   taskKind: TaskKind | null;
   taskState: TaskState;
+  /** The Task's owner Role id, as the Task list names it; read-only, absent from an older service. */
+  owner?: string | null;
   phase: LeaderWorkPhase;
   nextAction: string;
   responsible: {

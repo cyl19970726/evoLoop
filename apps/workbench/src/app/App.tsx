@@ -384,7 +384,7 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
       : arrangementPage();
     if (r.section === "arrangement") return arrangementPage();
     if (r.section === "schedules") return <SchedulingPanel context={context} refresh={refresh} />;
-    if (r.section === "overview") return <ProjectSummary token={token} projectId={projectId} refresh={refresh} active={active}
+    if (r.section === "overview") return <ProjectSummary token={token} projectId={projectId} actorId={context.principal.actorId} refresh={refresh} active={active}
       flowGlance={<Suspense fallback={null}><FlowGlance token={token} projectId={projectId} active={active} /></Suspense>} />;
     if (r.section === "settings") return <ProjectSettings context={context} refresh={refresh} reference={<ReferencePanel context={context} />} />;
     if (r.section === "connectors") return <ConnectorPage context={context} />;

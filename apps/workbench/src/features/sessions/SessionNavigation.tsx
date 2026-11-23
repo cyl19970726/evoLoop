@@ -1,13 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, LayoutDashboard, Plus, Search } from "lucide-react";
-import { AgentAvatar, Button, IconButton, Sheet, SheetContent, SheetDescription, SheetTitle, cn } from "@evoloop/ui";
+import { AgentAvatar, Button, IconButton, Sheet, SheetContent, SheetDescription, SheetTitle, StatusTag, cn } from "@evoloop/ui";
 import type { ObservedSession } from "@evoloop/contracts/session-observation";
 import { href } from "../../shared/ui/shared";
 import { withReturn, type ReturnFrom } from "../../shared/returnLink";
-import { agentDisplayName, agentNameCollisions, agentNameHint, agentRuntimeLabel } from "../../shared/agentNamePresentation";
+import { agentDisplayName, agentNameCollisions } from "../../shared/agentNamePresentation";
+import { useProviderHolds } from "../../shared/providerHolds";
+import { holdCauseLabel } from "../../shared/providerHoldPresentation";
+import { useProjectQuery } from "../../shared/query";
+import { runtimeClient } from "../../shared/runtimeClient";
 import { useSessionDirectoryGroup, type DirectoryMembership } from "./useSessionDirectoryGroup";
-import { agentStatusLabel } from "./sessionStatusPresentation";
-import { groupSessionsByClass, sessionClassLabel, sessionClassReason, type SessionClass } from "./sessionDirectoryPresentation";
+import { agentRowStatus } from "./sessionStatusPresentation";
+import { groupSessionsByClass, sessionClassLabel, type SessionClass } from "./sessionDirectoryPresentation";
 
 /** A link to one agent; `from` (the page of this project it is opened from, the reader, optionally that page's name)
  * gives the agent page its way back (shared/returnLink.ts). */
@@ -15,7 +19,6 @@ export const sessionHref = (projectId: string, key: string, from?: ReturnFrom | 
   withReturn(`${href(projectId, "sessions")}?${new URLSearchParams({ session: key })}`, from);
 
 const classOrder: SessionClass[] = ["business", "system", "unclassified"];
-const shortTime = (iso: string) => { const at = new Date(iso); return Number.isNaN(at.getTime()) ? iso : at.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }); };
 export interface SessionNavigationState {
   query: string;
   historyOpen: boolean;
@@ -43,8 +46,19 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
   const rememberPages = (membership: DirectoryMembership) => (count: number) => onState(previous =>
     previous.query.trim() !== search ? previous : { ...previous, pages: { ...previous.pages, [membership]: count } });
   const current = useSessionDirectoryGroup(token, projectId, "current", search, retries.current, !searchPending, state.pages.current, rememberPages("current"));
-  const historical = useSessionDirectoryGroup(token, projectId, "historical", search, retries.historical, historyOpen && !searchPending, state.pages.historical, rememberPages("historical"));
-  const unclassified = useSessionDirectoryGroup(token, projectId, "unclassified", search, retries.unclassified, historyOpen && !searchPending, state.pages.unclassified, rememberPages("unclassified"));
+  // A selected agent that is not among the current team may be inside the 历史与待归类 fold: read it then, and open the fold once for it.
+  const probing = !!selectedId && !!current.page && !current.items.some(session => session.key === selectedId);
+  const historical = useSessionDirectoryGroup(token, projectId, "historical", search, retries.historical, (historyOpen || probing) && !searchPending, state.pages.historical, rememberPages("historical"));
+  const unclassified = useSessionDirectoryGroup(token, projectId, "unclassified", search, retries.unclassified, (historyOpen || probing) && !searchPending, state.pages.unclassified, rememberPages("unclassified"));
+  const holds = useProviderHolds(projectId, true);
+  const openedFor = useRef<string | null>(null);
+  const insideHistory = !!selectedId && [...historical.items, ...unclassified.items].some(session => session.key === selectedId);
+  useEffect(() => {
+    if (!insideHistory || openedFor.current === selectedId) return;
+    openedFor.current = selectedId ?? null;
+    onStateRef.current(previous => previous.historyOpen ? previous : { ...previous, historyOpen: true });
+  }, [insideHistory, selectedId]);
+  const [onlyWaiting, setOnlyWaiting] = useState(false);
   useEffect(() => {
     const host = root.current?.closest<HTMLElement>(".mobile-navigation") ?? root.current;
     if (!host) return;
@@ -59,32 +73,43 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
     host.scrollTop = state.scrollTop;
     scrollRestored.current = true;
   }, [current.page, state.scrollTop]);
+  // After a reload the selected agent may sit below the fold or inside the folded 历史与待归类 group: bring its row into view once per selection.
+  const scrolledTo = useRef<string | null>(null);
+  useEffect(() => {
+    if (!selectedId || scrolledTo.current === selectedId) return;
+    const row = root.current?.querySelector<HTMLElement>('a[aria-current="page"]');
+    if (!row) return;
+    scrolledTo.current = selectedId;
+    row.scrollIntoView({ block: "center" });
+  });
   const totals = current.page?.totals;
   const grouped = groupSessionsByClass(current.items);
   const historicalCount = (totals?.historical ?? 0) + (totals?.unclassified ?? 0);
   // Agents that would show the same name are told apart by their short identifier, first on the second line.
   const collisions = agentNameCollisions([...current.items, ...historical.items, ...unclassified.items]);
+  const heldReasons = new Map((holds.data?.items ?? []).filter(hold => hold.state === "held").map(hold => [hold.provider, holdCauseLabel(hold)] as const));
+  // Whether the native connection is available is read once for the project (the page header reads the same query), so a row never says 空闲 where the header says 状态待核对.
+  const runtimeStatus = useProjectQuery(projectId, ["runtime", "status"], () => runtimeClient("", projectId).status(), { retry: false });
+  const runtimeAvailable = runtimeStatus.isError || typeof runtimeStatus.data?.available !== "boolean" ? null : runtimeStatus.data.available;
+  const statusOf = (session: ObservedSession) => agentRowStatus(session, { holdReason: session.runtime ? heldReasons.get(session.runtime.provider) ?? null : null, runtimeAvailable });
+  const waitingCount = [...current.items, ...historical.items, ...unclassified.items].filter(session => statusOf(session).waitingOnMe).length;
+  const show = (session: ObservedSession) => !onlyWaiting || statusOf(session).waitingOnMe;
+  // Row: line 1 the display name (the first four characters of the identifier after it only where two agents share the name),
+  // line 2 one sentence of status from the same wording source as the page header. Engineering identifiers live in the right column.
   function item(session: ObservedSession) {
-    const roles = session.roles.map(role => role.title).join(" · ");
     const name = agentDisplayName(session);
-    const taskSignal = session.currentTask ? session.currentTask.title : null;
-    // A generated name already says the role; what the service records about the agent says the rest.
-    const hint = agentNameHint(session, shortTime);
-    const short = collisions.get(session.key);
-    const status = agentStatusLabel(session);
-    const runtime = agentRuntimeLabel(session);
-    const signal = `${short ? `标识 ${short} · ` : ""}${runtime ? `${runtime} · ` : ""}${taskSignal ?? hint ?? (roles || sessionClassReason(session))} · ${status}`;
-    const dot = session.busy === true ? "bg-running" : session.runtimeState === "failed" ? "bg-destructive" : session.busy === false && session.runtimeState === "ready" ? "bg-border" : "bg-warning";
+    const short = collisions.get(session.key)?.slice(0, 4);
+    const status = statusOf(session);
     const selected = selectedId === session.key;
     return <a key={session.key} href={sessionHref(projectId, session.key)} aria-current={selected ? "page" : undefined} onClick={onNavigate}
-      className={cn("selected-mark session-nav-item flex items-center gap-2.5 rounded-lg py-1.5 pl-2 pr-3 text-text-secondary hover:bg-selected focus-visible:shadow-[var(--focus-ring)] outline-none",
+      className={cn("selected-mark session-nav-item flex h-[52px] items-center gap-2 rounded-lg py-1.5 pl-2 pr-2 text-text-secondary hover:bg-selected focus-visible:shadow-[var(--focus-ring)] outline-none",
         selected && "bg-accent font-semibold text-foreground hover:bg-accent")}>
       <AgentAvatar seed={session.key} roleSeed={session.roles[0]?.id ?? session.title} size={30} />
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate" title={name}>{name}</span>
-        <span className="session-nav-signal truncate text-caption font-normal text-muted-foreground" title={signal}>{signal}</span>
+        <span className="session-nav-name flex min-w-0 items-baseline gap-1.5"><span className="truncate" title={name}>{name}</span>
+          {short && <span className="session-nav-short shrink-0 text-caption font-normal text-muted-foreground">{short}</span>}</span>
+        <StatusTag tone={status.tone} label={status.text} className="session-nav-signal !py-0 font-normal text-muted-foreground" title={status.text} />
       </span>
-      <span aria-hidden="true" className={cn("size-[7px] shrink-0 rounded-full", dot)} />
     </a>;
   }
   function groupError(membership: DirectoryMembership, message: string) {
@@ -108,18 +133,21 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
       <LayoutDashboard size={18} aria-hidden="true" />统筹安排
       {totals && <span className="ml-auto text-caption text-muted-foreground" title="目录里的智能体总数，含历史与待归类">共 {totals.current + totals.historical + totals.unclassified} 个智能体</span>}
     </a>
+    {(waitingCount > 0 || onlyWaiting) && <Button variant="ghost" aria-pressed={onlyWaiting} onClick={() => setOnlyWaiting(value => !value)}
+      className="session-nav-waiting mx-3 mb-1 h-auto justify-start rounded-md px-2 py-1 text-small font-normal text-primary hover:bg-accent hover:text-primary">
+      {onlyWaiting ? `只看等你处理的（${waitingCount}），点此看全部` : `${waitingCount} 个等你处理`}</Button>}
     {current.error && groupError("current", current.error)}
     {(searchPending || current.loading && !current.page) && muted("正在读取智能体目录…")}
     <div className="session-nav-group session-nav-current">
       {!current.loading && current.page && current.items.length === 0 && muted("没有匹配的当前智能体。")}
       {classOrder.map(groupName => {
-        const entries = grouped[groupName];
+        const entries = grouped[groupName].filter(show);
         if (!entries.length) return null;
-        return <div className="session-nav-class flex flex-col gap-0.5" key={groupName}>{groupLabel(`${sessionClassLabel[groupName]} · 已加载 ${entries.length}`)}{entries.map(item)}</div>;
+        return <div className="session-nav-class flex flex-col gap-0.5" key={groupName}>{groupLabel(`${sessionClassLabel[groupName]} · ${entries.length}`)}{entries.map(item)}</div>;
       })}
     </div>
-    {current.hasMore && moreButton(current.moreBusy || current.loading, "加载更多当前智能体", () => void current.more())}
-    <div className="session-nav-group mt-3 flex flex-col gap-0.5 border-t border-border pt-2">
+    {current.hasMore && !onlyWaiting && moreButton(current.moreBusy || current.loading, "加载更多当前智能体", () => void current.more())}
+    {historicalCount > 0 && <div className="session-nav-group mt-3 flex flex-col gap-0.5 border-t border-border pt-2">
       <Button variant="row" onClick={() => onState(previous => ({ ...previous, historyOpen: !previous.historyOpen }))} aria-expanded={historyOpen}
         className="session-nav-history gap-1.5 px-3 py-1.5 text-small">
         <ChevronDown size={13} aria-hidden="true" className={cn("transition-transform", !historyOpen && "-rotate-90")} />历史与待归类{totals && ` · ${historicalCount}`}
@@ -128,17 +156,17 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
         {groupLabel(`历史 · ${totals?.historical ?? 0}`)}
         {historical.error && groupError("historical", historical.error)}
         {historical.loading && !historical.page && muted("正在读取历史智能体…")}
-        {historical.items.map(item)}
+        {historical.items.filter(show).map(item)}
         {historical.page && historical.items.length === 0 && muted("没有匹配的历史智能体。")}
         {historical.hasMore && moreButton(historical.moreBusy || historical.loading, "加载更多历史智能体", () => void historical.more())}
         {groupLabel(`待归类 · ${totals?.unclassified ?? 0}`)}
         {unclassified.error && groupError("unclassified", unclassified.error)}
         {unclassified.loading && !unclassified.page && muted("正在读取待归类智能体…")}
-        {unclassified.items.map(item)}
+        {unclassified.items.filter(show).map(item)}
         {unclassified.page && unclassified.items.length === 0 && muted("没有匹配的待归类智能体。")}
         {unclassified.hasMore && moreButton(unclassified.moreBusy || unclassified.loading, "加载更多待归类智能体", () => void unclassified.more())}
       </>}
-    </div>
+    </div>}
     <Sheet open={connectOpen} onOpenChange={setConnectOpen}>
       <SheetContent side="left">
         <SheetTitle>连接或建立智能体</SheetTitle>

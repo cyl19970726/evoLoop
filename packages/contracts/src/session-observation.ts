@@ -48,6 +48,8 @@ export interface ObservedSession {
   runtimeState: string | null;
   /** Unknown external status is null, never a fabricated idle/ready state. */
   busy: boolean | null;
+  /** Owned Session only: it asked the reader a question that is still unanswered (read-only; absent when unknown). */
+  awaitingReader?: boolean;
   currentTask: ObservedTask | null;
   latestBusinessRun: ObservedRun | null;
   lastProgressAt: string | null;
