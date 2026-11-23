@@ -728,6 +728,18 @@ export class RuntimeRunner {
       } catch (error) { this.recordFault(projectId,"project_scan",error); }
     }
   }
+  /**
+   * True only when a live native process itself answered the thread read with "cannot read or load this thread" (a server rejection, never a
+   * timeout, a lost connection or a local error) AND the thread is in neither native listing (the archived one was just read by the caller,
+   * the unarchived one is read here). A thread that is listed but unreadable, or any listing that cannot be read, is not absent.
+   */
+  private async nativeThreadAbsent(binding: RuntimeBinding, readError: unknown): Promise<boolean> {
+    if (!(readError instanceof RuntimeServerError) || readError.method !== "thread/read" ||
+      (readError.category !== "thread_unavailable" && readError.category !== "rollout_not_found")) return false;
+    if (typeof this.runtime.isThreadListed !== "function") return false;
+    try { return (await this.runtime.isThreadListed(binding)) === false; }
+    catch { return false; }
+  }
   private async closeSession(session: RuntimeSessionRecord): Promise<boolean> {
     if (!session.closeOperationId || !(await this.authorized(session) && await this.deps.allowedCwd(session.projectId, session.cwd) || await this.owned(session)))
       throw new Error("Session close authority or intent is unavailable");
@@ -759,7 +771,14 @@ export class RuntimeRunner {
     if (!this.runtime.archiveThread) throw new Error("Native archive unsupported");
     // Native source is a UI classification, not proof of who created the thread.
     // inspect validates the exact persisted thread/session/cwd binding before archive.
-    await this.runtime.inspect(binding);
+    try { await this.runtime.inspect(binding); }
+    catch (error) {
+      if (await this.nativeThreadAbsent(binding, error)) {
+        await this.deps.trusted.confirmSessionNativeAbsent(session.projectId, binding, session.closeOperationId);
+        return true;
+      }
+      throw error;
+    }
     await this.deps.trusted.markSessionArchiveAttempt(session.projectId, session.id, session.closeOperationId);
     let archiveError: RuntimeServerError | null = null;
     try { await this.runtime.archiveThread(binding); }
