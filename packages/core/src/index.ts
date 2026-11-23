@@ -1225,9 +1225,6 @@ export class WorkflowService {
   listGoalRevisions(principal: Principal, projectId: string, goalId: string) { return this.read(principal, projectId, async reader => { required(await reader.getGoal(goalId),"Goal"); return reader.listGoalRevisions(goalId); }); }
   getStage(principal: Principal, projectId: string, stageId: string) { return this.read(principal, projectId, reader => Promise.resolve(reader.getStage(stageId)).then(stage => required(stage,"Stage"))); }
   /** The stages linked to a roadmap phase, each with its latest review (the overview's milestones read these). */
-  listStagePhaseLinks(principal: Principal, projectId: string) {
-    return this.read(principal, projectId, reader => reader.listStagePhaseLinks?.() ?? Promise.resolve([]));
-  }
   /** The stage's milestone fields (null: not registered) with every change made to them, newest last. */
   getStageMilestone(principal: Principal, projectId: string, stageId: string) {
     return this.read(principal, projectId, async reader => { required(await reader.getStage(stageId), "Stage");

@@ -6,7 +6,7 @@ import { errorText } from "../../shared/api";
 import { href } from "../../shared/ui/shared";
 import { useLadder } from "./stagesRead";
 import { StatusTag } from "@evoloop/ui";
-import { LADDER_UNREADABLE, ladderHeading, ladderLines, ladderMarks } from "./stagesPresentation";
+import { LADDER_UNREADABLE, NOT_REGISTERED, ladderHeading, ladderLines, ladderMarks } from "./stagesPresentation";
 
 const muted = "text-caption text-muted-foreground";
 
@@ -36,10 +36,10 @@ export function LadderRow({ projectId, enabled, section = false }: { projectId: 
     <summary className="flex min-w-0 cursor-pointer list-none items-center gap-1 text-text-secondary outline-none focus-visible:shadow-[var(--focus-ring)] [&::-webkit-details-marker]:hidden">
       <ChevronRight aria-hidden="true" className="size-3.5 shrink-0 transition-transform duration-150 group-open:rotate-90 motion-reduce:transition-none" />
       <span className="shrink-0 text-caption compact:text-small">{ladderHeading(view)}</span>
-      <span className="flex min-w-0 flex-nowrap items-center gap-x-1.5 overflow-hidden whitespace-nowrap compact:gap-x-2.5" data-ladder-summary="">
+      <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5" data-ladder-summary="">
         {ladderMarks(view).map(mark => <span key={mark.key} className="inline-flex shrink-0 items-center gap-px" data-ladder-mark={mark.key} title={`${mark.key}：${mark.full}`}>
           <span className="text-caption font-medium text-foreground">{mark.key}</span>
-          <StatusTag tone={mark.tone} label={mark.label} className="gap-0.5 py-0 [&>span:last-child]:sr-only compact:[&>span:last-child]:not-sr-only" />
+          {!mark.registered && <StatusTag tone="unknown" label={NOT_REGISTERED} className="gap-0.5 py-0" />}
         </span>)}
       </span>
     </summary>

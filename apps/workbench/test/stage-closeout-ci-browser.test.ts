@@ -51,7 +51,9 @@ test("close-out: folded ladder row and the two left columns", { skip }, async t 
   const name24 = "第二个项目接入试用与对外说明第二轮第三轮第四轮五"; // exactly 24
   assert.equal([...name24].length, 24);
   const sentence = (key: string) => `${key} 级的状态整句：这一级在路线图状态表里写了足够长的一整句说明，超过三十个字，折叠时一个字也不应该出现。`;
-  const levels = ["M0", "M0.5", "M1", "M2", "M3", "M4"].map((key, index) => ({ key, name: `级别 ${key}`, status: index === 1 ? null : index === 0 ? `已完成：${sentence(key)}` : index === 2 ? `部分达成：${sentence(key)}` : index === 3 ? `进行中：${sentence(key)}` : `未开始：${sentence(key)}`, evidenceStages: [] }));
+  // The real roadmap's sentences do not start with a status word: they start with the place, the date or the host.
+  const openings = ["旧机上", "", "10-30 以来", "常驻主机已运行，", "没有人为介入，", "已在生产环境，"];
+  const levels = ["M0", "M0.5", "M1", "M2", "M3", "M4"].map((key, index) => ({ key, name: `级别 ${key}`, status: index === 1 ? null : `${openings[index]}${sentence(key)}`, evidenceStages: [] }));
 
   const open = async (path: string, width: number, height: number, scheme: "light" | "dark") => {
     const context = await browser.newContext({ viewport: { width, height }, colorScheme: scheme, locale: "zh-CN", timezoneId: "Asia/Tashkent" });
@@ -84,12 +86,14 @@ test("close-out: folded ladder row and the two left columns", { skip }, async t 
     assert.match(folded, /^验证阶梯 · 6 级/);
     assert.equal(await summary.locator("[data-ladder-mark]").count(), 6);
     for (const key of ["M0", "M0.5", "M1", "M2", "M3", "M4"]) assert.ok(await summary.locator(`[data-ladder-mark="${key}"]`).count() === 1, key);
-    assert.ok(!folded.includes("整句"), "no status sentence while folded");
-    const box = await summary.boundingBox(); assert.ok(box && box.height < 28, `the folded row is one line at ${width} (height ${box?.height})`);
-    const marks = await summary.locator("[data-ladder-mark]").evaluateAll(nodes => nodes.map(node => { const r = node.getBoundingClientRect(); return { right: r.right, top: r.top }; }));
+    assert.ok(!folded.includes("整句") && !folded.includes("见全文"), "no status sentence and no 见全文 while folded");
+    const box = await summary.boundingBox(); assert.ok(box && box.height < (width >= 1000 ? 28 : 60), `the folded row is one line at 1440 and at most two at 390 (height ${box?.height}, width ${width})`);
+    const marks = await summary.locator("[data-ladder-mark]").evaluateAll(nodes => nodes.map(node => { const r = node.getBoundingClientRect(); return { right: r.right, left: r.left, top: r.top }; }));
     const nav = await summary.evaluate(node => node.getBoundingClientRect().right);
-    assert.ok(marks.every(mark => mark.right <= nav + 0.5 && Math.abs(mark.top - marks[0]!.top) < 4), `six marks on the one line, inside the row at ${width}: ${JSON.stringify(marks)}`);
-    if (width >= 1000) for (const label of ["已有", "未登记", "部分", "进行中", "未有"]) assert.ok(folded.includes(label), label);
+    assert.ok(marks.every(mark => mark.right <= nav + 0.5 && mark.left >= 0), `all six numbers, the last included, are inside the row at ${width}: ${JSON.stringify(marks)}`);
+    if (width >= 1000) assert.ok(marks.every(mark => Math.abs(mark.top - marks[0]!.top) < 4), "one line at 1440");
+    assert.deepEqual(await summary.locator("[data-ladder-mark]").evaluateAll(nodes => nodes.map(node => [node.getAttribute("data-ladder-mark"), /未登记/.test((node as HTMLElement).innerText)])),
+      [["M0", false], ["M0.5", true], ["M1", false], ["M2", false], ["M3", false], ["M4", false]], "only the unregistered level carries a mark");
     await noOverflow(page);
     if (shots) await page.screenshot({ path: `${shots}/closeout-overview-${width}-${scheme}.png` });
     // Expanded: the full sentences.
@@ -112,10 +116,16 @@ test("close-out: folded ladder row and the two left columns", { skip }, async t 
       const journey = await open("journey", width, height, scheme);
       const journeyRail = journey.locator('nav[aria-label="目标与阶段"]'); await journeyRail.locator("[data-stage-label]").first().waitFor({ timeout: 20000 });
       const labels = journeyRail.locator("a:has([data-stage-label])"); assert.equal(await labels.count(), 3);
-      const jr = await Promise.all([0, 1, 2].map(index => read(labels.nth(index))));
-      assert.deepEqual(jr.map(item => item.due), ["· 12-02", "· 未定", "· 12-14"]);
-      assert.equal(jr[0]!.name, name24); assert.ok(jr[0]!.cut); assert.equal(jr[1]!.name, "旧阶段的名字");
-      for (const item of jr) assert.ok(item.dueRight! <= item.rowRight + 0.5, "the due date is inside the column");
+      // Two lines per stage: the name alone, then due date, task count and status. The name column is the column.
+      const jr = await Promise.all([0, 1, 2].map(index => labels.nth(index).evaluate(node => {
+        const name = node.querySelector<HTMLElement>("[data-stage-label-name]")!; const facts = node.querySelector<HTMLElement>("[data-stage-facts]")!; const due = facts.querySelector<HTMLElement>("[data-stage-label-due]");
+        const row = node.getBoundingClientRect(); return { name: name.textContent, nameInName: node.querySelector("[data-stage-label-name] [data-stage-label-due]") === null, cut: name.scrollWidth > name.clientWidth, nameWidth: name.getBoundingClientRect().width,
+          due: due?.textContent ?? null, dueRight: due ? due.getBoundingClientRect().right : null, rowRight: row.right, below: facts.getBoundingClientRect().top >= name.getBoundingClientRect().bottom - 1, facts: facts.innerText }; })));
+      assert.deepEqual(jr.map(item => item.due), ["12-02", "未定", "12-14"]);
+      assert.ok(jr.every(item => item.below && item.nameInName), "the facts are the second line");
+      assert.equal(jr[0]!.name, name24); assert.ok(jr[0]!.cut, "the 24-character name is cut"); assert.ok(jr[0]!.nameWidth > 150, `the name column is wide (${jr[0]!.nameWidth})`);
+      assert.equal(jr[1]!.name, "旧阶段的名字"); assert.ok(!jr[1]!.cut);
+      for (const item of jr) { assert.ok(item.dueRight! <= item.rowRight + 0.5, "the due date is inside the column"); assert.match(item.facts, /项任务/); }
       await noOverflow(journey);
       if (shots) await journey.screenshot({ path: `${shots}/closeout-journey-${width}-${scheme}.png` });
       await journey.context().close();

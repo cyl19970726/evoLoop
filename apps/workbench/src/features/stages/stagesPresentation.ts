@@ -74,18 +74,9 @@ export interface LadderLine { key: string; name: string; status: string }
 export function ladderLines(ladder: LadderView): LadderLine[] {
   return ladder.levels.map(level => ({ key: level.key, name: level.name, status: level.status?.trim() || NOT_REGISTERED }));
 }
-/** The short mark of a level's status sentence for the folded row. Only the sentence's own first words are read; a sentence that says none of these is 见全文, never a guess. */
-export interface LadderMark { key: string; tone: StatusTone; label: string; full: string }
-export function ladderMark(status: string | null | undefined): { tone: StatusTone; label: string } {
-  const text = status?.trim();
-  if (!text) return { tone: "unknown", label: NOT_REGISTERED };
-  if (/^(已完成|已有|已通过|已达成|已满足|已退出|完成|通过)/.test(text)) return { tone: "done", label: "已有" };
-  if (/^(部分|有限|基本)/.test(text)) return { tone: "waiting", label: "部分" };
-  if (/^(进行中|在做|试行)/.test(text)) return { tone: "progress", label: "进行中" };
-  if (/^(未|没有|尚未|还没|暂无|待)/.test(text)) return { tone: "idle", label: "未有" };
-  return { tone: "unknown", label: "见全文" };
-}
-export const ladderMarks = (ladder: LadderView): LadderMark[] => ladderLines(ladder).map(line => ({ key: line.key, ...ladderMark(line.status === NOT_REGISTERED ? null : line.status), full: line.status }));
+/** The folded row names every level by its number; only a level the roadmap has no status for carries a mark (未登记). A status sentence is never summarised by guessing: it is read in full when the row is opened. */
+export interface LadderMark { key: string; registered: boolean; full: string }
+export const ladderMarks = (ladder: LadderView): LadderMark[] => ladderLines(ladder).map(line => ({ key: line.key, registered: line.status !== NOT_REGISTERED, full: line.status }));
 /** "验证阶梯 · 6 级": the words at the left of the folded row. */
 export const ladderHeading = (ladder: LadderView): string => `验证阶梯 · ${ladder.levels.length} 级`;
 

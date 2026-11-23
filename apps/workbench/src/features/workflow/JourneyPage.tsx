@@ -108,6 +108,15 @@ export function JourneyPage({ context, active, propose }: { context: MutationCon
   const goalHref = (id: string) => `${journeyHref}?goal=${id}`;
   const tree = goalTree(goals, stages);
   const stageMeta = (item: Stage) => groups ? `${groups.byStage.get(item.id)?.length ?? 0} 项任务${work?.complete ? "" : "（已读部分）"}` : states.work === "failed" ? "任务暂不可读取" : "正在读取任务";
+  // Two lines per stage: its name alone on the first (so a long name takes the whole column), then due date, task count and status.
+  const stageFacts = (item: Stage) => {
+    const due = labelOf(item).due;
+    return <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 whitespace-normal" data-stage-facts="">
+      {due && <span className="tabular-nums" title={due.title} data-stage-label-due="">{due.text}</span>}
+      <span>{stageMeta(item)}</span>
+      <StatusTag tone={statusOf(item).tone} label={statusOf(item).label} />
+    </span>;
+  };
   const rail = <ContextRailContent><div data-ui="">
     <nav aria-label="目标与阶段" className="flex flex-col gap-0.5 pb-2 pt-2">
       <div className="flex items-center gap-2 px-3 pb-1.5 pt-2"><span className={cn(muted, "flex-1")}>目标与阶段{goalsKnown ? ` · ${goals.length} 个目标` : ""}</span>
@@ -117,12 +126,12 @@ export function JourneyPage({ context, active, propose }: { context: MutationCon
       {tree.items.map(({ goal: item, stages: owned }) => <div key={item.id} className="flex flex-col gap-0.5">
         <ListRow href={goalHref(item.id)} selected={!stage && goal?.id === item.id} title={<span title={item.outcome}>{item.outcome}</span>} meta={stagesKnown ? `目标 · ${owned.length} 个阶段` : `目标 · ${stagesUnknown}`} />
         {owned.length > 0 && <ul aria-label={`${item.outcome}的阶段`} className="flex flex-col gap-0.5 pl-3">{owned.map(entry => <li key={entry.id}>
-          <ListRow href={stageHref(entry.id)} selected={stage?.id === entry.id} title={<span title={entry.deliverable} className="block min-w-0"><StageLabel {...labelOf(entry)} /></span>}
-            meta={stageMeta(entry)} trailing={<StatusTag tone={statusOf(entry).tone} label={statusOf(entry).label} />} />
+          <ListRow href={stageHref(entry.id)} selected={stage?.id === entry.id} title={<span title={entry.deliverable} className="block min-w-0"><StageLabel {...labelOf(entry)} due={null} /></span>}
+            meta={stageFacts(entry)} />
         </li>)}</ul>}
       </div>)}
       {tree.orphans.length > 0 && <div className="mt-2 flex flex-col gap-0.5"><span className={cn(muted, "px-3")}>所属目标未读到的阶段</span>
-        {tree.orphans.map(entry => <ListRow key={entry.id} href={stageHref(entry.id)} selected={stage?.id === entry.id} title={<span title={entry.deliverable} className="block min-w-0"><StageLabel {...labelOf(entry)} /></span>} meta={stageMeta(entry)} />)}</div>}
+        {tree.orphans.map(entry => <ListRow key={entry.id} href={stageHref(entry.id)} selected={stage?.id === entry.id} title={<span title={entry.deliverable} className="block min-w-0"><StageLabel {...labelOf(entry)} due={null} /></span>} meta={stageFacts(entry)} />)}</div>}
       {goalsRead.data && !goalsRead.data.complete && <p className={cn(muted, "px-3")}>目标只列出了已读的部分。</p>}
     </nav>
   </div></ContextRailContent>;

@@ -54,11 +54,10 @@ test("only open Tasks the service marks unassigned go in the unassigned area", (
   assert.equal(isUnowned({ taskState: "todo", stageOwnership: { state: "none", reason: "x" } } as never), false);
   assert.equal(isUnowned({ taskState: "todo" } as never), false);
 });
-test("the folded ladder row marks each level by the first words of its own status; no status is 未登记 and an unrecognised sentence is 见全文", () => {
+test("the folded ladder row names each level by its number; only a level with no status carries a mark (未登记)", () => {
   const level = (key: string, status: string | null) => ({ key, name: key, status, evidenceStages: [] });
-  const marks = ladderMarks({ available: true, source: { commit: null }, levels: [level("M0", "已完成：任务、交付、验收各有记录，共三十个字以上的整句说明"), level("M0.5", null), level("M1", "部分达成，仍缺一项"), level("M2", "进行中"), level("M3", "未开始，没有证据"), level("M4", "常驻主机已运行")] } as never);
-  assert.deepEqual(marks.map(mark => [mark.key, mark.label]), [["M0", "已有"], ["M0.5", "未登记"], ["M1", "部分"], ["M2", "进行中"], ["M3", "未有"], ["M4", "见全文"]]);
-  assert.deepEqual(marks.map(mark => mark.tone), ["done", "unknown", "waiting", "progress", "idle", "unknown"]);
+  const marks = ladderMarks({ available: true, source: { commit: null }, levels: [level("M0", "旧机上任务、交付、验收各有记录，共三十个字以上的整句说明"), level("M0.5", null), level("M1", "10-30 以来每天都有一份验收结论，已连续多日"), level("M2", "进行中"), level("M3", "未开始，没有证据"), level("M4", "常驻主机已运行，三十个字以上的整句说明")] } as never);
+  assert.deepEqual(marks.map(mark => [mark.key, mark.registered]), [["M0", true], ["M0.5", false], ["M1", true], ["M2", true], ["M3", true], ["M4", true]]);
   assert.equal(ladderHeading({ available: true, source: { commit: null }, levels: marks.map(mark => ({ key: mark.key })) } as never), "验证阶梯 · 6 级");
 });
 test("a stage without a short name keeps the first line of its text, without the 名称： label", () => {
