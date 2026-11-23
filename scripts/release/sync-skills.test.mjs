@@ -50,7 +50,7 @@ test("S2. a workspace with local changes under the skills, or in use, or on a bu
   const want = await skillHashes(repo);
   const edited = clone(root, repo, "edited", c1); write(edited, `${SKILLS_DIR}/a/SKILL.md`, "my own change\n"); write(edited, `${SKILLS_DIR}/mine/SKILL.md`, "new skill\n");
   const busy = clone(root, repo, "busy", c1);
-  const feature = clone(root, repo, "feature", c1); git(feature, "checkout", "-q", "-b", "feat/x");
+  const feature = clone(root, repo, "feature", c1); git(feature, "checkout", "-q", "-b", "feat/x"); write(feature, "own.txt", "unmerged work\n"); git(feature, "add", "-A"); git(feature, "commit", "-q", "-m", "own work"); const featureHead = git(feature, "rev-parse", "HEAD");
   const notRepo = join(root, "plain"); mkdirSync(notRepo);
   const before = { edited: await skillHashes(edited), busy: await skillHashes(busy), feature: await skillHashes(feature) };
   const using = async () => [{ pid: 4242, command: "codex", cwd: join(busy, "apps") }];
@@ -63,12 +63,12 @@ test("S2. a workspace with local changes under the skills, or in use, or on a bu
   };
   assert.equal(results.edited.result, "unsynced"); assert.match(results.edited.reason, /技能目录有本地改动（\d+ 项.*），未动/);
   assert.equal(results.busy.result, "unsynced"); assert.match(results.busy.reason, /正被使用（codex\[4242\].*未切换/);
-  assert.equal(results.feature.result, "unsynced"); assert.match(results.feature.reason, /在业务分支 feat\/x 上，不切换分支也不移动它/);
+  assert.equal(results.feature.result, "unsynced"); assert.match(results.feature.reason, /在业务分支 feat\/x 上，有 1 个提交不在发布提交里（未合并），不切换分支也不移动它/);
   assert.equal(results.missing.reason, "目录不存在"); assert.equal(results.plain.reason, "不是 git 工作区");
   assert.deepEqual(await skillHashes(edited), before.edited, "the local change is still there, byte for byte");
   assert.equal(readFileSync(join(edited, SKILLS_DIR, "a", "SKILL.md"), "utf8"), "my own change\n");
   assert.deepEqual(await skillHashes(busy), before.busy); assert.equal(git(busy, "rev-parse", "HEAD"), c1, "a workspace in use is not switched");
-  assert.deepEqual(await skillHashes(feature), before.feature); assert.equal(git(feature, "branch", "--show-current"), "feat/x"); assert.equal(git(feature, "rev-parse", "HEAD"), c1);
+  assert.deepEqual(await skillHashes(feature), before.feature); assert.equal(git(feature, "branch", "--show-current"), "feat/x"); assert.equal(git(feature, "rev-parse", "HEAD"), featureHead);
   const unlisted = await syncWorkspace({ path: busy, sha: c2, want, lister: async () => { throw new Error("no lsof"); } });
   assert.match(unlisted.reason, /无法列出进程工作目录.*未动/, "when processes cannot be listed nothing is assumed idle");
 });
@@ -133,4 +133,48 @@ test("S6. a workspace written through a symlink is still seen as in use: the pro
   } finally { child.kill(); }
   // a directory that is only similarly named is not inside it
   assert.deepEqual(await processesIn(busy, { lister: async () => [{ pid: 9, command: "x", cwd: `${busy}-other` }] }), []);
+});
+
+test("S7. a clean idle workspace on a business branch already merged into the release (0 ahead) is checked out detached at the release commit, the branch is kept, the record says from which branch", async () => {
+  const { root, repo, c1, c2 } = origin();
+  const want = await skillHashes(repo);
+  const merged = clone(root, repo, "merged", c1); git(merged, "checkout", "-q", "-b", "feat/done");
+  const result = await syncWorkspace({ path: merged, sha: c2, want, lister: none, runActive: async () => null });
+  assert.equal(result.result, "updated"); assert.equal(result.fromBranch, "feat/done"); assert.match(result.mode, /从已合并分支 feat\/done 切到发布提交/);
+  assert.equal(git(merged, "rev-parse", "HEAD"), c2); assert.equal(git(merged, "branch", "--show-current"), "", "detached now");
+  assert.equal(git(merged, "rev-parse", "feat/done"), c1, "the branch itself is not moved or deleted");
+  assert.deepEqual(differences(want, await skillHashes(merged)), []);
+  // through syncSkills: the list for the release record carries the branch, the count says updated
+  const again = clone(root, repo, "merged2", c1); git(again, "checkout", "-q", "-b", "feat/old");
+  const all = await syncSkills({ workspaces: [again], sourceDir: repo, sha: c2, lister: none });
+  assert.equal(all.updated[0].fromBranch, "feat/old"); assert.match(all.summary, /1 个一致（其中本次更新 1 个），0 个未同步/);
+});
+
+test("S8. a merged branch is still left alone when it has commits ahead, a changed work tree (tracked or untracked, outside the skills too), a process in it, or a Session with a Run in progress; the reason names which", async () => {
+  const { root, repo, c1, c2 } = origin();
+  const want = await skillHashes(repo);
+  const branchAt = name => { const dir = clone(root, repo, name, c1); git(dir, "checkout", "-q", "-b", `feat/${name}`); return dir; };
+  const ahead = branchAt("ahead"); write(ahead, "own.txt", "x\n"); git(ahead, "add", "-A"); git(ahead, "commit", "-q", "-m", "own");
+  const tracked = branchAt("tracked"); write(tracked, "app.txt", "edited\n");
+  const untracked = branchAt("untracked"); write(untracked, "notes.txt", "scratch\n");
+  const process_ = branchAt("process");
+  const running = branchAt("running");
+  const heads = Object.fromEntries([ahead, tracked, untracked, process_, running].map(dir => [dir, git(dir, "rev-parse", "HEAD")]));
+  const r = {
+    ahead: await syncWorkspace({ path: ahead, sha: c2, want, lister: none }),
+    tracked: await syncWorkspace({ path: tracked, sha: c2, want, lister: none }),
+    untracked: await syncWorkspace({ path: untracked, sha: c2, want, lister: none }),
+    process: await syncWorkspace({ path: process_, sha: c2, want, lister: async () => [{ pid: 55, command: "claude", cwd: process_ }] }),
+    running: await syncWorkspace({ path: running, sha: c2, want, lister: none, runActive: async () => "Run 199e7f08" }),
+  };
+  for (const [name, item] of Object.entries(r)) assert.equal(item.result, "unsynced", name);
+  assert.match(r.ahead.reason, /有 1 个提交不在发布提交里（未合并）/);
+  assert.match(r.tracked.reason, /分支 feat\/tracked 已合并，但工作树有改动（1 项，如 M app\.txt），未动/);
+  assert.match(r.untracked.reason, /分支 feat\/untracked 已合并，但工作树有改动（1 项，如 \?\? notes\.txt）/);
+  assert.match(r.process.reason, /正被使用（claude\[55\]/);
+  assert.match(r.running.reason, /它的 Session 有进行中的 Run（Run 199e7f08），未切换/);
+  for (const dir of Object.keys(heads)) { assert.equal(git(dir, "rev-parse", "HEAD"), heads[dir], `${dir} did not move`); assert.match(git(dir, "branch", "--show-current"), /^feat\//, `${dir} is still on its branch`); }
+  assert.equal(readFileSync(join(tracked, "app.txt"), "utf8"), "edited\n", "the change is still there");
+  const unknown = await syncWorkspace({ path: running, sha: c2, want, lister: none, runActive: async () => { throw new Error("service down"); } });
+  assert.match(unknown.reason, /无法确认它的 Session 有没有进行中的 Run（service down），未动/);
 });

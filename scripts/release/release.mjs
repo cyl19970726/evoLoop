@@ -335,8 +335,9 @@ export async function run({ config, id, ref = "HEAD", execute = false, from = nu
     // Recorded, never acted on: a workspace that cannot be synced is listed with the reason and tried again at the next release.
     try {
       const sha = state.buildInfo?.commit ?? state.commit?.sha ?? String(await runner(["git", "-C", sourceDir, "rev-parse", "HEAD"], { cwd: sourceDir, env, capture: true })).trim();
-      acceptance.skillSync = await syncSkills({ workspaces: config.skillSync.workspaces, sourceDir, sha, baseBranch: config.skillSync.baseBranch ?? config.baseBranch ?? "main", remote: config.skillSync.remote ?? config.remote ?? "origin", lister: config.skillSync.lister });
+      acceptance.skillSync = await syncSkills({ workspaces: config.skillSync.workspaces, sourceDir, sha, baseBranch: config.skillSync.baseBranch ?? config.baseBranch ?? "main", remote: config.skillSync.remote ?? config.remote ?? "origin", lister: config.skillSync.lister, runActive: config.skillSync.runActive });
       log(acceptance.skillSync.summary);
+      for (const item of Array.isArray(acceptance.skillSync.updated) ? acceptance.skillSync.updated : []) if (item.fromBranch) log(`  已切换 ${item.path}：${item.mode}`);
       for (const item of acceptance.skillSync.unsynced) log(`  未同步 ${item.path}：${item.reason}`);
     } catch (error) { acceptance.skillSync = { error: error.message, summary: `技能同步：没有完成（${error.message}）` }; log(`WARN ${acceptance.skillSync.summary} (the release continues)`); }
   }
