@@ -13,7 +13,8 @@ const resultText = { used: "已使用", failed: "使用失败", notUsed: "未使
 /** The status mark of a node: its kind and, for an acceptance conclusion, its result. Never the line's background. */
 export function nodeMark(node: BusinessNode): { tone: StatusTone; label: string } {
   switch (node.kind) {
-    case "accepted": return { tone: "progress", label: "接手" };
+    // A static mark: 接手 is a past event, and a turning spinner would show a closed Task as still in progress.
+    case "accepted": return { tone: "history", label: "接手" };
     case "delivered": return node.technicalResult === "failed" ? { tone: "blocked", label: "交付" } : { tone: "waiting", label: "交付" };
     case "observed": return { tone: node.result === "used" ? "done" : node.result === "failed" ? "blocked" : "idle", label: "验收" };
     case "closed": return node.cancelled ? { tone: "history", label: "已取消" } : { tone: "done", label: "已关闭" };

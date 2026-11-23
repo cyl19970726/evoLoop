@@ -26,6 +26,7 @@ test("each node says what happened in the Task's words and lands on the right ta
   assert.equal(nodeText(closed), "任务已关闭 · acc");
   assert.equal(nodeText({ ...closed, cancelled: true }), "任务已取消 · acc");
   assert.deepEqual([accepted, delivered, failed, used, closed].map(node => nodeMark(node).label), ["接手", "交付", "验收", "验收", "已关闭"]);
+  assert.notEqual(nodeMark(accepted).tone, "progress", "a past event never turns like work in progress");
   assert.notEqual(nodeMark(failed).tone, nodeMark(used).tone, "the result shows in the mark");
   assert.equal(nodeHref(accepted, taskHref), "/p/p/tasks/task-1");
   assert.equal(nodeHref(closed, taskHref), "/p/p/tasks/task-1");

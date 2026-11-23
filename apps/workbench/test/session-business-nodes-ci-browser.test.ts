@@ -65,7 +65,6 @@ test("business nodes stand between the rounds by time; work rounds say what they
     node("d1", "delivered", 299.5, { deliveryId: "d1", number: 1, artifact: { kind: "pr", label: "PR #537" }, technicalResult: "passed", by: "dev" }),
     node("acc", "accepted", 310, { by: "leader-1", method: "leader" }),
   ].map(({ deliveryNumber: _ignored, ...rest }) => rest);
-  const foreign = { ...nodes[0]!, id: "p:node:foreign", taskId: otherTask, node: { ...(nodes[0]!.node as Json), taskId: otherTask, title: "别的任务" } };
 
   const open = async (width: number, height: number, colorScheme: "light" | "dark") => {
     const context = await browser.newContext({ viewport: { width, height }, locale: "zh-CN", colorScheme });
@@ -87,8 +86,8 @@ test("business nodes stand between the rounds by time; work rounds say what they
       const response = await route.fetch(); const body = await response.json() as Json;
       const url = new URL(route.request().url()); nodeRequests.push(url);
       const since = url.searchParams.get("since"); const floor = since ? Date.parse(since) : -Infinity;
-      // Another agent's Task never reaches the page from the real reader; this one would, so the page must show it only if the reader sent it.
-      const items = [...nodes, ...(url.searchParams.get("foreign") ? [foreign] : [])].filter(item => Date.parse(item.occurredAt) >= floor - 1000);
+      // The reader answers only for this Session's own Tasks (another agent's Task is excluded there and covered by the real-PG test), so the page asks the opened Session and shows what came back.
+      const items = nodes.filter(item => Date.parse(item.occurredAt) >= floor - 1000);
       await route.fulfill({ response, body: JSON.stringify({ ...body, items, nextCursor: null }) });
     });
     await page.goto(`${fixture.base}${scene.path}`);
@@ -106,10 +105,11 @@ test("business nodes stand between the rounds by time; work rounds say what they
     t.after(() => context.close());
     let lines = await nodeLines(timeline);
     assert.deepEqual(lines.map(line => line.kind), ["observed", "closed"], "only the nodes inside the loaded range");
-    assert.match(lines[0]!.text, /验收.*已使用.*acceptance-1/); assert.match(lines[1]!.text, /任务已关闭 · acceptance-1/);
+    assert.match(lines[0]!.text, /验收.*已使用.*acceptance-1/);
+    assert.equal(await timeline.locator("[data-business-node] .animate-spin").count(), 0, "no node turns like work in progress"); assert.match(lines[1]!.text, /任务已关闭 · acceptance-1/);
     assert.match(lines[0]!.href ?? "", new RegExp(`${taskId}.*tab=delivery.*delivery=d2|tab=delivery.*delivery=d2.*${taskId}|delivery=d2`));
     assert.ok(lines[1]!.href?.includes(taskId) && !lines[1]!.href?.includes("tab=delivery"), "closing lands on the Task");
-    assert.ok(nodeRequests.length >= 1); assert.ok(nodeRequests.every(url => url.searchParams.get("business") === "1" && url.searchParams.get("since")), "business read with since");
+    assert.ok(nodeRequests.length >= 1); assert.ok(nodeRequests.every(url => decodeURIComponent(url.pathname).includes("/session-work/owned:")), "asked of the opened Session only"); assert.ok(nodeRequests.every(url => url.searchParams.get("business") === "1" && url.searchParams.get("since")), "business read with since");
     const olderTimes = Date.parse(nodeRequests[0]!.searchParams.get("since")!);
     assert.ok(Math.abs(olderTimes - Date.parse(ago(150))) < 5000, "since is the earliest loaded round");
     // Rounds: the work round with no delivery says so; the reply round says neither.
@@ -134,6 +134,8 @@ test("business nodes stand between the rounds by time; work rounds say what they
     lines = await nodeLines(timeline);
     assert.deepEqual(lines.map(line => line.kind), ["accepted", "delivered", "observed", "delivered", "observed", "closed"], "older nodes arrive with the older history, in time order");
     assert.match(lines[0]!.text, /接手了「做表格视图」 · leader-1分派/);
+    assert.equal(await timeline.locator("[data-business-node] .animate-spin").count(), 0, "接手 is a static mark, also in the history");
+    assert.equal(await timeline.locator("[data-business-node=accepted] [data-tone=history]").count(), 1);
     assert.match(lines[1]!.text, /提交了第 1 份交付 · PR #537/); assert.match(lines[2]!.text, /验收：使用失败（第 1 份） · acceptance-1 · 表头没有对齐。/);
     assert.match(lines[3]!.text, /提交了第 2 份交付 · 表格视图交付报告/);
     for (const index of [1, 2, 3]) assert.ok(lines[index]!.href?.includes("tab=delivery"), `node ${index} lands on 交付与使用`);
