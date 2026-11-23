@@ -65,6 +65,10 @@ test("business nodes stand between the rounds by time; work rounds say what they
     node("d1", "delivered", 299.5, { deliveryId: "d1", number: 1, artifact: { kind: "pr", label: "PR #537" }, technicalResult: "passed", by: "dev" }),
     node("acc", "accepted", 310, { by: "leader-1", method: "leader" }),
   ].map(({ deliveryNumber: _ignored, ...rest }) => rest);
+  // Another agent's Task: it carries another Session's key. The page must not show it even when it is handed over inside the loaded range.
+  const foreignTitle = "别的智能体的任务·不该出现";
+  const foreign = { ...node("foreign", "closed", 95, { cancelled: false, by: "acceptance-9" }), sessionKey: "owned:someone-else", taskId: "99999999-9999-4999-8999-999999999999" };
+  foreign.node = { ...foreign.node, taskId: foreign.taskId, title: foreignTitle };
 
   const open = async (width: number, height: number, colorScheme: "light" | "dark") => {
     const context = await browser.newContext({ viewport: { width, height }, locale: "zh-CN", colorScheme });
@@ -86,8 +90,9 @@ test("business nodes stand between the rounds by time; work rounds say what they
       const response = await route.fetch(); const body = await response.json() as Json;
       const url = new URL(route.request().url()); nodeRequests.push(url);
       const since = url.searchParams.get("since"); const floor = since ? Date.parse(since) : -Infinity;
-      // The reader answers only for this Session's own Tasks (another agent's Task is excluded there and covered by the real-PG test), so the page asks the opened Session and shows what came back.
-      const items = nodes.filter(item => Date.parse(item.occurredAt) >= floor - 1000);
+      // The route answers with this Session's nodes plus one that belongs to another Session and Task: the page has to keep it out itself.
+      const key = decodeURIComponent(url.pathname.split("/session-work/")[1]!.split("/")[0]!);
+      const items = [...nodes.map(item => ({ ...item, sessionKey: key })), foreign].filter(item => Date.parse(item.occurredAt) >= floor - 1000);
       await route.fulfill({ response, body: JSON.stringify({ ...body, items, nextCursor: null }) });
     });
     await page.goto(`${fixture.base}${scene.path}`);
@@ -106,6 +111,7 @@ test("business nodes stand between the rounds by time; work rounds say what they
     let lines = await nodeLines(timeline);
     assert.deepEqual(lines.map(line => line.kind), ["observed", "closed"], "only the nodes inside the loaded range");
     assert.match(lines[0]!.text, /验收.*已使用.*acceptance-1/);
+    assert.ok(nodeRequests.length >= 1, "the foreign node was handed to the page"); assert.ok(!(await timeline.innerText()).includes(foreignTitle) && !(await page.content()).includes("99999999-9999-4999"), "another agent's Task node is not shown");
     assert.equal(await timeline.locator("[data-business-node] .animate-spin").count(), 0, "no node turns like work in progress"); assert.match(lines[1]!.text, /任务已关闭 · acceptance-1/);
     assert.match(lines[0]!.href ?? "", new RegExp(`${taskId}.*tab=delivery.*delivery=d2|tab=delivery.*delivery=d2.*${taskId}|delivery=d2`));
     assert.ok(lines[1]!.href?.includes(taskId) && !lines[1]!.href?.includes("tab=delivery"), "closing lands on the Task");

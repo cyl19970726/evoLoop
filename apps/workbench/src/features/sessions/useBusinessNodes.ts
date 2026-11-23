@@ -24,7 +24,8 @@ export function useBusinessNodes(projectId: string, sessionKey: string, since: s
       try {
         for (let page = 0; page < pageBudget; page++) {
           const read = await sessionClient("", projectId).businessNodes(sessionKey, since, cursor, controller.signal);
-          found.push(...read.items.filter(isNodeActivity));
+          // The reader already answers only for this agent's Tasks; a node of another Session is kept out here as well.
+          found.push(...read.items.filter(isNodeActivity).filter(item => item.sessionKey === sessionKey));
           cursor = read.nextCursor ?? undefined;
           if (!cursor) break;
           if (page === pageBudget - 1) cut = true;
