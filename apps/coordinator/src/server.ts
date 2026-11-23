@@ -435,6 +435,7 @@ export async function buildServer(options: {
         throw new DomainError("FORBIDDEN", "当前身份没有此项目、范围和职责的日程授权。");
       }
     }
+    await options.service.checkRequiredLines?.(command); // optional: unit-test doubles of the service do not implement it
     const result = command.type === "session.message.manualStop"
       ? await options.manualStop!.execute(who(request.principal),command)
       : await options.service.execute(who(request.principal), command);

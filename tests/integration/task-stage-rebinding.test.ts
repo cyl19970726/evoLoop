@@ -71,7 +71,7 @@ test("reviewed-stage Task can be explicitly detached and rebound without changin
   await proposeStage(foreignStageId, foreignGoalId, otherProjectId);
   await acceptStage(foreignStageId, otherProjectId);
 
-  const original = applied(await send({ type: "task.create", taskId, title: "Original Task", content: "Keep same task identity",
+  const original = applied(await send({ type: "task.create", taskId, title: "Original Task", content: "Keep same task identity\n关闭后下一步：无",
     acceptance: "A checked result", owner: ownerRoleId, stageId: oldStageId, consumer: "owner",
     evidence: "Observed original need", stopCondition: "Owner reviews delivery" }));
   const first = await service.getTask(principal, projectId, taskId);
@@ -102,7 +102,7 @@ test("reviewed-stage Task can be explicitly detached and rebound without changin
   const detached = await service.getTask(principal, projectId, taskId);
   assert.equal(detached.proposal?.stageId, null);
   assert.equal(detached.task.id, taskId);
-  assert.equal((await service.getTaskRevision(principal, projectId, taskId, first.revision.id)).revision.content, "Keep same task identity");
+  assert.equal((await service.getTaskRevision(principal, projectId, taskId, first.revision.id)).revision.content, "Keep same task identity\n关闭后下一步：无");
   const oldProposal = await pool.query("SELECT stage_id FROM task_proposal WHERE project_id=$1 AND task_id=$2 AND task_revision_id=$3",
     [projectId, taskId, first.revision.id]);
   assert.equal(oldProposal.rows[0].stage_id, oldStageId);

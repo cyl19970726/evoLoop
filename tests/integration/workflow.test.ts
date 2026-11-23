@@ -43,7 +43,7 @@ test("real PostgreSQL/API: adopted requirement → two independent basis reviews
   const taskIds = [randomUUID(), randomUUID()];
   const accepted = [];
   for (const [index, taskId] of taskIds.entries()) {
-    applied((await send({ type: "task.create", taskId, title: `任务 ${index + 1}`, content: "# 读取完整需求\n验证固定原文。", acceptance: "能找到全部原文", owner: ownerRoleId, documentIds: [documentId] })).body);
+    applied((await send({ type: "task.create", taskId, title: `任务 ${index + 1}`, content: "# 读取完整需求\n验证固定原文。\n关闭后下一步：无", acceptance: "能找到全部原文", owner: ownerRoleId, documentIds: [documentId] })).body);
     accepted.push(applied((await send({ type: "task.start", taskId, expectedVersion: 1, basis: [{ documentId, revisionId: r1.revisionId }], reason: "授权范围内开始" })).body));
   }
   const r2 = applied((await send({ type: "document.revise", documentId, expectedVersion: 2, body: "# r2\n必须保留完整原件，并显示旧版依据。", reason: "增加历史依据阅读" })).body);
@@ -67,7 +67,7 @@ test("real PostgreSQL/API: adopted requirement → two independent basis reviews
   const afterB = await service.getTask(principal, projectId, taskIds[1]!);
   assert.equal(afterA.basis?.members.find(x => x.documentId === documentId)?.revisionId, r2.revisionId);
   assert.equal(afterB.basis?.members.find(x => x.documentId === documentId)?.revisionId, r1.revisionId);
-  assert.equal(afterA.task.content, "# 读取完整需求\n验证固定原文。");
+  assert.equal(afterA.task.content, "# 读取完整需求\n验证固定原文。\n关闭后下一步：无");
   assert.equal(afterA.revision.contentDocumentId, afterA.task.contentDocumentId);
   assert.equal(afterA.revision.contentRevisionId, afterA.task.contentRevisionId);
   assert.equal(afterA.basis?.members.find(x => x.documentId === afterA.task.contentDocumentId)?.revisionId, afterA.task.contentRevisionId);
