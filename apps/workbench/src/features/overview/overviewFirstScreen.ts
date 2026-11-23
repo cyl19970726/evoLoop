@@ -53,6 +53,25 @@ export function organisationText(counts: Record<string, number> | undefined, lon
   return `组织自己在处理：运行中 ${n("running")} · 待返工 ${n("rework")} · 待验收 ${n("awaiting_acceptance")} · 受阻 ${n("blocked")}${longest !== null && (n("blocked") + n("rework")) > 0 ? `（最久 ${longest} 天）` : ""}`;
 }
 
+/**
+ * When the latest use feedback of this Task was registered, read from the work index's own timeline (the interval that began at an observation), never from
+ * the Task revision's time. Null when the timeline has none: such a Task sorts last rather than being given a guessed time.
+ */
+export function latestFeedbackAt(row: Pick<LeaderWorkTask, "timing">): string | null {
+  let latest: string | null = null;
+  for (const round of row.timing?.rounds ?? []) for (const interval of round.intervals) {
+    if (interval.source?.kind !== "observation" || !interval.startedAt || !Number.isFinite(Date.parse(interval.startedAt))) continue;
+    if (latest === null || Date.parse(interval.startedAt) > Date.parse(latest)) latest = interval.startedAt;
+  }
+  return latest;
+}
+
+/** Tasks that have a recorded use for their current delivery, the most recently registered feedback first (ties by Task id). */
+export function feedbackCandidates<T extends Pick<LeaderWorkTask, "timing" | "taskId">>(rows: readonly T[]): T[] {
+  const at = (row: T) => { const value = latestFeedbackAt(row); return value === null ? -Infinity : Date.parse(value); };
+  return [...rows].sort((a, b) => at(b) - at(a) || a.taskId.localeCompare(b.taskId));
+}
+
 export const useResultText = { used: "已使用", failed: "使用失败", notUsed: "未使用" } as const;
 /** The latest use feedback of one delivery: whose, and what they found. */
 export function outcomeText(title: string, observerKind: "human" | "agent" | string, observer: string, result: keyof typeof useResultText): string {

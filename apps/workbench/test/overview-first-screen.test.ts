@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
-import { daysSince, latestReview, longestStall, moreText, organisationText, outcomeText, priorityLimit, priorityTitle, stalledTasks } from "../src/features/overview/overviewFirstScreen.ts";
+import { daysSince, feedbackCandidates, latestFeedbackAt, latestReview, longestStall, moreText, organisationText, outcomeText, priorityLimit, priorityTitle, stalledTasks } from "../src/features/overview/overviewFirstScreen.ts";
 
 const now = Date.parse("2026-11-23T08:00:00Z");
 const ago = (days: number) => new Date(now - days * 86_400_000 - 1000).toISOString();
@@ -57,4 +57,14 @@ test("the latest 复盘 is the one that observed to the latest day, else the one
   assert.equal(latestReview([doc("a", "2026-11-01"), doc("b", "2026-11-10", "2026-11-09"), doc("c", "2026-11-20", "2026-11-05")])?.id, "b");
   assert.equal(latestReview([doc("a", "2026-11-01"), doc("b", "2026-11-03")])?.id, "b");
   assert.equal(latestReview([]), null);
+});
+
+test("the latest use feedback is read from the work index's own timeline, newest first; a task without one sorts last and is never given a time", () => {
+  const timed = (taskId: string, ...times: string[]) => ({ taskId, timing: { rounds: [{ intervals: [
+    { stage: "running", startedAt: "2026-11-30T00:00:00Z", source: { kind: "run", id: "r" } },
+    ...times.map(startedAt => ({ stage: "awaiting_acceptance", startedAt, source: { kind: "observation", id: startedAt } }))] }] } }) as unknown as LeaderWorkTask;
+  const old = timed("a", "2026-11-01T00:00:00Z"), fresh = timed("b", "2026-11-02T00:00:00Z", "2026-11-20T00:00:00Z"), none = timed("c");
+  assert.equal(latestFeedbackAt(fresh), "2026-11-20T00:00:00Z", "the latest observation interval, not a run or the record's time");
+  assert.equal(latestFeedbackAt(none), null);
+  assert.deepEqual(feedbackCandidates([none, old, fresh]).map(task => task.taskId), ["b", "a", "c"]);
 });

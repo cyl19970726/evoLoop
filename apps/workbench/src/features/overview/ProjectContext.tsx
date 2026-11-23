@@ -14,7 +14,7 @@ import { RoleName } from "../../shared/ui/RecordName";
 import { readOutcome, type ProjectOutcome } from "./contextPresentation";
 import { VersionFold } from "./MilestonesBlock";
 import { FoldLine, OrganisationLine, OutcomeBlock, PriorityBlock, UseBlock } from "./OverviewTop";
-import { longestStall, organisationText, stalledTasks } from "./overviewFirstScreen";
+import { feedbackCandidates, longestStall, organisationText, priorityLimit, stalledTasks } from "./overviewFirstScreen";
 import { dueCell, StagesBlock, stageName, useStageProjection } from "../stages";
 import { readOverviewParam, writeOverviewParam } from "./overviewAddress";
 
@@ -71,11 +71,12 @@ export function ProjectContext({ token, projectId, actorId, refresh, active, flo
             const kinds = await loadLeaderWorkStatuses(page.items.map(row => row.taskId), async ids => (await client.workStatuses(projectId, ids)).items);
             value.statuses = Object.fromEntries(kinds.statuses.map(item => [item.taskId, item]));
             if (kinds.missing.length) value.workProblem = "部分工作的来源分类未读全";
-            const candidates = page.items.filter(row => value.statuses[row.taskId]?.cognition === false && row.delivery?.observationResult)
-              .sort((a, b) => Date.parse(b.dates.businessChangedAt) - Date.parse(a.dates.businessChangedAt));
+            // The three most recently registered feedbacks: by the work index's own feedback time per Task, not by the Task revision's time.
+            const candidates = feedbackCandidates(page.items.filter(row => value.statuses[row.taskId]?.cognition === false && row.delivery?.observationResult));
             value.useCandidateCount = candidates.length;
-            for (let start = 0; current && start < Math.min(6, candidates.length); start += 3) {
-              const batch = candidates.slice(start, Math.min(start + 3, 6));
+            // A candidate whose detail cannot be read still counts as a failed read; keep reading until three are in hand or the candidates run out (at most 12).
+            for (let start = 0; current && start < Math.min(12, candidates.length) && value.outcomes.length < priorityLimit; start += 3) {
+              const batch = candidates.slice(start, Math.min(start + 3, 12));
               const reads = await Promise.allSettled(batch.map(async row => {
                 const detail = await client.task(projectId, row.taskId);
                 if (detail.task.projectId !== projectId) throw new Error("使用来源不属于当前项目");

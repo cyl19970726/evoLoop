@@ -58,7 +58,10 @@ export function PriorityBlock({ projectId, actorId, enabled, stalled, work }: { 
   for (const hold of held?.holds ?? []) {
     const single = { holds: [hold], sessionIds: hold.sessionIds, queuedMessages: hold.queuedMessages };
     const opened = holds.data?.items.find(item => item.id === hold.id)?.openedAt;
-    rows.push(<Row key={`hold:${hold.id}`} to={holdTarget(projectId, single)} when={opened ? `自 ${date(opened)}` : undefined}>{holdLine(single, null)}</Row>);
+    const target = holdTarget(projectId, single);
+    // One affected agent opens that agent; several (or none) open the runtime-problem category of 待我处理, which lists exactly the agents the line counts.
+    rows.push(<Row key={`hold:${hold.id}`} to={target === `/p/${projectId}/inbox` ? `${target}#inbox-runtime` : target} tag={<StatusTag tone="blocked" label="受阻" />}
+      when={opened ? `自 ${date(opened)}` : undefined}>{holdLine(single, null)}</Row>);
   }
   for (const item of decisions.data?.items ?? []) rows.push(<Row key={`decision:${item.kind}:${item.id}`} to={decisionLink(projectId, item, actorId, "overview") ?? `/p/${projectId}/inbox`}
     when={`${item.proposedBy} 提出 · ${date(item.at)}`}>{decisionKindText[item.kind]}：{item.title}</Row>);
@@ -67,11 +70,13 @@ export function PriorityBlock({ projectId, actorId, enabled, stalled, work }: { 
   for (const item of impacts.data?.filter(entry => entry.state === "pending") ?? []) rows.push(<TaskRow key={`impact:${item.id}`} projectId={projectId} actorId={actorId} taskId={item.taskId}
     lead="依据有新版待你复核" tab="basis" when={`发现于 ${date(item.createdAt)}`} />);
   (alerts.data ?? []).forEach((item, index) => rows.push(<Row key={`usage:${item.kind}:${item.sessionId ?? "day"}:${index}`}
-    to={item.sessionId ? `/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${item.sessionId}`)}` : `/p/${projectId}/sessions`}>{item.kind === "budget" ? "今日用量" : "智能体上下文"}：{item.text}</Row>));
+    to={item.sessionId ? `/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${item.sessionId}`)}` : `/p/${projectId}/inbox#inbox-usage`}>{item.kind === "budget" ? "今日用量" : "智能体上下文"}：{item.text}</Row>));
   for (const task of stalled) rows.push(<Row key={`stalled:${task.taskId}`} to={href(projectId, "task", task.taskId)}
     tag={<StatusTag tone="blocked" label={`卡了 ${task.days} 天`} />}>{task.title}：{task.reason}</Row>);
   const failedKinds = [["运行问题", holds.isError], ["待我决定", decisions.isError], ["待我验收", acceptance.isError], ["依据变化", impacts.isError], ["用量告警", alerts.isError], ["卡住的任务", work === "failed"]]
     .filter(([, failed]) => failed).map(([name]) => name as string);
+  // The usage alerts are derived from a source that may be absent without being a failure, so "the whole column" is the four reads that must exist.
+  const noneRead = [holds, decisions, acceptance, impacts].every(read => read.isError);
   const unread = [holds, decisions, acceptance, impacts, alerts].some(read => read.data === undefined && !read.isError) || work === "reading";
   const retry = <Button variant="ghost" size="compact" onClick={() => { for (const read of [holds, decisions, acceptance, impacts, alerts]) void read.refetch(); }} className="-ml-2">重试</Button>;
   return <section aria-label="要你决定或处理的" data-overview-block="priority" className={block}>
@@ -80,7 +85,8 @@ export function PriorityBlock({ projectId, actorId, enabled, stalled, work }: { 
     {rows.length > 0 ? <Rows label="要你决定或处理的" rows={rows} total={rows.length} /> : failedKinds.length ? null
       : unread ? <p className={`m-0 ${muted}`} role="status">正在读取…</p>
         : <p className="m-0 text-small text-text-secondary">现在没有等你决定或处理的事。</p>}
-    {failedKinds.length > 0 && <p className={`m-0 ${muted}`} role="status">{rows.length ? `有 ${failedKinds.length} 类没读到（${failedKinds.join("、")}），上面只是读到的部分。` : "这一栏读不到：读取失败不代表没有事。"}{retry}</p>}
+    {failedKinds.length > 0 && <p className={`m-0 ${muted}`} role="status">{rows.length && !noneRead ? `有 ${failedKinds.length} 类没读到（${failedKinds.join("、")}），上面只是读到的部分。`
+      : `这一栏读不到：读取失败不代表没有事。${rows.length ? "上面只有卡住的任务，是从任务列表读到的。" : ""}`}{retry}</p>}
   </section>;
 }
 

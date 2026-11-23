@@ -35,13 +35,23 @@ test("overview first screen: the rows, the counts and the links", { skip }, asyn
   const holds = { observedAtUtc: at(0), items: [{ projectId, id: "b0000001-0000-4000-8000-000000000001", provider: "claude", state: "held", category: "quota_exhausted", causeSessionId: null, causeMessageId: null,
     reason: "额度", version: 1, openedAt: at(1), releasedAt: null, releasedBy: null, releaseReason: null, releaseSummary: null,
     impact: [{ sessionId: "c0000001-0000-4000-8000-000000000001", gatePhase: null, blockedByQuotaFailure: true, queuedMessages: 1 }], queuedMessages: 1 }] };
-  const open = async (width: number, height: number, mode: "full" | "empty" | "failing" = "full", colorScheme: "light" | "dark" = "light") => {
+  // Four tasks with a recorded use; the newest feedback is on the oldest revision (revisionDays) so a sort by the record's time would drop it.
+  const feedback = [
+    { taskId: "70000206-0000-4000-8000-000000000206", deliveryId: "70000a06-0000-4000-8000-000000000a06", result: "used", kind: "human", observer: "zhang", days: 0.1, revisionDays: 20 },
+    { taskId: "70000202-0000-4000-8000-000000000202", deliveryId: "70000a02-0000-4000-8000-000000000a02", result: "failed", kind: "agent", observer: "acceptance-agent", days: 0.5, revisionDays: 8 },
+    { taskId: "70000203-0000-4000-8000-000000000203", deliveryId: "70000a03-0000-4000-8000-000000000a03", result: "notUsed", kind: "agent", observer: "user-sim", days: 1, revisionDays: 4 },
+    { taskId: "70000201-0000-4000-8000-000000000201", deliveryId: "70000a01-0000-4000-8000-000000000a01", result: "used", kind: "human", observer: "li", days: 2, revisionDays: 0 },
+  ];
+  const open = async (width: number, height: number, mode: "full" | "empty" | "failing" | "allfail" | "multi" | "outcomes" = "full", colorScheme: "light" | "dark" = "light") => {
     const context = await browser.newContext({ viewport: { width, height }, locale: "zh-CN", colorScheme });
     const page = await context.newPage(); page.on("pageerror", error => errors.push(error.message));
-    await page.route(`${api}/decisions-for-me`, route => mode === "failing" ? route.fulfill({ status: 500, json: { code: "X", message: "boom" } }) : route.fulfill({ json: { items: mode === "full" ? decisions : [], observedAt: at(0) } }));
-    await page.route(`${api}/acceptance-relay/mine`, route => route.fulfill({ json: mode === "full" ? mine : { items: [] } }));
-    await page.route(`${api}/runtime/provider-holds`, route => route.fulfill({ json: mode === "full" ? holds : { items: [], observedAtUtc: at(0) } }));
-    await page.route(`${api}/impacts`, route => route.fulfill({ json: [] }));
+    await page.route(`${api}/decisions-for-me`, route => mode === "failing" || mode === "allfail" ? route.fulfill({ status: 500, json: { code: "X", message: "boom" } }) : route.fulfill({ json: { items: mode === "full" || mode === "multi" ? decisions : [], observedAt: at(0) } }));
+    const loaded = mode === "full" || mode === "multi";
+    const failAll = (route: Json) => route.fulfill({ status: 500, json: { code: "X", message: "boom" } });
+    await page.route(`${api}/acceptance-relay/mine`, route => mode === "allfail" ? failAll(route) : route.fulfill({ json: loaded ? mine : { items: [] } }));
+    await page.route(`${api}/runtime/provider-holds`, route => mode === "allfail" ? failAll(route)
+      : route.fulfill({ json: mode === "multi" ? { ...holds, items: [{ ...holds.items[0], impact: [...holds.items[0].impact, { ...holds.items[0].impact[0], sessionId: "c0000002-0000-4000-8000-000000000002" }] }] } : mode === "full" ? holds : { items: [], observedAtUtc: at(0) } }));
+    await page.route(`${api}/impacts`, route => mode === "allfail" ? failAll(route) : route.fulfill({ json: [] }));
     await page.route(`${api}/runtime/usage*`, route => route.fulfill({ status: 404, json: { code: "USAGE_UNAVAILABLE", message: "Usage accounting is unavailable" } }));
     await page.route(`${api}/work-management/index*`, async route => {
       const response = await route.fetch(); const value = await response.json();
@@ -49,12 +59,34 @@ test("overview first screen: the rows, the counts and the links", { skip }, asyn
         if (item.taskId === stuckId) return { ...item, latestProgress: { ...item.latestProgress, changedAt: at(mode === "empty" ? 0 : 4) }, dates: { ...item.dates, businessChangedAt: at(mode === "empty" ? 0 : 4) } };
         if (item.taskId === youngId) return { ...item, latestProgress: { ...item.latestProgress, changedAt: at(mode === "empty" ? 0 : 1) }, dates: { ...item.dates, businessChangedAt: at(mode === "empty" ? 0 : 1) } };
         // The first task's delivery declares the signed-in person as consumer; a copy makes a second one.
-        return item.delivery && mode !== "empty" ? { ...item, delivery: { ...item.delivery, consumer: "zhang-reviewer" } } : item;
+        return item.delivery && loaded ? { ...item, delivery: { ...item.delivery, consumer: "zhang-reviewer" } } : item;
       });
-      const copy = mode === "empty" ? null : items.find((item: Json) => item.delivery);
+      if (mode === "outcomes") for (const item of items) {
+        const known = feedback.find(entry => entry.taskId === item.taskId);
+        if (!known) continue;
+        item.delivery = { deliveryId: known.deliveryId, taskRevisionId: item.currentRevisionId, technicalResult: "passed", consumer: null, useRequired: false, observationResult: known.result, observationActorId: known.observer, observationKind: known.kind };
+        item.timing = { ...item.timing, rounds: [{ number: 1, startedAt: at(9), endedAt: null, elapsedMs: null, intervals: [
+          { stage: "awaiting_acceptance", startedAt: at(known.days + 1), endedAt: at(known.days), source: { kind: "observation", id: `o-${known.deliveryId}-0` }, waitingFor: { kind: "consumer", id: null } },
+          { stage: "awaiting_acceptance", startedAt: at(known.days), endedAt: null, source: { kind: "observation", id: `o-${known.deliveryId}` }, waitingFor: { kind: "consumer", id: null } }] }] };
+        // The record's own time says the opposite of the feedback time: the oldest feedback sits on the newest revision.
+        item.dates = { ...item.dates, businessChangedAt: at(known.revisionDays) };
+      }
+      const copy = mode === "empty" || mode === "outcomes" ? null : items.find((item: Json) => item.delivery);
       if (copy) items.push({ ...copy, taskId: "70000299-0000-4000-8000-000000000299", title: "第二项要亲自用的交付", delivery: { ...copy.delivery, deliveryId: "70000599-0000-4000-8000-000000000599", useRequired: false } });
       await route.fulfill({ response, json: { ...value, items } });
     });
+    if (mode === "outcomes") {
+      await page.route(`${api}/orchestration/work-status*`, route => route.fulfill({ json: { items: feedback.map(known => ({ taskId: known.taskId, cognition: false, dispatchId: null, dispatchState: null, outcome: null, runId: null, runState: null,
+        unsettledRunState: null, loopState: null, goalOutcome: null, stageDeliverable: null, sourceKind: null, sourceTaskId: null, sourceTaskTitle: null, decisionKind: null, decisionReason: null,
+        useRequired: false, deliveryId: known.deliveryId, technicalResult: "passed", observationResult: known.result, observerKind: known.kind, hasClosure: false, readyForAcceptance: false })) } }));
+      await page.route(`${api}/tasks/*`, async route => {
+        const known = feedback.find(entry => route.request().url().endsWith(`/tasks/${entry.taskId}`));
+        if (!known) return route.fallback();
+        const response = await route.fetch(); const detail = await response.json();
+        await route.fulfill({ response, json: { ...detail, deliveries: [{ ...(detail.deliveries?.[0] ?? {}), id: known.deliveryId, taskId: known.taskId, projectId }],
+          observations: [{ id: `o-${known.deliveryId}`, deliveryId: known.deliveryId, result: known.result, observerKind: known.kind, observer: known.observer, createdAt: at(known.days) }] } });
+      });
+    }
     await page.goto(`${fx.base}/p/${projectId}/overview`);
     await page.getByLabel("访问令牌").fill(token); await page.getByRole("button", { name: "进入", exact: true }).click();
     await page.locator("[data-overview-stages] [data-stage-row], [data-overview-stages] [data-no-stages]").first().waitFor({ timeout: 15000 });
@@ -62,7 +94,7 @@ test("overview first screen: the rows, the counts and the links", { skip }, asyn
     return page;
   };
 
-  const readings: unknown[] = [];
+  const readings: unknown[] = []; const orders: string[][] = [];
   for (const [width, height] of [[1440, 900], [390, 844]] as const) {
     const page = await open(width, height);
     // The first screen with this sample (each block 2 or more rows, ① 5 rows of which 3 show): bottoms against the lower edge (the phone's 64px tab bar covers the bottom of 390x844).
@@ -114,8 +146,13 @@ test("overview first screen: the rows, the counts and the links", { skip }, asyn
     // The header links to the latest 复盘; there is no 每日简报 entry yet.
     assert.equal(await page.locator("[data-overview-latest-review]").count(), 1);
     assert.equal(await page.getByRole("link", { name: "每日简报" }).count(), 0);
+    // The blocks come in the same order at both widths, and no rule reorders them.
+    const order = await page.evaluate(`[...document.querySelectorAll("[data-overview-block], [data-overview-stages], [data-overview-goal], [data-overview-version]")].map(node => node.getAttribute("data-overview-block") ?? (node.hasAttribute("data-overview-stages") ? "stages" : node.hasAttribute("data-overview-goal") ? "goal" : "version"))`) as string[];
+    orders.push(order);
+    assert.deepEqual(order.slice(0, 4), ["priority", "use", "outcome", "stages"]);
     await page.context().close();
   }
+  assert.deepEqual(orders[0], orders[1], "the same order at 1440 and 390");
 
   if (shots) {
     const dark = await open(1440, 900, "full", "dark");
@@ -130,6 +167,10 @@ test("overview first screen: the rows, the counts and the links", { skip }, asyn
   assert.match(await calm.locator("[data-overview-block=use]").innerText(), /现在没有等你亲自用的交付/);
   assert.match(await calm.locator("[data-overview-block=priority]").innerText(), /现在没有等你决定或处理的事。/);
   assert.match(await calm.locator("[data-overview-block=priority] h2").innerText(), /^要你决定或处理的 · 0$/);
+  assert.match(await calm.locator("[data-overview-block=outcome]").innerText(), /最近没有使用反馈。/);
+  assert.ok(await calm.locator("[data-overview-stages] [data-stage-row]").count() > 0, "with nothing waiting the whole 阶段 block is on the page");
+  const calmRead = await calm.evaluate(`(() => { const b = s => Math.round(document.querySelector(s).getBoundingClientRect().bottom); return { stage: b("[data-overview-stages]"), edge: innerHeight }; })()`) as Record<string, number>;
+  assert.ok(calmRead.stage <= calmRead.edge, `the whole 阶段 block is on the first screen when nothing waits ${JSON.stringify(calmRead)}`);
   await calm.context().close();
 
   // A read that fails never says "nothing": the failing list is named and can be read again.
@@ -140,5 +181,51 @@ test("overview first screen: the rows, the counts and the links", { skip }, asyn
   assert.ok(!/现在没有等你决定或处理的事/.test(text));
   await failing.getByRole("button", { name: "重试" }).first().waitFor();
   await failing.context().close();
+  // The numbers agree: ① (without the stalled row) + ② is what the entry says, and the 待我处理 page's own sections add up to the same.
+  const agree = await open(1440, 900);
+  const dot = Number((await agree.locator('a[href$="/inbox"]').filter({ hasText: "待我处理" }).first().innerText()).replace(/\D/g, ""));
+  const inbox = Number((await agree.locator("[data-overview-block=priority] h2").innerText()).replace(/\D/g, "")) - 1 + await agree.locator("[data-overview-block=use] li").count();
+  assert.equal(dot, inbox, "the entry's number is ①'s inbox rows plus ②'s rows");
+  await agree.locator('a[href$="/inbox"]').filter({ hasText: "待我处理" }).first().click();
+  await agree.locator("[data-inbox]").waitFor();
+  await agree.waitForTimeout(800);
+  let pageTotal = 0;
+  for (const name of ["只有你能办的运行问题", "待我验收", "等我使用的交付", "待我决定", "依据变化", "用量与上下文告警"]) {
+    const section = agree.locator(`section[aria-label="${name}"]`);
+    if (await section.count()) pageTotal += Number((await section.locator("h2 + span").first().innerText()).replace(/\D/g, "") || 0);
+  }
+  assert.equal(pageTotal, dot, "the 待我处理 page's categories add up to the entry's number");
+  await agree.context().close();
+
+  // One hold that stops several agents has no single object: its row has the 受阻 mark and opens the runtime category of 待我处理, which is brought into view.
+  const multi = await open(1440, 900, "multi");
+  const holdRow = multi.locator("[data-overview-block=priority] li").first();
+  assert.equal(await holdRow.locator("[data-tone=blocked]").innerText(), "受阻", "the runtime-problem row carries the 受阻 status mark");
+  assert.equal(await holdRow.locator("a").getAttribute("href"), `/p/${projectId}/inbox#inbox-runtime`, "several agents: the runtime category, not the agent directory");
+  await holdRow.locator("a").click();
+  await multi.locator("section[aria-label='只有你能办的运行问题']").waitFor();
+  assert.equal(new URL(multi.url()).hash, "#inbox-runtime");
+  await multi.context().close();
+
+  // The three most recently registered feedbacks, one of each result, by the feedback's own time (the newest is on the oldest revision; the fourth is dropped).
+  const results = await open(1440, 900, "outcomes");
+  const outcome = results.locator("[data-overview-block=outcome]");
+  await outcome.locator("li").first().waitFor({ timeout: 15000 });
+  const lines = await outcome.locator("li").allInnerTexts();
+  assert.equal(lines.length, 3);
+  assert.match(lines[0], /真人 zhang 已使用/); assert.match(lines[1], /智能体 acceptance-agent 使用失败/); assert.match(lines[2], /智能体 user-sim 未使用/);
+  assert.ok(!(await outcome.innerText()).includes("真人 li"), "the oldest feedback is not shown");
+  assert.match(await outcome.locator("li a").first().getAttribute("href") ?? "", /\/tasks\/70000206[^?]*\?tab=delivery/);
+  await results.context().close();
+
+  // The whole inbox column cannot be read: ① says so and offers a retry, and never says "nothing".
+  const broken = await open(1440, 900, "allfail");
+  await broken.locator("[data-overview-block=priority]").getByText(/读不到/).waitFor({ timeout: 25000 }); // each read is tried again before it counts as failed
+  const brokenText = await broken.locator("[data-overview-block=priority]").innerText();
+  assert.match(brokenText, /这一栏读不到/);
+  assert.ok(!/现在没有等你决定或处理的事/.test(brokenText));
+  await broken.locator("[data-overview-block=priority]").getByRole("button", { name: "重试" }).waitFor();
+  await broken.context().close();
+
   assert.deepEqual(errors, []);
 });
