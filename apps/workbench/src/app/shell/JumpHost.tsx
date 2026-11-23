@@ -3,10 +3,10 @@
 import * as React from "react";
 import { Search } from "lucide-react";
 import { Button, IconButton, cn } from "@evoloop/ui";
-import { lazyChunk } from "../../app/chunkLoad";
-import { isJumpShortcut, jumpShortcutLabel, onOpenJump, openJump } from "./jumpEvents";
+import { lazyChunk } from "../chunkLoad";
+import { isJumpShortcut, jumpShortcutLabel, onOpenJump, openJump } from "../../features/jump/jumpEvents";
 
-const Box = lazyChunk(() => import("./JumpDialog"), "JumpDialog");
+const Box = lazyChunk(() => import("../../features/jump/JumpDialog"), "JumpDialog");
 
 export function JumpHost({ token, projectId }: { token: string; projectId: string }) {
   const [wanted, setWanted] = React.useState(false);

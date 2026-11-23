@@ -48,6 +48,6 @@ export function shortAddress(route: Route, path: string): ShortAddress | null {
 export function jumpRefusal(text: string): string | null {
   const parsed = parseJumpInput(text);
   if (parsed.kind === "short") return "至少要 8 位";
-  if (parsed.kind === "invalid") return "不是编号：写 8 位以上的编号，或 PR 号如 #527";
+  if (parsed.kind === "invalid") return "不是编号：写 8 位以上的编号，或 PR 号（如 527）";
   return null;
 }

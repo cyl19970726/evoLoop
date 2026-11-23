@@ -11,7 +11,7 @@ import { href, parseRoute, type Route, type Section } from "../../shared/routes"
 import { readThemePreference, setThemePreference, subscribeTheme, themeLabels, type ThemePreference } from "../../shared/theme";
 import { currentPath, navigate, onAddressChange } from "../../shared/navigation";
 import { ProviderHoldBar } from "./ProviderHoldBar";
-import { JumpButton, JumpHost, JumpIconButton } from "../../features/jump/JumpHost";
+import { JumpButton, JumpHost, JumpIconButton } from "./JumpHost";
 import { SessionNavigation, emptySessionNavigationState, type SessionNavigationState } from "../../features/sessions/SessionNavigation";
 import { ContextPanelColumn, ContextPanelProvider } from "../../shared/ui/ContextPanel";
 import { ContextRailProvider, ContextRailSlot } from "../../shared/ui/ContextRail";
