@@ -44,7 +44,12 @@ test("document list passes kind and lifecycle filters to the service", async () 
   try {
     const response = await app.inject({ url: `/api/projects/${projectId}/documents?limit=50&kind=report&status=active`, headers });
     assert.equal(response.statusCode, 200);
-    assert.deepEqual(calls[0]?.slice(1), [projectId, 50, undefined, "report", "active"]);
+    assert.deepEqual(calls[0]?.slice(1), [projectId, 50, undefined, "report", "active", undefined]);
+    for (const kind of ["delivery_report", "other_report", "brief"]) {
+      assert.equal((await app.inject({ url: `/api/projects/${projectId}/documents?kind=${kind}&search=%E7%AE%80%E6%8A%A5`, headers })).statusCode, 200, kind);
+      assert.deepEqual(calls.at(-1)?.slice(3), [undefined, kind, undefined, "简报"]);
+    }
+    assert.equal((await app.inject({ url: `/api/projects/${projectId}/documents?kind=digest`, headers })).statusCode, 400);
     for (const status of ["all", "unknown"]) {
       const invalid = await app.inject({ url: `/api/projects/${projectId}/documents?status=${status}`, headers });
       assert.equal(invalid.statusCode, 400, status);

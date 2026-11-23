@@ -19,6 +19,26 @@
 
 现状（#229 PR8）：已按上表实现。内层栏带搜索、类型和状态筛选，打开的文档高亮，并写载入范围；内层栏不在屏上时，搜索和筛选移到表格上方。没选文档时中间是四列文档表格。选中后是全文：Markdown 可切换排版和原文；HTML 报告在隔离区域里占满页头以下，原件、HTML 原文和资源收在区域下方。右栏依次是版本、全部版本、来源、引用它的任务（在右栏点开，正文不动）和页内目录。固定历史链接停在原修订，提示一直可见并给“查看当前版”。“修订与发布”折叠在正文下方，全部是共同的提交表单；HTML 原件读取中、读取失败或不可用时，它仍留在区域下方，可以上传修正版或归档。
 
+列表怎样排、怎样找：
+
+| 条件 | 怎样做 |
+| --- | --- |
+| 排序 | 当前修订的时间，新的在前，同一时间按编号；每行写这个时间。旧文档有了新修订，重新读取后排到最前；翻页用（时间，编号）游标，不重不漏 |
+| 类型 | 全部、简报、复盘、交付报告、任务正文、规范、讨论、问题、其他报告。简报是自己的类型（标题“每日简报 日期”的报告迁移后归入）；交付报告按关系：被某项任务的交付当作产物的文档；其他报告是类型为报告又不是交付产物的 |
+| 搜索 | 标题包含（不分大小写），发给服务端，覆盖全部文档；停顿约三分之一秒才发出，不逐字读取；和类型、状态一起用时取交集 |
+| 地址 | `?kind=类型&status=状态&q=关键词`，只写和默认不同的；刷新、分享、后退都保持，每次改变是一步历史。旧的 `?kind=organization_review` 照样可用 |
+| 引用它的任务 | 与文档页同一套关系（正文、关联、固定依据、交付、来源）；有交付或来源的文档不再写“还没有任务引用” |
+
+新列表：
+
+![文档列表，1440，浅色](../../assets/frontend-pages/documents-order-1440-light.png)
+
+![文档列表，1440，深色](../../assets/frontend-pages/documents-order-1440-dark.png)
+
+![文档列表，390，浅色](../../assets/frontend-pages/documents-order-390-light.png)
+
+![文档列表，390，深色](../../assets/frontend-pages/documents-order-390-dark.png)
+
 上传或导入的 Markdown 只存原件，正文从原件读出，页内目录照常。固定修订和原件只读一次，写入后不重读。
 
 ## 内容与状态
@@ -29,7 +49,7 @@
 
 - 过程文档用表格逐行查阅，点标题读完整正文（[DEC-024](../../decisions.md)）；卡片摘要不代替列表和全文。
 - 标题支持键盘打开；行内的任务链接单独跳转。
-- 服务端筛选后分页计数；搜索限于已载入，写明范围并保留返回条件。
+- 筛选、搜索和分页计数都是服务端的，条件写在地址里（见下表）。
 - 页首写回到哪里：“返回任务：<名称>”“返回智能体：<名称>”“返回总览”“返回文档列表”。从文档或文档列表打开任务，任务页写“返回文档：<名称>”或“返回文档列表”。
 - 载入更多只读下一页，失败只重试该页；重读失败标“上次读回”。
 - 窄屏时表格横向滚动，标题和打开入口始终可读。
@@ -84,7 +104,7 @@ HTML 报告的其他宽度：[390](../../assets/frontend-pages/document-html-390
 
 | 部分 | 主要源码 | 相关测试 |
 | --- | --- | --- |
-| 列表与表格 | `DocumentIndex.tsx`、`DocumentRail.tsx`、`DocumentTable.tsx`、`DocumentFilters.tsx`、`useDocumentList.ts`、`documentListState.ts`、`documentListModel.ts`、`apps/workbench/src/shared/leaderWorkLoad.ts`（用途与关联补读） | `document-list-model.test.ts`、`document-presentation.test.ts`、`discovery-browser.test.ts`、`leader-work-load.test.ts`、`document-original-reading-browser.test.ts`（从内层栏打开后返回的焦点、行悬停） |
+| 列表与表格 | `DocumentIndex.tsx`、`DocumentRail.tsx`、`DocumentTable.tsx`、`DocumentFilters.tsx`、`useDocumentList.ts`、`documentListState.ts`、`documentListModel.ts`、`apps/workbench/src/shared/leaderWorkLoad.ts`（用途与关联补读） | `document-list-ci-browser.test.ts`、`document-list-model.test.ts`、`document-presentation.test.ts`、`discovery-browser.test.ts`、`leader-work-load.test.ts`、`document-original-reading-browser.test.ts`（从内层栏打开后返回的焦点、行悬停） |
 | 阅读页与右栏 | `DocumentPage.tsx`、`DocumentFacts.tsx`（含全部版本）、`apps/workbench/src/shared/documentRevisions.ts`、`apps/workbench/src/shared/useDocumentRevisions.ts`（修订列表逐页读取、按最新文档头重算状态）、`apps/workbench/src/shared/ui/RevisionListStatus.tsx`、`DocumentOutline.tsx`、`TaskPeek.tsx`、`documentPresentation.ts`、`apps/workbench/src/shared/ui/readingProse.ts`、`apps/workbench/src/shared/ui/MarkdownBody.tsx`、`apps/workbench/src/shared/ui/markdownContent.ts`、`apps/workbench/src/shared/revisionPresentation.ts` | `document-presentation.test.ts`、`markdown-content.test.ts`、`document-revisions.test.ts`、`document-original-reading-browser.test.ts`、`document-revisions-browser.test.ts`（第 N 版 / 共 M 版、全部版本，`EVOLOOP_DOCUMENT_REVISIONS_SCREENSHOT_DIR`） |
 | HTML 原件与资源 | `HtmlReport.tsx`、`useOriginal.ts`（HTML 与只存原件的 Markdown 共用）、`apps/workbench/src/shared/ui/OriginalDocumentReader.tsx`（静态副本，任务页也用）、`apps/workbench/src/shared/ui/imagePreview.ts` | `document-full-html-reading-browser.test.ts`、`document-image-preview.test.ts`、`document-original-reading-browser.test.ts` |
 | 读取与重读 | `apps/workbench/src/shared/ui/rereadOnReturn.ts`、`apps/workbench/src/shared/query.ts`（固定内容不随写入重读；列表逐页读取） | `query.test.ts`、`document-original-reading-browser.test.ts` |

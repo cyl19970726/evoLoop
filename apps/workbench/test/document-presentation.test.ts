@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Document, DocumentDetail, DocumentRevision } from "@evoloop/contracts";
 import {
-  coverageText, documentReturnPlace, emptyListText, kindText, markdownSource, originRunSummary, publicationText, readingStanding, referenceText,
+  coverageText, documentReturnPlace, emptyListText, kindFilters, kindText, listConditionsFrom, listQuery, markdownSource, originRunSummary, publicationText, readingStanding, referenceText,
 } from "../src/features/documents/documentPresentation.ts";
 import { returnText } from "../src/shared/returnLink.ts";
 import type { Original } from "../src/shared/ui/OriginalDocumentReader.tsx";
 import {
-  automaticItemLimit, initialListState, isFiltered, loadMoreTarget, nextListState, pageSize, pagesFor,
+  initialListState, isFiltered, loadMoreTarget, nextListState, pageSize, pagesFor,
 } from "../src/features/documents/documentListState.ts";
 
 const projectId = "11111111-1111-4111-8111-111111111111";
@@ -74,26 +74,33 @@ test("the return link names where it goes back to", () => {
 });
 
 test("the coverage line says what was read and the empty list says why it is empty", () => {
-  assert.equal(coverageText({ loaded: 50, matched: 3, filtered: true, more: true }), "已载入 50 项 · 匹配 3 项 · 后续页面未读");
+  assert.equal(coverageText({ loaded: 50, matched: 50, filtered: false, more: true }), "已载入 50 项 · 后续页面未读");
   assert.equal(coverageText({ loaded: 12, matched: 12, filtered: false, more: false }), "已载入 12 项 · 已读完");
-  assert.match(emptyListText({ filtered: true, more: true }).reason, /载入更多/);
-  assert.equal(emptyListText({ filtered: false, more: false }).title, "还没有过程文档");
+  assert.match(emptyListText({ filtered: true }).reason, /全部文档/);
+  assert.equal(emptyListText({ filtered: false }).title, "还没有过程文档");
 });
 
-test("list conditions widen the range once for a search and keep it after the search is cleared", () => {
+test("another type, status or search starts from the first page again; loading more past a range is by hand", () => {
   assert.equal(isFiltered(initialListState), false);
-  const searching = nextListState(initialListState, { query: "方案" });
-  assert.equal(searching.target, automaticItemLimit);
-  assert.equal(pagesFor(searching), automaticItemLimit / pageSize);
+  const searching = nextListState({ ...initialListState, target: 150 }, { query: "方案" });
+  assert.equal(searching.target, pageSize, "a search is a new list");
   assert.equal(isFiltered(searching), true);
-  const typing = nextListState({ ...searching, target: 700 }, { query: "方案二" });
-  assert.equal(typing.target, 700, "typing more does not shrink a range loaded by hand");
-  const cleared = nextListState(searching, { query: "" });
-  assert.equal(cleared.target, automaticItemLimit, "clearing the search keeps the loaded range");
-  assert.equal(nextListState(initialListState, { kind: "report" }).target, pageSize);
+  assert.equal(nextListState({ ...searching, target: 150 }, { query: "方案 " }).target, 150, "trailing space is the same search");
+  assert.equal(nextListState({ ...initialListState, target: 150 }, { kind: "brief" }).target, pageSize);
+  assert.equal(nextListState({ ...initialListState, target: 150 }, { lastOpened: "a" }).target, 150);
   assert.equal(loadMoreTarget({ target: pageSize }, 50), 100);
   assert.equal(loadMoreTarget({ target: 500 }, 120), 550);
   assert.equal(pagesFor({ target: 1 }), 1);
+});
+
+test("the list conditions round-trip through the address: only non-defaults are written, unknown values fall back", () => {
+  assert.equal(listQuery({ query: "", kind: "all", status: "active" }), "");
+  assert.equal(listQuery({ query: " 每日 ", kind: "brief", status: "draft" }), "kind=brief&status=draft&q=%E6%AF%8F%E6%97%A5");
+  assert.deepEqual(listConditionsFrom("kind=delivery_report&status=all&q=%E6%AF%8F%E6%97%A5"), { kind: "delivery_report", status: "all", query: "每日", named: true });
+  assert.deepEqual(listConditionsFrom("kind=nope&status=nope"), { kind: "all", status: "active", query: "", named: true });
+  assert.deepEqual(listConditionsFrom(""), { kind: "all", status: "active", query: "", named: false });
+  assert.deepEqual(kindFilters.map(([, label]) => label), ["简报", "复盘", "交付报告", "任务正文", "规范", "讨论", "问题", "其他报告"]);
+  assert.equal(kindText("brief"), "简报");
 });
 
 test("Markdown kept only as its original is read from the original, and each way that read can fail is kept apart", () => {

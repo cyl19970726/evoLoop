@@ -3,31 +3,39 @@
 // the pages it lacks, and a failed page leaves the loaded rows in place (这一页没读到) while a failed reread keeps them as
 // 上次读回. Another kind is another list (another key), read from its first page: it never shows the last kind's rows,
 // and a failed first read of it is a failed read, not 上次读回.
+import { useEffect, useState } from "react";
 import type { Document, Page } from "@evoloop/contracts";
 import { useQueryClient } from "@tanstack/react-query";
 import { ApiError, api, errorDetail, errorText } from "../../shared/api";
-import { visibleLeaderDocuments } from "../../shared/leaderWorkLoad";
 import { useProjectList } from "../../shared/projectList";
 import { queryKeys } from "../../shared/query";
 import { validDocumentPage } from "./documentListModel";
-import { isFiltered, loadMoreTarget, pagesFor, type DocumentListState } from "./documentListState";
+import { isFiltered, loadMoreTarget, pagesFor, searchRestMs, type DocumentListState } from "./documentListState";
 
 export const readProblem = (cause: unknown, subject = "该项目的文档"): string =>
   cause instanceof ApiError && (cause.status === 401 || cause.status === 403) ? `当前身份无权读取${subject}` : errorText(cause);
 
 export function useDocumentList(projectId: string, state: DocumentListState, update: (patch: Partial<DocumentListState>) => void) {
   const { kind, status } = state;
+  // The server searches titles over every document; typing is sent once it rests, so a read per keystroke is not made.
+  const typed = state.query.trim();
+  const [search, setSearch] = useState(typed);
+  useEffect(() => {
+    if (typed === search) return;
+    const timer = window.setTimeout(() => setSearch(typed), typed ? searchRestMs : 0);
+    return () => window.clearTimeout(timer);
+  }, [typed, search]);
   const maxPages = pagesFor(state);
   const client = useQueryClient();
-  const list = useProjectList(projectId, ["documents", "list", kind, status], async (cursor, signal) => {
+  const list = useProjectList(projectId, ["documents", "list", kind, status, search], async (cursor, signal) => {
     const page: Page<Document> = await api().documents(projectId, cursor, kind === "all" ? undefined : kind,
-      status === "all" ? undefined : status, signal);
+      status === "all" ? undefined : status, signal, search || undefined);
     validDocumentPage(page, projectId, cursor);
     return page;
   }, (document: Document) => document.id, { target: state.target, maxPages });
   const items = list.items?.filter(item => item.projectId === projectId) ?? [];
-  const visible = visibleLeaderDocuments(items, state.status, state.kind, state.query.trim());
-  const searching = !!state.query.trim();
+  // Everything the list shows is the server's answer for the conditions: no further filtering here.
+  const visible = items;
   const problem = list.error ? readProblem(list.error) : list.repeatedCursor ? "文档分页游标重复，无法确认后续结果" : "";
   return {
     items, visible, more: list.more,
@@ -46,8 +54,8 @@ export function useDocumentList(projectId: string, state: DocumentListState, upd
     errorDetail: list.error ? errorDetail(list.error) : null,
     observedAt: list.observedAt ? new Date(list.observedAt) : null,
     filtered: isFiltered(state),
-    /** A search stopped at the automatic limit while pages remain. */
-    searchLimited: searching && list.more && !list.checking && !list.loadingMore && list.pages >= maxPages,
+    /** What was typed has not been sent yet: the rows shown are for the earlier search. */
+    searchPending: typed !== search,
     /** One more page: past the range read so far; after a failed page, that page again. */
     loadMore: () => list.pageFailed ? list.loadMore() : update({ target: loadMoreTarget(state, items.length) }),
     /** Read the list and its uses and referencing tasks again; what is on screen stays until the answers arrive. */

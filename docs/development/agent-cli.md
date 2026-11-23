@@ -58,10 +58,13 @@ Role 的运行时与 skill 用 `role runtime show ROLE_UUID --project UUID` 实�
 npm run --silent cli -- help
 npm run --silent cli -- session
 npm run --silent cli -- list tasks --project "$PROJECT_ID" --limit 20
+npm run --silent cli -- list documents --project "$PROJECT_ID" --kind brief --search "每日简报" --limit 20
 npm run --silent cli -- task "$TASK_ID" --project "$PROJECT_ID"
 npm run --silent cli -- context "$TASK_ID" --project "$PROJECT_ID"
 npm run --silent cli -- command schema task.create
 ```
+
+`list documents` 按当前修订时间倒序返回（每行带 `updatedAt`），翻页用返回的不透明 `nextCursor`（不是文档编号，原样传回 `--cursor`）。`--kind` 取 `task`、`issue`、`spec`、`discussion`、`report`、`organization_review`、`brief`（简报），或两个关系筛选：`delivery_report`（被某项任务的交付当作产物）、`other_report`（类型为 report 且不是交付产物）；`--status` 取 `draft`、`published`、`archived`、`active`（未归档）；`--search` 是标题包含的文字，覆盖全部文档。用新类型保存：`document.create` 的 `kind` 填 `brief`；不存在的类型在本地和服务端都被拒绝。
 
 `task UUID --history` 展示已保存的真实修订及当时状态；`document UUID --revision UUID`、`original DOCUMENT_UUID --revision UUID [--out NEW_DIRECTORY]` 指向固定原件。`context` 应带回 Task 的封存依据及可读来源，并明确 `complete` 或逐项 `partial`；总读取预算为 16 MiB，超限时列出未读固定 ID，可按其修订逐项调用 `original`。来源失败时不可把最近版本猜作任务依据。HTML 与资源包导出只进入调用者指定的私有**新目录**，其父目录须已存在；可放在仓库外，或明确被 Git 忽略的本机目录，不公开原件。对于知识页、候选、运行、负责人讨论、日程等，按 `list`/`read` 的实际帮助读取；固定来源、未采纳候选和已发布认识不得混同。普通 `get /api/...` 保留为同源只读兼容入口。
 

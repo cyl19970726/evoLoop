@@ -62,7 +62,7 @@ export function DocumentTable({ projectId, list, state, update, toolbar, actorId
     return () => { cancelAnimationFrame(frame); window.clearTimeout(timer); };
   }, [active, state.lastOpened]);
   const open = (id: string) => update({ lastOpened: id });
-  const empty = emptyListText({ filtered: list.filtered, more: list.more });
+  const empty = emptyListText({ filtered: list.filtered });
   return <section aria-label="过程文档" aria-busy={list.loading || list.checking} className="flex flex-col gap-3">
     {toolbar}
     {list.error && <ErrorState title="列表本次没有读回" happened={`${list.error}。`} previousContentKept={list.stale}
@@ -71,7 +71,6 @@ export function DocumentTable({ projectId, list, state, update, toolbar, actorId
     {list.pageError && <ErrorState title="后面一页没有读回" happened={`${list.pageError}。`}
       next="已显示的行是读到的内容；后面的文档还没读到，可以只重试这一页。" diagnostics={list.errorDetail ?? undefined}
       action={list.more ? <Button size="compact" disabled={list.checking} onClick={list.loadMore}>重试这一页</Button> : undefined} />}
-    {list.searchLimited && <Notice tone="waiting">搜索已自动读到 {list.items.length} 项的上限，结果可能不完整；可以在表格下方继续载入。</Notice>}
     {usage.partial && <Notice tone="waiting" title={usage.stale ? "用途与关联任务这次没有重新读回" : "用途与关联任务没有完整读回"}>
       {usage.stale ? "下面是上次读回的用途与引用，当前待核对，不代表现在的情况。" : "没有资料的行显示为“待核对”，不代表没有引用。"}
       {usage.error && <details className="mt-1 text-caption"><summary className="cursor-pointer">诊断信息</summary>{usage.diagnostic}</details>}</Notice>}
@@ -83,7 +82,7 @@ export function DocumentTable({ projectId, list, state, update, toolbar, actorId
         <table className="w-full min-w-[720px] text-left text-small">
           <thead className="bg-muted text-caption text-muted-foreground">
             <tr><th scope="col" className="w-[38%] px-4 py-2.5 font-medium">文档</th><th scope="col" className="px-4 py-2.5 font-medium">用途与关联任务</th>
-              <th scope="col" className="px-4 py-2.5 font-medium">版本</th><th scope="col" className="px-4 py-2.5 font-medium">最近变化</th></tr>
+              <th scope="col" className="px-4 py-2.5 font-medium">版本</th><th scope="col" className="px-4 py-2.5 font-medium" aria-sort="descending">最近变化</th></tr>
           </thead>
           <tbody>{list.visible.map(document => {
             const work = usage.matches(document);
@@ -108,15 +107,15 @@ export function DocumentTable({ projectId, list, state, update, toolbar, actorId
               </td>
               <td className="px-4 py-3"><StatusTag tone={lifecycleTone[document.status]} label={lifecycleLabel[document.status]} />
                 <span className="mt-1 block whitespace-nowrap text-caption text-muted-foreground">{publicationText(document)}</span></td>
-              <td className="whitespace-nowrap px-4 py-3 text-caption text-muted-foreground">{work?.dates.changedAt ? date(work.dates.changedAt) : usage.checking ? "正在核对…" : "待核对"}</td>
+              <td className="whitespace-nowrap px-4 py-3 text-caption text-muted-foreground">{document.updatedAt ? date(document.updatedAt) : "待核对"}</td>
             </tr>;
           })}</tbody>
         </table>
       </div>}
     <div className="flex flex-wrap items-center justify-between gap-3 text-caption text-muted-foreground">
       <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span>{coverageText({ loaded: list.items.length, matched: list.visible.length, filtered: list.filtered, more: list.more, coverage: list.coverage })}</span>
-        {list.checking ? <RefreshingIndicator label={state.query.trim() ? "正在搜索后续页面；结果尚未完整" : "正在核对列表；已显示的是上次读到的内容"} />
+        <span>{coverageText({ loaded: list.items.length, matched: list.visible.length, filtered: false, more: list.more, coverage: list.coverage })}</span>
+        {list.checking || list.searchPending ? <RefreshingIndicator label={list.searchPending || state.query.trim() ? "正在按关键词搜索全部文档" : "正在核对列表；已显示的是上次读到的内容"} />
           : list.observedAt && <span>列表读于 {list.observedAt.toLocaleString("zh-CN")}</span>}
       </span>
       {list.more && !list.pageError && <Button size="compact" disabled={list.checking} onClick={list.loadMore}>载入更多</Button>}
