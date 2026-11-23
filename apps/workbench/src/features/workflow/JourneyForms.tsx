@@ -82,7 +82,7 @@ export function GoalReviseForm({ context, goal, paused }: { context: MutationCon
 
 export function StageProposeForm({ context, goal, paused }: { context: MutationContext; goal: Goal; paused?: string | null }) {
   const fields: FormField[] = [
-    { name: "shortName", label: "短名", kind: "text", maxLength: 40, hint: "里程碑表里这一行的名称，40 字以内。" },
+    { name: "shortName", label: "短名", kind: "text", maxLength: 40, hint: "阶段表里这一行的名称，40 字以内。" },
     { name: "deliverable", label: "阶段交付", kind: "textarea", maxLength: 4000, hint: "这一阶段要交出什么。" },
     { name: "checkMethod", label: "怎样算到了", kind: "textarea", maxLength: 4000, hint: "谁来查、用什么样本、什么算没到。" },
     { name: "dueOn", label: "到期日", kind: "text", optional: true, placeholder: "2026-12-31", hint: "可不填（写“未定”）。格式：年-月-日。" },

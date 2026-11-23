@@ -18,7 +18,8 @@ import { ContextPanelContent, useContextPanel } from "../../shared/ui/ContextPan
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { href } from "../../shared/ui/shared";
 import { CommandFrame, useCommand } from "../../shared/command";
-import { journeyKey, readOwnerRoles, readPublishedDocuments, useGoals, useStageProjection, useStages } from "./journeyRead";
+import { journeyKey, readOwnerRoles, readPublishedDocuments, useGoals, useStages } from "./journeyRead";
+import { useStageProjection } from "../stages";
 import { draftFieldLabels, draftTouched, emptyTaskDraft, inStage, maxLinkedDocuments, NO_STAGE, stageLabel, taskCreateCommand, taskDraftProblems, taskKinds, zonedInstant, type DraftProblems, type TaskDraft } from "./taskCreate";
 import { formatScheduled } from "./taskTimingPresentation";
 import { timezoneOptions } from "../../shared/zonedTime";

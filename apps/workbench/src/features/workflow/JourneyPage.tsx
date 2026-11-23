@@ -23,9 +23,10 @@ import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { ResponsibleName, RoleName } from "../../shared/ui/RecordName";
 import { ReturnLink } from "../../shared/ui/ReturnLink";
 import { date, href } from "../../shared/ui/shared";
+import { StagesSection, useStageProjection, useStageStatusOf } from "../stages";
 import { CreateTaskView } from "./CreateTaskPage";
 import { DraftsContext, GoalCreateForm, GoalReviseForm, StageAcceptForm, StageCorrectForm, StageProposeForm, StageReviewForm, goalFieldLabels, type Drafts } from "./JourneyForms";
-import { defaultSelection, goalTree, groupByStage, nextChoiceLabel, orderReviews, orderStageTasks, phaseCounts, reviewStanding, stageNextStep, stageStatus } from "./journeyPresentation";
+import { defaultSelection, goalTree, groupByStage, nextChoiceLabel, orderReviews, orderStageTasks, phaseCounts, reviewStanding, stageNextStep } from "./journeyPresentation";
 import { journeyKey, useGoals, useStageWork, useStages } from "./journeyRead";
 
 const muted = "text-caption text-muted-foreground";
@@ -64,6 +65,8 @@ export function JourneyPage({ context, active, propose }: { context: MutationCon
   const goalsRead = useGoals(projectId);
   const stagesRead = useStages(projectId);
   const workRead = useStageWork(projectId);
+  const projectionRead = useStageProjection(projectId, active);
+  const statusOf = useStageStatusOf(projectId);
   const goals = goalsRead.data?.items ?? [];
   const stages = stagesRead.data ?? [];
   const work = workRead.data;
@@ -91,6 +94,11 @@ export function JourneyPage({ context, active, propose }: { context: MutationCon
     setSelection(next);
     if (active) replaceQuietly(`${journeyHref}?${propose ? "action=propose&" : ""}${"stageId" in next ? `stage=${next.stageId}` : `goal=${next.goalId}`}`);
   };
+  const openId = selection && "stageId" in selection ? selection.stageId : null;
+  // A row opens in place; opening the open one again closes it (the address loses its ?stage=).
+  const toggleRow = (id: string) => {
+    if (openId === id) { setSelection(null); if (active) replaceQuietly(journeyHref); } else choose({ stageId: id });
+  };
   const reread = () => void client.invalidateQueries({ queryKey: queryKeys.project(projectId, journeyKey) });
   const fetching = goalsRead.isFetching || stagesRead.isFetching || workRead.isFetching;
   const proposeStage = stage?.state === "active" ? stage.id : stages.find(item => item.state === "active")?.id;
@@ -109,7 +117,7 @@ export function JourneyPage({ context, active, propose }: { context: MutationCon
         <ListRow href={goalHref(item.id)} selected={!stage && goal?.id === item.id} title={<span title={item.outcome}>{item.outcome}</span>} meta={stagesKnown ? `目标 · ${owned.length} 个阶段` : `目标 · ${stagesUnknown}`} />
         {owned.length > 0 && <ul aria-label={`${item.outcome}的阶段`} className="flex flex-col gap-0.5 pl-3">{owned.map(entry => <li key={entry.id}>
           <ListRow href={stageHref(entry.id)} selected={stage?.id === entry.id} title={<span title={entry.deliverable}>{entry.deliverable}</span>}
-            meta={stageMeta(entry)} trailing={<StatusTag tone={stageStatus[entry.state].tone} label={stageStatus[entry.state].label} />} />
+            meta={stageMeta(entry)} trailing={<StatusTag tone={statusOf(entry).tone} label={statusOf(entry).label} />} />
         </li>)}</ul>}
       </div>)}
       {tree.orphans.length > 0 && <div className="mt-2 flex flex-col gap-0.5"><span className={cn(muted, "px-3")}>所属目标未读到的阶段</span>
@@ -121,7 +129,7 @@ export function JourneyPage({ context, active, propose }: { context: MutationCon
     <div className="min-w-0">
       {returnTo && <ReturnLink projectId={projectId} href={returnTo.href} place={returnTo.place} label={returnTo.label} className="mb-1" />}
       <h1 tabIndex={-1} className="text-title font-semibold text-foreground outline-none">目标与阶段</h1>
-      <p className="mt-1 text-small text-text-secondary" data-page-role="">目标与阶段：阶段全文、任务与回看，来自本项目的记录，不按工程里程碑推算完成比例。差距与下一判断回到<a className="text-primary hover:underline" data-back-overview="" href={href(projectId, "overview")}>总览</a>。</p>
+      <p className="mt-1 text-small text-text-secondary" data-page-role="">目标与阶段：阶段全文、任务与回看，来自本项目的记录，不按工程路线图推算完成比例。差距与下一判断回到<a className="text-primary hover:underline" data-back-overview="" href={href(projectId, "overview")}>总览</a>。</p>
       <p className={cn(muted, "mt-1")} role="status" data-read-scope="">{scopeLine(goalsRead.data, stagesKnown ? stages.length : stagesUnknown, work, goalsKnown, fetching)}</p>
     </div>
     <div className="flex flex-wrap items-center gap-2">
@@ -147,15 +155,19 @@ export function JourneyPage({ context, active, propose }: { context: MutationCon
     }}>
       {tree.items.map(({ goal: item, stages: owned }) => <optgroup key={item.id} label={item.outcome}>
         <option value={`goal:${item.id}`}>目标：{item.outcome}</option>
-        {owned.map(entry => <option key={entry.id} value={`stage:${entry.id}`}>{stageStatus[entry.state].label} · {entry.deliverable}</option>)}
+        {owned.map(entry => <option key={entry.id} value={`stage:${entry.id}`}>{statusOf(entry).label} · {entry.deliverable}</option>)}
       </optgroup>)}
-      {tree.orphans.map(entry => <option key={entry.id} value={`stage:${entry.id}`}>{stageStatus[entry.state].label} · {entry.deliverable}</option>)}
+      {tree.orphans.map(entry => <option key={entry.id} value={`stage:${entry.id}`}>{statusOf(entry).label} · {entry.deliverable}</option>)}
     </Select></label>;
   const center = propose
     ? <CreateTaskView context={context} active={active} pathname={journeyHref} embedded back={{ href: stage ? stageHref(stage.id) : journeyHref, label: "返回目标与阶段" }} />
     : <>
       {header}
       {readNotices}
+      {projectionRead.data && <StagesSection context={context} active={active} projection={projectionRead.data} deliverables={new Map(stages.map(item => [item.id, item.deliverable]))}
+        work={work} openId={openId} onToggle={toggleRow} onApplied={reread} propose={propose} />}
+      {projectionRead.isPending && <p role="status" className={muted}>正在读取阶段表…</p>}
+      {projectionRead.isError && !projectionRead.data && <Notice tone="error">阶段表没有读到：{errorText(projectionRead.error)}。读不到不代表没有阶段。</Notice>}
       {narrowChooser}
       {states.goals === "loading" && <LoadingState lines={5} label="正在读取目标与阶段" />}
       {recordsShown && !goals.length && !stages.length && <EmptyState title={goalsRead.data?.complete ? "还没有目标" : "已读范围内没有目标"}
@@ -177,8 +189,7 @@ export function JourneyPage({ context, active, propose }: { context: MutationCon
       {center}
     </div>
     {!propose && <ContextPanelContent><JourneyFacts projectId={projectId} goal={goal} stage={stage} states={states} goalsComplete={!!goalsRead.data?.complete}
-      stagesKnown={stagesKnown}
-      goalsCount={goals.length} stagesCount={stages.length} work={work} outside={groups?.outside ?? null} tasks={stage && groups ? groups.byStage.get(stage.id) ?? [] : null}
+      goalsCount={goals.length} stagesCount={stages.length} work={work} tasks={stage && groups ? groups.byStage.get(stage.id) ?? [] : null}
       observedAt={Math.max(goalsRead.dataUpdatedAt, stagesRead.dataUpdatedAt)} /></ContextPanelContent>}
   </DraftsContext.Provider>;
 }
@@ -225,6 +236,7 @@ function GoalCard({ context, goal, paused, stageCount }: { context: MutationCont
 }
 
 function GoalStages({ goal, stages, unknown, stageHref, stageMeta }: { goal: Goal; stages: Stage[] | null; unknown: string; stageHref(id: string): string; stageMeta(stage: Stage): string }) {
+  const statusOf = useStageStatusOf(goal.projectId);
   if (!stages) return <section aria-label="这个目标的阶段" className={card}>
     <h2 className="text-label font-semibold text-foreground">这个目标的阶段</h2>
     <p className="text-small text-text-secondary">{unknown === "阶段无法判断" ? "阶段没有读回，无法判断这个目标下有哪些阶段；可以重新读取。" : "正在读取这个目标下的阶段…"}</p>
@@ -232,7 +244,7 @@ function GoalStages({ goal, stages, unknown, stageHref, stageMeta }: { goal: Goa
   return <section aria-label="这个目标的阶段" className={card}>
     <h2 className="text-label font-semibold text-foreground">这个目标的阶段 · {stages.length}</h2>
     {stages.length ? <ul className="flex flex-col gap-0.5">{stages.map(stage => <li key={stage.id}>
-      <ListRow href={stageHref(stage.id)} title={stage.deliverable} meta={stageMeta(stage)} trailing={<StatusTag tone={stageStatus[stage.state].tone} label={stageStatus[stage.state].label} />} />
+      <ListRow href={stageHref(stage.id)} title={stage.deliverable} meta={stageMeta(stage)} trailing={<StatusTag tone={statusOf(stage).tone} label={statusOf(stage).label} />} />
     </li>)}</ul> : <p className="text-small text-text-secondary">还没有阶段。下一步：在上面“为这个目标提出阶段”里写下阶段交付和学习问题。</p>}
     <p className={muted}>“{goal.outcome}”下的阶段按记录列出；选一个阶段查看所属任务和回看。</p>
   </section>;
@@ -243,6 +255,7 @@ function StageView({ context, stage, tasks, workState, workError, workComplete, 
   onReread(): void; paused: string | null; recordsFresh: boolean; proposeHref: string;
 }) {
   const projectId = context.projectId;
+  const statusOf = useStageStatusOf(projectId);
   const shownTasks = workState === "loading" || workState === "failed" ? null : tasks ?? [];
   const reviewsRead = useProjectQuery(projectId, [journeyKey, "stage", stage.id, "reviews", stage.version], async () => {
     const reviews = await api().stageReviews(projectId, stage.id);
@@ -253,7 +266,7 @@ function StageView({ context, stage, tasks, workState, workError, workComplete, 
   const latest = reviews.at(-1);
   const reviewsState = readState(reviewsRead);
   const reviewsFresh = reviewsState === "fresh" && recordsFresh;
-  const status = stageStatus[stage.state];
+  const status = statusOf(stage);
   return <>
     <section aria-label="阶段" className="flex flex-col gap-2" data-stage={stage.id}>
       <div className="flex flex-wrap items-center gap-2">
@@ -306,7 +319,7 @@ function StageView({ context, stage, tasks, workState, workError, workComplete, 
     </section>
     <RevisionHistory projectId={projectId} summary="阶段修订历史" queryKey={["stage", stage.id, "revisions", stage.version]}
       read={async () => (await api().stageRevisions(projectId, stage.id)).map((revision: StageRevision) => ({
-        key: revision.id, title: `第 ${revision.version} 版 · ${stageStatus[revision.state].label}`, body: [`交付：${revision.deliverable}`, `学习问题：${revision.learningQuestion}`],
+        key: revision.id, title: `第 ${revision.version} 版`, body: [`交付：${revision.deliverable}`, `学习问题：${revision.learningQuestion}`],
         reason: revision.reason, createdAt: revision.createdAt, actorId: revision.actorId,
       }))} />
   </>;
@@ -328,7 +341,7 @@ function StageTaskRow({ projectId, item }: { projectId: string; item: LeaderWork
 
 function ReviewItem({ review, standing }: { review: StageReview; standing: string }) {
   const rows: [string, string][] = [["采用", review.adopted], ["推翻或不成立", review.rejected], ["差距与未知", review.gap], ["证据", review.evidence], ["理由", review.reason]];
-  return <li className="flex flex-col gap-1.5 border-t border-border py-3 first:border-t-0 first:pt-0" data-review={review.id}>
+  return <li id={`review-${review.id}`} className="flex flex-col gap-1.5 border-t border-border py-3 first:border-t-0 first:pt-0" data-review={review.id}>
     <p className="text-small text-foreground"><span className="font-semibold">{nextChoiceLabel[review.nextChoice]}</span><span className="text-muted-foreground"> · {standing}</span></p>
     {rows.filter(([, text]) => text.trim()).map(([label, text]) => <p key={label} className="text-small text-text-secondary [overflow-wrap:anywhere]"><span className="text-muted-foreground">{label}　</span>{text}</p>)}
     <p className={muted}>记录于 {date(review.createdAt)}{review.supersedesReviewId ? " · 纠正了一条较早的回看" : ""}</p>
@@ -370,11 +383,14 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
   return <div role="group" aria-label={label} className="flex flex-col gap-0.5"><p className={muted}>{label}</p><div className="text-label text-foreground [overflow-wrap:anywhere]">{children}</div></div>;
 }
 
-function JourneyFacts({ projectId, goal, stage, states, goalsComplete, stagesKnown, goalsCount, stagesCount, work, outside, tasks, observedAt }: {
-  projectId: string; goal: Goal | undefined; stage: Stage | undefined; states: Record<"goals" | "stages" | "work", ReadState>; goalsComplete: boolean; stagesKnown: boolean;
-  goalsCount: number; stagesCount: number; work: { items: LeaderWorkTask[]; complete: boolean } | undefined; outside: LeaderWorkTask[] | null;
+function JourneyFacts({ projectId, goal, stage, states, goalsComplete, goalsCount, stagesCount, work, tasks, observedAt }: {
+  projectId: string; goal: Goal | undefined; stage: Stage | undefined; states: Record<"goals" | "stages" | "work", ReadState>; goalsComplete: boolean;
+  goalsCount: number; stagesCount: number; work: { items: LeaderWorkTask[]; complete: boolean } | undefined;
   tasks: LeaderWorkTask[] | null; observedAt: number;
 }) {
+  const statusOf = useStageStatusOf(projectId);
+  const projection = useStageProjection(projectId);
+  const noStage = projection.data?.tasksNoStage;
   const kept = (state: ReadState) => state === "stale" ? "上次读回，当前待核对" : state === "checking" ? "正在核对" : state === "failed" ? "没有读回，无法判断" : state === "loading" ? "正在读取" : "";
   // Each read says what it holds, or why it holds nothing yet; a kept answer carries its state after the count.
   const counted = (state: ReadState, count: string) => state === "loading" || state === "failed" ? kept(state) : `${count}${kept(state) ? ` · ${kept(state)}` : ""}`;
@@ -386,7 +402,7 @@ function JourneyFacts({ projectId, goal, stage, states, goalsComplete, stagesKno
       {observedAt > 0 && <Fact label="读于">{date(new Date(observedAt).toISOString())}</Fact>}
     </PanelBlock>
     {stage && <PanelBlock title="所选阶段">
-      <Fact label="状态"><StatusTag tone={stageStatus[stage.state].tone} label={stageStatus[stage.state].label} /> · 第 {stage.version} 版</Fact>
+      <Fact label="状态"><StatusTag tone={statusOf(stage).tone} label={statusOf(stage).label} /> · 第 {stage.version} 版</Fact>
       <Fact label="任务进展">{tasks ? tasks.length ? phaseCounts(tasks, phase => leaderPhaseLabel[phase]) : work?.complete ? "没有所属任务" : "已读部分没有所属任务" : kept(states.work) || "无法判断"}</Fact>
       <Fact label="提出于">{date(stage.createdAt)}</Fact>
     </PanelBlock>}
@@ -395,9 +411,12 @@ function JourneyFacts({ projectId, goal, stage, states, goalsComplete, stagesKno
       <Fact label="承接">{isRoleOwnerId(goal.owner) ? <RoleName projectId={projectId} roleId={goal.owner} /> : goal.owner}</Fact>
       <Fact label="版本">第 {goal.version} 版 · 建立于 {date(goal.createdAt)}</Fact>
     </PanelBlock>}
-    <PanelBlock title="不属于阶段的任务">
-      <p className="text-label text-foreground">{outside ? `${outside.length} 项${work?.complete ? "" : "（已读部分）"}` : (stagesKnown ? kept(states.work) : kept(states.stages)) || "无法判断"}</p>
-      <p className={muted}>没有所属阶段、或所属阶段不在已读记录里的任务，不计入上面的关系。<a href={href(projectId, "work")} className="text-primary hover:underline">到任务列表查看</a></p>
+    <PanelBlock title="未归属阶段的任务">
+      {noStage ? <>
+        <Fact label="未关闭、未归属">{noStage.unowned} 项</Fact>
+        <Fact label="明确不属于阶段">{noStage.declared} 项</Fact>
+        <p className={muted}>与阶段表下两行同一口径，已关闭的任务不计。<a href="#unassigned" className="text-primary hover:underline">归到阶段</a></p>
+      </> : <p className="text-label text-foreground">{projection.isError ? "没有读回，无法判断" : "正在读取"}</p>}
     </PanelBlock>
     <FullIdentifiers rows={[{ label: "目标", value: goal?.id }, { label: "阶段", value: stage?.id }, { label: "阶段提出者", value: stage?.actorId }]} />
   </div>;
