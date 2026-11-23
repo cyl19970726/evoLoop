@@ -26,6 +26,11 @@ import { useTaskTiming } from "./TaskScheduleSection";
 
 const link = "text-primary hover:underline";
 const unregistered = "未登记";
+/** The stored reason may already start with 不属于阶段 (a schedule's 例行 reason does): then it is the whole text, never wrapped a second time. */
+const noStageText = (reason: string | null | undefined): string => {
+  const text = reason?.trim();
+  return !text ? "不属于阶段" : text.startsWith("不属于阶段") ? text : `不属于阶段（${text}）`;
+};
 
 type Props = {
   projectId: string; token: string; detail: TaskDetail; leader: LeaderWorkTask | null; leaderState: ReadState;
@@ -37,7 +42,9 @@ export function TaskNowLine({ detail, leader, leaderState, linkForTab, openTab }
   const state = detail.task.state;
   if (state === "done" || state === "cancelled")
     return <p className="text-body text-foreground" data-task-now="closed">{state === "done" ? "已关闭" : "已取消"} · {date(detail.revision.createdAt)}</p>;
-  const observation = [...(detail.observations ?? [])].sort((a, b) => a.createdAt.localeCompare(b.createdAt)).at(-1);
+  // The latest acceptance of the current (latest) delivery only: an older delivery's verdict says nothing about the one now waiting.
+  const current = [...(detail.deliveries ?? [])].sort((a, b) => a.createdAt.localeCompare(b.createdAt)).at(-1);
+  const observation = current ? [...(detail.observations ?? [])].filter(item => item.deliveryId === current.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt)).at(-1) : undefined;
   const timing = leader?.timing;
   const now = leaderState === "loading" || leaderState === "checking" ? "正在核对…"
     : leaderState === "failed" ? "暂无法判断"
@@ -75,7 +82,7 @@ export function TaskRelationBar({ projectId, token, detail, leader, actorId, lin
   const ownership = leader?.stageOwnership;
   const stage = ownership?.state === "stage" && leader?.stage
     ? <a className={link} href={`${href(projectId, "journey")}?stage=${encodeURIComponent(leader.stage.stageId)}`}>{leader.stage.shortName}</a>
-    : ownership?.state === "none" ? <span title={ownership.reason ?? undefined}>不属于阶段{ownership.reason ? `（${ownership.reason}）` : ""}</span>
+    : ownership?.state === "none" ? <span title={ownership.reason ?? undefined}>{noStageText(ownership.reason)}</span>
       : ownership ? "未归属" : unregistered;
 
   const previous = typeof timing.data?.previousTaskId === "string" ? timing.data.previousTaskId : null;
@@ -89,7 +96,7 @@ export function TaskRelationBar({ projectId, token, detail, leader, actorId, lin
     : assignment.error ? "承接暂无法读取" : unregistered;
 
   const deliveries = detail.deliveries ?? [];
-  const latest = deliveries.at(-1);
+  const latest = [...deliveries].sort((a, b) => a.createdAt.localeCompare(b.createdAt)).at(-1);
   const result = latest ? (detail.observations ?? []).filter(item => item.deliveryId === latest.id)
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt)).at(-1) : undefined;
   const delivery = latest

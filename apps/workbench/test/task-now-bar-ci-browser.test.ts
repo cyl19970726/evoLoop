@@ -51,8 +51,10 @@ test("the now line and the relation bar say the same five things on every sample
 
   // (b) awaiting acceptance by the declared consumer, three hours
   s = await open("b");
+  // The first delivery was used; the second is the one waiting, so the line must not show the first one's 已使用.
   assert.match(await s.now.innerText(), /^现在：[^\n]*等待验收[^\n]*等指定验收者[^\n]*已 3 小时[^\n]*最新验收：还没有验收结论/);
-  assert.match(await s.text("delivery"), /第 1 份交付 · .+ · 待验收/);
+  assert.doesNotMatch(await s.now.innerText(), /已使用/);
+  assert.match(await s.text("delivery"), /第 2 份交付 · .+ · 待验收/);
 
   // (c) used, waiting for the close; the completion conditions are Markdown and nothing in them runs
   s = await open("c");
@@ -79,11 +81,13 @@ test("the now line and the relation bar say the same five things on every sample
   assert.match(await s.text("source"), /^来源 日程 每日验收巡检$/);
   assert.equal(await s.bar.locator('[data-relation="agent"] a').count(), 1);
   assert.match(await s.text("stage"), /^阶段 不属于阶段（/);
+  assert.doesNotMatch(await s.text("stage"), /不属于阶段（不属于阶段/);
   await s.bar.locator('[data-relation="source"] a').click();
   await page.waitForURL(/\/schedules\?schedule=/);
 
   // (f) a daily-repeat series member: the source is the series' previous task
   s = await open("f");
+  assert.equal(await s.text("stage"), "阶段 不属于阶段（日程例行）", "a reason that already says 不属于阶段 is shown once");
   assert.equal(await s.text("source"), "来源 系列的上一份");
   assert.equal(await s.bar.locator('[data-relation="source"] a').getAttribute("href"), `/p/${projectId}/tasks/${nowTasks.a.id}`);
 

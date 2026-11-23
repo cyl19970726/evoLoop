@@ -132,7 +132,7 @@ const taskList = Object.values(tasks);
 // e made by a schedule; f a daily-repeat series member whose previous task is a; g closed.
 export const nowTasks = {
   a: task(11, "返工：选中行字重", "in_progress", "dev", { phase: "rework", agent: "dev", ack: "accepted", run: "completed", delivery: true, obs: "failed", stage: "s1", basis: true, elapsedMin: 2 * 24 * 60 }),
-  b: task(12, "待验收：右栏抽屉", "in_progress", "dev", { phase: "awaiting_acceptance", agent: "dev", ack: "accepted", delivery: true, stage: "s1", basis: true, elapsedMin: 180 }),
+  b: task(12, "待验收：右栏抽屉", "in_progress", "dev", { phase: "awaiting_acceptance", agent: "dev", ack: "accepted", delivery: true, priorDelivery: true, stage: "s1", basis: true, elapsedMin: 180 }),
   c: task(13, "已使用：三宽度回归", "in_progress", "dev", { phase: "awaiting_close", agent: "dev", ack: "accepted", delivery: true, obs: "used", stage: "s1", basis: true, elapsedMin: 40,
     acceptance: "1. **右栏**随选中项切换，见 `data-task-facts`。\n2. 三个宽度都不出现横向滚动，详见 [设计语言](https://example.test/design)。\n3. <script>window.__ran = true</script> 只作为文字显示。" }),
   d: task(14, "什么都没登记的任务", "todo", "docs", { phase: "unassigned", elapsedMin: 20 }),
@@ -152,6 +152,7 @@ export const timingRecordOf = t => t.dailyOf ? { projectId, taskId: t.id, series
 const revisionId = t => id(300 + t.n);
 const runId = t => id(400 + t.n);
 const deliveryId = t => id(500 + t.n);
+const priorDeliveryId = t => id(540 + t.n);
 
 export function taskRecord(t) {
   return { projectId, id: t.id, version: 2, currentRevisionId: revisionId(t), title: t.title,
@@ -233,12 +234,16 @@ export function taskDetail(t) {
     impacts: featured ? [{ projectId, id: id(802), taskId: t.id, taskRevisionId: revisionId(t), documentId: docs.rule.id,
       fromRevisionId: docs.rule.oldRev, toRevisionId: docs.rule.rev, state: "pending", decisionId: null, createdAt: ago(90) }] : [],
     decisions: [],
-    deliveries: t.delivery ? [{ projectId, id: deliveryId(t), taskId: t.id, taskRevisionId: revisionId(t), runId: runId(t), sourceRunVersion: 3,
+    deliveries: t.delivery ? [...t.priorDelivery ? [{ projectId, id: priorDeliveryId(t), taskId: t.id, taskRevisionId: revisionId(t), runId: runId(t), sourceRunVersion: 2,
+      submittedByActorId: "agent-dev", artifactRef: "git:evoloop/workbench", artifactRevision: "3a9d0ce", contentHash: hash("b"),
+      technicalResult: "passed", technicalEvidence: "第一轮交付", reason: "第一份交付", actorId: "agent-dev", createdAt: ago(60 * 30) }] : [], { projectId, id: deliveryId(t), taskId: t.id, taskRevisionId: revisionId(t), runId: runId(t), sourceRunVersion: 3,
       submittedByActorId: "agent-dev", artifactRef: "git:evoloop/workbench", artifactRevision: "4f1c2ab", contentHash: hash("c"),
       technicalResult: "passed", technicalEvidence: "类型检查、单元测试和三个宽度的浏览器回归通过", reason: "交付右栏信息核对",
       actorId: "agent-dev", createdAt: ago(45) }] : [],
     // FIXTURE_REWORK_OBS: the return opinion a rework round's link points to (?observation=ID), id(881) like agents.mjs's rework dispatch.
-    observations: t.obs ? [{ projectId, id: id(880 + t.n), taskId: t.id, deliveryId: deliveryId(t), observer: "acceptance-claude-agent",
+    observations: t.priorDelivery ? [{ projectId, id: id(860 + t.n), taskId: t.id, deliveryId: priorDeliveryId(t), observer: "acceptance-claude-agent",
+      observerKind: "agent", result: "used", evidence: "第一份交付已使用", reason: "验收结论", actorId: "acceptance-claude-agent", createdAt: ago(60 * 29) }]
+    : t.obs ? [{ projectId, id: id(880 + t.n), taskId: t.id, deliveryId: deliveryId(t), observer: "acceptance-claude-agent",
       observerKind: "agent", result: t.obs, evidence: "按完成条件逐条使用", reason: "验收结论", actorId: "acceptance-claude-agent", createdAt: ago(40) }]
     : t.delivery && process.env.FIXTURE_REWORK_OBS === "1" ? [{ projectId, id: id(881), taskId: t.id, deliveryId: deliveryId(t), observer: "acceptance-claude-agent",
       observerKind: "agent", result: "failed", evidence: "退回：任务列表页默认视图的选中行标题仍是中等字重，不满足“选中字重不低于 600”。", reason: "验收未通过，退回返工",
