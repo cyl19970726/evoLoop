@@ -161,7 +161,7 @@ function ReplyRecord({ id, reply, title, sessionKey, roleSeed, lastReply, projec
     <AgentAvatar seed={sessionKey} roleSeed={roleSeed} size={26} className="mt-0.5" />
     <div className="min-w-0 flex-1">
       <header className="mb-1 flex flex-wrap items-center gap-x-2 text-caption text-muted-foreground"><strong className="font-medium text-text-secondary">{title}</strong>{reply.at && <time dateTime={reply.at}>{date(reply.at)}</time>}</header>
-      <AgentMessage className={replyProse}><MarkdownBody source={reply.truncated ? foldAtBlock(reply.body).shown : reply.body} identity={`workspace-${id}`} projectId={projectId} topHeading={3} linkify /></AgentMessage>
+      <AgentMessage className={replyProse}><MarkdownBody source={reply.truncated ? foldAtBlock(reply.body).shown : reply.body} identity={`workspace-${id}`} projectId={projectId} topHeading={3} linkify refLinks /></AgentMessage>
       {reply.truncated && <footer className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-caption"><span className="text-text-secondary" data-reply-cut="">已显示前一部分，后面还有内容</span><Button variant="link" className={linkButton} onClick={onFull}>读取完整回复</Button></footer>}
     </div>
   </article>;
@@ -243,7 +243,7 @@ function TimelineEntry({ item, context, title, sessionKey, target, identity, tas
   }
   const stale = item.freshness === "stale" && <span className="workspace-stale">上次观察</span>;
   if (mine) return <article aria-label="我发出的消息" className="flex min-w-0 max-w-full flex-col items-end gap-1 self-end" data-workspace-entry={item.id} data-round-source="" data-turn-id={item.turnId ?? undefined}>
-    <MessageBubble footer={<span className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1"><span>你的消息</span>{stateTag}{time}{stale}{actions}</span>}>{body ? <LongMessage text={body} identity={item.id} /> : "（没有可公开的正文）"}</MessageBubble>
+    <MessageBubble footer={<span className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1"><span>你的消息</span>{stateTag}{time}{stale}{actions}</span>}>{body ? <LongMessage text={body} identity={item.id} projectId={context.projectId} /> : "（没有可公开的正文）"}</MessageBubble>
     {bodyError && <p role="alert" className="text-caption text-destructive">{bodyError}</p>}
   </article>;
   return <article aria-label={label} className={cn("flex min-w-0 gap-3", item.kind !== "message" && "text-small")} data-workspace-entry={item.id} data-turn-id={item.turnId ?? undefined} {...(input ? { "data-round-source": "" } : {})} {...(lastReply ? { "data-last-reply": "" } : {})}>
@@ -252,7 +252,7 @@ function TimelineEntry({ item, context, title, sessionKey, target, identity, tas
     <div className="min-w-0 flex-1">
       <header className="mb-1 flex flex-wrap items-center gap-x-2 text-caption text-muted-foreground">{provenSession && <SessionIdentityMark target={target} identity={identity} name={title} size="small" />}<strong className="font-medium text-text-secondary">{label}</strong>{time}{stale}{stateTag}</header>
       {heading && <h3 className="mb-1 text-label font-medium text-text-secondary">{heading}</h3>}
-      {body ? <AgentMessage className={cn(replyProse, item.kind !== "message" && "text-small text-text-secondary")}><MarkdownBody source={body} identity={`workspace-${item.id}`} projectId={context.projectId} topHeading={3} linkify /></AgentMessage>
+      {body ? <AgentMessage className={cn(replyProse, item.kind !== "message" && "text-small text-text-secondary")}><MarkdownBody source={body} identity={`workspace-${item.id}`} projectId={context.projectId} topHeading={3} linkify refLinks /></AgentMessage>
         : <p className="text-small text-muted-foreground">{assistant && item.state === "running" ? "正在回复…" : "来源没有提供可公开的正文。"}</p>}
       {bodyError && <p role="alert" className="mt-1 text-caption text-destructive">{bodyError}</p>}
       <footer className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-caption">{actions}</footer>
@@ -296,7 +296,7 @@ function EntryInspector({ entry, context, sessionKey, mayReadOriginal, agentName
         {value.detail.resources.length > 0 && <ul className="flex flex-col gap-0.5 font-mono text-caption">{value.detail.resources.map(resource => <li key={resource}>{resource}</li>)}</ul>}
       </> : value.detailAvailable && mayReadOriginal ? <Button size="compact" className="self-start" disabled={busy} onClick={() => void read()}>{busy ? "读取中…" : "读取原始输入与输出"}</Button>
         : <p className="text-caption text-muted-foreground">{mayReadOriginal ? toolDetailReason(value.detailReason) : "当前身份可阅读活动摘要；原始输入与输出未获授权。"}</p>}
-    </> : <div className={replyProse}><MarkdownBody source={value.body} identity={`workspace-detail-${value.id}`} projectId={context.projectId} topHeading={4} linkify /></div>}
+    </> : <div className={replyProse}><MarkdownBody source={value.body} identity={`workspace-detail-${value.id}`} projectId={context.projectId} topHeading={4} linkify refLinks /></div>}
     {busy && <p role="status" className="text-caption text-muted-foreground">正在读取完整内容…</p>}
     {error && <Notice tone="error" action={<Button size="compact" disabled={busy} onClick={() => void read()}>重试详情</Button>}>{error}</Notice>}
     {value.truncated && !busy && <p className="text-caption text-muted-foreground">来源内容仍有截断，当前显示不能代表完整原件。</p>}
@@ -331,8 +331,8 @@ function MessageInspector({ id, context, snapshot, onApplied }: { id: string; co
     {read.isError && <Notice tone="error">重新读取失败：{errorText(read.error)}；下面是上次读回，当前待核对。</Notice>}
     <h3 className="text-label font-semibold">消息详情 · {messageStates[message.state]}</h3>
     <p className="text-caption text-muted-foreground">发送于 {date(message.createdAt)}{message.senderActorId === context.principal.actorId ? " · 由我发送" : ""}{senderClassLabel(message.senderClass) ? ` · 发送者：${senderClassLabel(message.senderClass)}` : ""}</p>
-    <div className={replyProse}><MarkdownBody source={message.content} identity={`message-detail-${message.id}`} projectId={context.projectId} topHeading={4} linkify /></div>
-    {processing?.response && <><h3 className="text-label font-semibold">回复</h3><div className={replyProse}><MarkdownBody source={processing.response} identity={`message-response-${processing.id}`} projectId={context.projectId} topHeading={4} linkify /></div></>}
+    <div className={replyProse}><MarkdownBody source={message.content} identity={`message-detail-${message.id}`} projectId={context.projectId} topHeading={4} linkify refLinks /></div>
+    {processing?.response && <><h3 className="text-label font-semibold">回复</h3><div className={replyProse}><MarkdownBody source={processing.response} identity={`message-response-${processing.id}`} projectId={context.projectId} topHeading={4} linkify refLinks /></div></>}
     {processing?.failure && <Notice tone="error">{nativeFailureLine(processing.failureCategory)}处理失败：{processing.failure}</Notice>}
     {message.blockedReason && <p className="text-text-secondary">等待原因：{grantBlockText(message.blockedReason) ?? message.blockedReason}</p>}
     {message.readReceipt && <p className="text-text-secondary">已读回执：{message.readReceipt.evidence} · {date(message.readReceipt.at)}</p>}

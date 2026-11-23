@@ -1,5 +1,6 @@
 import MarkdownIt from "markdown-it";
 import { appPath } from "../appPath";
+import { refHits, refTarget, type RefAnswer } from "../refLinks";
 import { legacyWorkbenchRoute } from "./legacyWorkbenchLink";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -42,7 +43,69 @@ export type MarkdownPart = { kind: "html"; value: string } | { kind: "diagram"; 
 interface ParsedTokenView { type: string; tag?: string; level?: number; content?: string; children?: ParsedTokenView[] | null }
 function escapeHtml(value: string): string { return value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!); }
 
-export function splitMarkdown(source: string, options: { omitLeadingTitle?: string; projectId?: string; topHeading?: number; linkify?: boolean } = {}): MarkdownPart[] {
+type TokenLike = { type: string; content: string; attrSet(name: string, value: string): void };
+type TokenMaker = new (type: string, tag: string, nesting: number) => TokenLike;
+
+/**
+ * 正文里的编号成链接 (Task a910ee96): walks the inline tokens (a fenced block is not one; text already inside a link is
+ * skipped), calls `seen` for every candidate and, where `answerOf` knows the object, turns the written text into a link. Inline code
+ * counts when it holds exactly one candidate. Nothing is built for a candidate the project did not resolve.
+ */
+function linkRefs(tokens: ParsedTokenView[], Token: TokenMaker, projectId: string,
+  answerOf: ((key: string) => RefAnswer | undefined) | undefined, seen?: (key: string) => void): void {
+  const link = (children: unknown[], key: string, label: TokenLike): boolean => {
+    const target = refTarget(projectId, key, answerOf?.(key));
+    if (!target) return false;
+    const open = new Token("link_open", "a", 1);
+    open.attrSet("href", target.href); open.attrSet("title", target.description); open.attrSet("aria-description", target.description);
+    children.push(open, label, new Token("link_close", "a", -1));
+    return true;
+  };
+  for (const inline of tokens) {
+    if (inline.type !== "inline" || !inline.children) continue;
+    const children: unknown[] = [];
+    let insideLink = false;
+    for (const child of inline.children) {
+      if (child.type === "link_open") insideLink = true;
+      const content = child.content ?? "";
+      if (insideLink || (child.type !== "text" && child.type !== "code_inline")) children.push(child);
+      else if (child.type === "code_inline") {
+        const hits = refHits(content);
+        const only = hits.length === 1 && hits[0]!.text === content ? hits[0]! : null;
+        if (only) seen?.(only.key);
+        if (!only || !link(children, only.key, child as unknown as TokenLike)) children.push(child);
+      } else {
+        let offset = 0;
+        const text = (value: string) => { const token = new Token("text", "", 0); token.content = value; return token; };
+        const out: unknown[] = [];
+        for (const hit of refHits(content)) {
+          seen?.(hit.key);
+          const label = text(hit.text);
+          const before = out.length;
+          if (!link(out, hit.key, label)) continue;
+          if (hit.index > offset) out.splice(before, 0, text(content.slice(offset, hit.index)));
+          offset = hit.index + hit.text.length;
+        }
+        if (offset === 0) children.push(child);
+        else { children.push(...out); if (offset < content.length) children.push(text(content.slice(offset))); }
+      }
+      if (child.type === "link_close") insideLink = false;
+    }
+    inline.children = children as ParsedTokenView[];
+  }
+}
+
+/** The candidates a Markdown source holds (not those inside a fence or an existing link), deduplicated, in order. */
+export function markdownRefKeys(source: string, projectId?: string): string[] {
+  if (!projectId || !source) return [];
+  const markdown = markdownFor(projectId);
+  const TokenCtor = (MarkdownIt as unknown as { Token: TokenMaker }).Token;
+  const keys = new Set<string>();
+  linkRefs(markdown.parse(source, {}) as unknown as ParsedTokenView[], TokenCtor, projectId, undefined, key => keys.add(key));
+  return [...keys];
+}
+
+export function splitMarkdown(source: string, options: { omitLeadingTitle?: string; projectId?: string; topHeading?: number; linkify?: boolean; refs?: (key: string) => RefAnswer | undefined } = {}): MarkdownPart[] {
   const markdown = markdownFor(options.projectId, options.linkify === true);
   const tokens = markdown.parse(source, {});
   const TokenCtor = (MarkdownIt as unknown as {Token: new (type: string, tag: string, nesting: number) =>
@@ -93,6 +156,7 @@ export function splitMarkdown(source: string, options: { omitLeadingTitle?: stri
       if (child.type === "link_open" && /^https?:\/\//i.test(child.attrGet("href") ?? "")) { child.attrSet("target", "_blank"); child.attrSet("rel", "noopener noreferrer"); }
     }
   }
+  if (options.refs && options.projectId) linkRefs(tokens as unknown as ParsedTokenView[], TokenCtor, options.projectId, options.refs);
   const expectedTitle = options.omitLeadingTitle?.replace(/\s+/gu, " ").trim();
   if (expectedTitle) {
     const parsed = tokens as unknown as ParsedTokenView[];

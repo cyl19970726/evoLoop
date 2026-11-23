@@ -190,3 +190,42 @@ test("an id prefix is a range over the primary key, not a scan of every row", as
     }
   } finally { await c.query("RESET enable_seqscan"); c.release(); }
 });
+
+// ---- body links (Task a910ee96): GET /jump/refs?q=a,b,c ----
+const refs = async (candidates: string[], project = p, as = "member") => {
+  const response = await app.inject({ method: "GET", url: `/api/projects/${project}/jump/refs?q=${encodeURIComponent(candidates.join(","))}`, headers: { authorization: `Bearer ${as}` } });
+  return { status: response.statusCode, body: response.json() as import("@evoloop/contracts/object-jump").JumpBatchResult };
+};
+
+test("the batch read answers each candidate on its own: one object, several, none, a PR number", async () => {
+  const { status, body } = await refs([ids.taskA.slice(0, 8), ids.docA, ids.sessionA.slice(0, 8), ids.stageA, ids.scheduleA.slice(0, 8), ids.delivery.slice(0, 8), "#12", "99999999", "deadbeef", "20261123", "#13"]);
+  assert.equal(status, 200);
+  const hrefOf = (key: string) => body.results[key]!.matches.map(m => m.href);
+  assert.deepEqual(hrefOf(ids.taskA.slice(0, 8)), [`/p/${p}/tasks/${ids.taskA}`]);
+  assert.deepEqual(hrefOf(ids.docA), [`/p/${p}/documents/${ids.docA}`]);
+  assert.deepEqual(hrefOf(ids.sessionA.slice(0, 8)), [`/p/${p}/sessions?session=${encodeURIComponent(`owned:${ids.sessionA}`)}`]);
+  assert.deepEqual(hrefOf(ids.stageA), [`/p/${p}/journey?stage=${ids.stageA}`]);
+  assert.deepEqual(hrefOf(ids.scheduleA.slice(0, 8)), [`/p/${p}/schedules?schedule=${ids.scheduleA}`]);
+  assert.deepEqual(hrefOf(ids.delivery.slice(0, 8)), [`/p/${p}/tasks/${ids.taskA}?tab=delivery`]);
+  assert.deepEqual(hrefOf("#12"), [`/p/${p}/tasks/${ids.taskA}?tab=delivery`]);
+  assert.equal(body.results["99999999"]!.matches.length, 2, "a shared prefix has several objects");
+  for (const none of ["deadbeef", "20261123", "#13"]) assert.deepEqual(body.results[none], { matches: [], truncated: false }, none);
+  assert.equal(body.results[ids.taskA.slice(0, 8)]!.matches[0]!.title, "第一项任务");
+});
+
+test("the batch read stays inside the project, takes at most 50, and refuses outsiders", async () => {
+  const foreign = id("a1a1a1a1", 9);
+  assert.deepEqual((await refs([foreign])).body.results[foreign], { matches: [], truncated: false }, "another project's id is not found");
+  assert.equal((await refs([foreign, ids.docA], other, "outsider")).body.results[foreign]!.matches.length, 1);
+  const fifty = Array.from({ length: 50 }, (_, n) => `a0b0c0${String(n).padStart(2, "0")}`);
+  const ok = await refs(fifty);
+  assert.equal(ok.status, 200);
+  assert.equal(Object.keys(ok.body.results).length, 50);
+  assert.equal((await refs([...fifty, "a0b0c0ff"])).status, 400, "51 candidates are refused");
+  assert.equal((await refs(["a".repeat(41)])).status, 400);
+  assert.equal((await refs([ids.taskA.slice(0, 8), ids.taskA.slice(0, 8)])).status, 200, "a repeated candidate is answered once");
+  assert.equal((await refs([ids.taskA.slice(0, 8)], p, "outsider")).status, 403);
+  const anonymous = await app.inject({ method: "GET", url: `/api/projects/${p}/jump/refs?q=a1a1a1a1` });
+  assert.equal(anonymous.statusCode, 401);
+  assert.equal((await app.inject({ method: "GET", url: `/api/projects/${p}/jump/refs?q=`, headers: { authorization: "Bearer member" } })).statusCode, 400);
+});

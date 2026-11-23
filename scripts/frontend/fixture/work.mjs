@@ -1,4 +1,5 @@
 // Tasks, documents, goals and stages of the screenshot fixture.
+import { refMarkdown, refPlain } from "./refs.mjs";
 import { actorId, agents, ago, hash, id, later, projectId, roles } from "./common.mjs";
 
 // ---------- documents ----------
@@ -64,7 +65,8 @@ export function revisionRecord(d, revisionId = d.rev) {
   const old = revisionId === d.oldRev;
   // An HTML report is kept only as its original (no inline body); the page reads it from /original.
   const html = d.html ? { body: null, format: "html", mediaType: "text/html", originalName: "report.html", payloadRef: revisionId, entrypoint: "report.html" }
-    : { body: old ? d.oldBody : d.body, format: "markdown", mediaType: "text/markdown", originalName: `${d.title}.md`, payloadRef: null, entrypoint: null };
+    
+    : { body: old ? d.oldBody : d.body + (d === docs.map && refMarkdown() ? `\n\n${refMarkdown()}\n` : ""), format: "markdown", mediaType: "text/markdown", originalName: `${d.title}.md`, payloadRef: null, entrypoint: null };
   return { projectId, documentId: d.id, id: revisionId, ...html, assetsManifest: [], contentHash: hash(old ? "b" : "a"),
     author: actorId, createdAt: old ? ago(60 * 24 * 3) : ago(90), previousRevisionId: !old && d.oldRev ? d.oldRev : null,
     reason: old ? "建立对账规则" : "补充交付与验收的区分", revisionNumber: old || !d.oldRev ? 1 : 2 };
@@ -156,9 +158,9 @@ const priorDeliveryId = t => id(540 + t.n);
 
 export function taskRecord(t) {
   return { projectId, id: t.id, version: 2, currentRevisionId: revisionId(t), title: t.title,
-    content: t === tasks.t1 ? docs.taskBody.body : `# ${t.title}\n\n${t.title}的正文：说明要做什么、为什么做。`,
+    content: t === tasks.t1 ? docs.taskBody.body + (refMarkdown() ? `\n\n## 编号\n\n${refMarkdown()}\n` : "") : `# ${t.title}\n\n${t.title}的正文：说明要做什么、为什么做。`,
     contentDocumentId: t === tasks.t1 ? docs.taskBody.id : id(600 + t.n), contentRevisionId: t === tasks.t1 ? docs.taskBody.rev : id(650 + t.n),
-    kind: t.kind, acceptance: t.acceptance ?? "1. 选中哪一项，右栏就换成这一项。\n2. 1024 以下右栏是抽屉，不会自己弹出。\n3. 读取失败写“无法判断”。",
+    kind: t.kind, acceptance: (t === tasks.t1 && refMarkdown()) || t.acceptance || "1. 选中哪一项，右栏就换成这一项。\n2. 1024 以下右栏是抽屉，不会自己弹出。\n3. 读取失败写“无法判断”。",
     owner: roles[t.owner].id, state: t.state };
 }
 
@@ -238,13 +240,13 @@ export function taskDetail(t) {
       submittedByActorId: "agent-dev", artifactRef: "git:evoloop/workbench", artifactRevision: "3a9d0ce", contentHash: hash("b"),
       technicalResult: "passed", technicalEvidence: "第一轮交付", reason: "第一份交付", actorId: "agent-dev", createdAt: ago(60 * 30) }] : [], { projectId, id: deliveryId(t), taskId: t.id, taskRevisionId: revisionId(t), runId: runId(t), sourceRunVersion: 3,
       submittedByActorId: "agent-dev", artifactRef: "git:evoloop/workbench", artifactRevision: "4f1c2ab", contentHash: hash("c"),
-      technicalResult: "passed", technicalEvidence: "类型检查、单元测试和三个宽度的浏览器回归通过", reason: "交付右栏信息核对",
+      technicalResult: "passed", technicalEvidence: t === tasks.t1 && refPlain() ? refPlain() : "类型检查、单元测试和三个宽度的浏览器回归通过", reason: "交付右栏信息核对",
       actorId: "agent-dev", createdAt: ago(45) }] : [],
     // FIXTURE_REWORK_OBS: the return opinion a rework round's link points to (?observation=ID), id(881) like agents.mjs's rework dispatch.
     observations: t.priorDelivery ? [{ projectId, id: id(860 + t.n), taskId: t.id, deliveryId: priorDeliveryId(t), observer: "acceptance-claude-agent",
       observerKind: "agent", result: "used", evidence: "第一份交付已使用", reason: "验收结论", actorId: "acceptance-claude-agent", createdAt: ago(60 * 29) }]
     : t.obs ? [{ projectId, id: id(880 + t.n), taskId: t.id, deliveryId: deliveryId(t), observer: "acceptance-claude-agent",
-      observerKind: "agent", result: t.obs, evidence: "按完成条件逐条使用", reason: "验收结论", actorId: "acceptance-claude-agent", createdAt: ago(40) }]
+      observerKind: "agent", result: t.obs, evidence: t === tasks.t1 && refPlain() ? refPlain() : "按完成条件逐条使用", reason: "验收结论", actorId: "acceptance-claude-agent", createdAt: ago(40) }]
     : t.delivery && process.env.FIXTURE_REWORK_OBS === "1" ? [{ projectId, id: id(881), taskId: t.id, deliveryId: deliveryId(t), observer: "acceptance-claude-agent",
       observerKind: "agent", result: "failed", evidence: "退回：任务列表页默认视图的选中行标题仍是中等字重，不满足“选中字重不低于 600”。", reason: "验收未通过，退回返工",
       actorId: "acceptance-claude-agent", createdAt: ago(40) }] : [], closures: [],
