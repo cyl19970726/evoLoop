@@ -4,7 +4,7 @@
 // against the delivery artifact address inside the project's delivery rows (a per-project scan; the table is small
 // next to documents and the regular expression is only built from digits).
 import type { Pool } from "pg";
-import { jumpPrefixRange, jumpResultLimit, parseJumpInput, type JumpMatch, type JumpObjectKind, type JumpResult } from "@evoloop/contracts/object-jump";
+import { jumpBatchLimit, jumpPrefixRange, jumpResultLimit, parseJumpInput, type JumpBatchResult, type JumpMatch, type JumpObjectKind, type JumpResult } from "@evoloop/contracts/object-jump";
 
 type Row = { id: string; title: string | null; task_id?: string };
 const kindOrder: JumpObjectKind[] = ["task", "document", "session", "stage", "schedule", "delivery"];
@@ -41,11 +41,11 @@ function match(projectId: string, kind: JumpObjectKind, row: Row): JumpMatch {
 }
 
 /** The matches for `input` in `projectId` only: another project's objects are never read. At most `jumpResultLimit`. */
-export async function findJumpObjects(pool: Pick<Pool, "query">, projectId: string, input: string): Promise<JumpResult> {
+export async function findJumpObjects(pool: Pick<Pool, "query">, projectId: string, input: string, limit = jumpResultLimit): Promise<JumpResult> {
   const parsed = parseJumpInput(input);
   const query = input.trim();
   if (parsed.kind === "short" || parsed.kind === "invalid") return { query, matches: [], truncated: false };
-  const fetchLimit = jumpResultLimit + 1;
+  const fetchLimit = limit + 1;
   let found: JumpMatch[];
   if (parsed.kind === "pr") {
     const rows = (await pool.query<Row>(prSql, [projectId, String(parsed.number), fetchLimit])).rows;
@@ -57,5 +57,22 @@ export async function findJumpObjects(pool: Pick<Pool, "query">, projectId: stri
       (await pool.query<Row>(sql[kind], [projectId, low, high, fetchLimit])).rows.map(row => match(projectId, kind, row))));
     found = lists.flat();
   }
-  return { query, matches: found.slice(0, jumpResultLimit), truncated: found.length > jumpResultLimit };
+  return { query, matches: found.slice(0, limit), truncated: found.length > limit };
+}
+
+/**
+ * Body links (Task a910ee96): the same lookup for up to `jumpBatchLimit` candidates in one read, each answered on its own and
+ * inside `projectId` only. A candidate that is not usable (too short, not an id or PR number) is answered with no match.
+ * Lookups run a few at a time so one page never holds the pool.
+ */
+export async function findJumpObjectsBatch(pool: Pick<Pool, "query">, projectId: string, candidates: readonly string[]): Promise<JumpBatchResult> {
+  const unique = [...new Set(candidates)].slice(0, jumpBatchLimit);
+  const results: JumpBatchResult["results"] = {};
+  for (let index = 0; index < unique.length; index += 5) {
+    await Promise.all(unique.slice(index, index + 5).map(async candidate => {
+      const { matches, truncated } = await findJumpObjects(pool, projectId, candidate, 2);
+      results[candidate] = { matches, truncated };
+    }));
+  }
+  return { results };
 }
