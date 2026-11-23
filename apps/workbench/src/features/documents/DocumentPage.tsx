@@ -157,7 +157,7 @@ function MarkdownText({ projectId, revision, title }: { projectId: string; revis
   return <Tabs defaultValue="rendered">
     <TabsList aria-label="阅读方式" className="mb-4"><TabsTrigger value="rendered">排版</TabsTrigger><TabsTrigger value="source">原文</TabsTrigger></TabsList>
     <TabsContent value="rendered" className={readingProse}>
-      <MarkdownBody source={source.text} identity={revision.id} omitLeadingTitle={title} projectId={projectId} />
+      <MarkdownBody source={source.text} identity={revision.id} omitLeadingTitle={title} projectId={projectId} refLinks />
     </TabsContent>
     <TabsContent value="source">
       <pre className={readingSource}>{source.text}</pre>
