@@ -323,6 +323,12 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
   const key = `${route.section}:${route.id ?? ""}:${route.revision ?? ""}:${route.action ?? ""}:${route.session ?? ""}`;
   const positionKey = `evoloop:scroll:${context.principal.actorId}:${context.projectId}:${key}`;
   cache.current.set(key, route);
+  const changedKey = useRef(""), changedAt = useRef(0), focusedAt = useRef(0);
+  useEffect(() => {
+    const seen = (event: FocusEvent) => { if ((event.target as HTMLElement | null)?.id !== "workspace-main") focusedAt.current = event.timeStamp; };
+    document.addEventListener("focusin", seen);
+    return () => document.removeEventListener("focusin", seen);
+  }, []);
   useLayoutEffect(() => {
     let position = positions.current.get(key);
     if (position === undefined) {
@@ -335,8 +341,14 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
       window.scrollTo(0, position);
       if (Math.abs(window.scrollY - position) > 2 && ++frame < 120) handle = requestAnimationFrame(restore);
     };
+    // The landmark takes focus once, a frame after the page changes. If the person (or code) puts focus on something else after the page
+    // changed and before that frame, the choice stays (Task 06868d2a: the frame after sign-in took focus from a link just focused). A focus
+    // made before the change, such as the rail link that was clicked to get here, does not count: the landmark still takes it.
+    if (changedKey.current !== key) { changedKey.current = key; changedAt.current = performance.now(); }
     handle = requestAnimationFrame(() => {
       restore();
+      const now = document.activeElement;
+      if (focusedAt.current > changedAt.current && now && now !== document.body && now.isConnected) return;
       // The landmark stays focusable while page titles may still be loading.
       document.getElementById("workspace-main")?.focus({ preventScroll: true });
     });
