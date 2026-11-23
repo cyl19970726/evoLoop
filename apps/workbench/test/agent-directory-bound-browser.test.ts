@@ -38,15 +38,13 @@ test("bound Sessions of one Role are business agents, told apart by runtime and 
   await page.getByLabel("访问令牌").fill(token);
   await page.getByRole("button", { name: "进入", exact: true }).click();
   const nav = page.getByRole("navigation", { name: "智能体目录" }).or(page.locator("section[aria-label='智能体目录']")).first();
-  await nav.getByText("业务智能体 · 已加载 3", { exact: true }).waitFor();
+  await nav.getByText("业务智能体 · 3", { exact: true }).waitFor();
   const text = await nav.innerText();
   assert.equal(await nav.getByText(/^待归类/).count(), 0, "nothing is filed under 待归类");
   assert.equal((text.match(/功能开发 · Claude/g) ?? []).length, 2, "the two Claude agents read alike by name …");
   assert.equal((text.match(/功能开发 · Codex/g) ?? []).length, 1);
-  assert.match(text, /标识 8cf291f4/);
-  assert.match(text, /标识 5d2e7a10/, "… and are told apart by their short identifier");
-  assert.doesNotMatch(text, /标识 c4be4124/, "a name that is not shared needs no identifier");
-  assert.equal((text.match(/Claude · sonnet/g) ?? []).length, 2, "the model each runs on is said");
-  assert.match(text, /Codex · 默认模型/);
+  // … and are told apart by the first four characters of the identifier, at the end of line 1, only where the name is shared.
+  assert.equal(await nav.locator(".session-nav-short").allInnerTexts().then(list => list.sort().join(",")), "5d2e,8cf2");
+  assert.doesNotMatch(text, /标识|Claude · sonnet|Codex · 默认模型/, "no identifier, provider or model in a row (they live in the right column)");
   assert.deepEqual(errors, []);
 });
