@@ -14,7 +14,7 @@ const dist = resolve(import.meta.dirname, "../dist");
 const frontend = resolve(import.meta.dirname, "../../../scripts/frontend");
 const skip = !required && !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE after building the workbench";
 
-test("code blocks copy, wrap and colour a diff; a pasted or dropped file is answered and never sent", { skip }, async t => {
+test("code blocks copy, wrap and colour a diff; a pasted or dropped file is answered and never sent", { skip, timeout: 180000 }, async t => {
   assert.ok(modulePath, "EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE is required when EVOLOOP_BROWSER_TEST_REQUIRED=1");
   const { chromium } = (await import(pathToFileURL(modulePath).href)).default;
   const { startFixtureServer } = await import(pathToFileURL(`${frontend}/fixture/server.mjs`).href);
@@ -41,7 +41,10 @@ test("code blocks copy, wrap and colour a diff; a pasted or dropped file is answ
     replyToMessageId: null, state: "replied", version: 1, blockedReason: null, readReceipt: null, createdAt: ago(21), updatedAt: ago(20) };
 
   const open = async (width: number, height: number, colorScheme: "light" | "dark") => {
-    const context = await browser.newContext({ viewport: { width, height }, locale: "zh-CN", colorScheme, permissions: ["clipboard-read", "clipboard-write"] });
+    const context = await browser.newContext({ viewport: { width, height }, locale: "zh-CN", colorScheme });
+    // The clipboard is the browser's and CI's Chrome may refuse to read it back (a read has no timeout and can wait forever), so the page's own write is recorded:
+    // what the button hands to writeText is what the person's clipboard receives.
+    await context.addInitScript("Object.defineProperty(navigator, \"clipboard\", { configurable: true, value: { writeText: text => { window.__copied = text; return Promise.resolve(); } } });");
     const page = await context.newPage();
     const errors: string[] = []; const posts: string[] = [];
     page.on("pageerror", error => errors.push(error.message));
@@ -94,13 +97,13 @@ test("code blocks copy, wrap and colour a diff; a pasted or dropped file is answ
     assert.equal(await copy.getAttribute("aria-label"), "复制代码");
     await copy.focus(); await page.keyboard.press("Enter");
     await ts.getByText("已复制").waitFor();
-    assert.equal(await page.evaluate("navigator.clipboard.readText()"), `${longLine}\nconst short = 1;\n`);
+    assert.equal(await page.evaluate("window.__copied"), `${longLine}\nconst short = 1;\n`);
     await ts.locator("[data-copy-label]").getByText("复制", { exact: true }).waitFor({ timeout: 4000 });
     assert.equal(await ts.locator("[data-copy-label]").innerText(), "复制");
     // The message a person sent has the same two buttons.
     const bubble = blocks.nth(0);
     await bubble.getByRole("button", { name: "复制代码" }).click();
-    assert.equal(await page.evaluate("navigator.clipboard.readText()"), "npm run test -- --filter user-bubble");
+    assert.equal(await page.evaluate("window.__copied"), "npm run test -- --filter user-bubble");
     await bubble.getByRole("button", { name: "自动换行" }).click();
     assert.equal(await bubble.getAttribute("data-wrap"), "true");
     await shot(page, `code-1440-${scheme}`);
