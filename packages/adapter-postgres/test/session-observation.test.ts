@@ -87,6 +87,21 @@ after(async () => {
   try { await cleanup.query(`DROP SCHEMA "${schema}" CASCADE`); } finally { await cleanup.end(); }
 });
 
+test("the directory says whether an owned Session has a question waiting for its reader (read-only, no sample)", async () => {
+  const client = await pool.connect();
+  try {
+    const reader = new PgSessionObservation(client, projectId, scope);
+    const before = await reader.directory({ limit: 10, membership: "current" });
+    assert.equal(before.items.find(item => item.key === `owned:${owned}`)?.awaitingReader, false);
+    assert.equal(before.items.find(item => item.key === `external:${a}`)?.awaitingReader, undefined, "an external agent says nothing");
+    await client.query(`INSERT INTO session_native_input_request(project_id,input_request_id,session_id,connection_id,native_request_id,thread_id,turn_id,item_id,method,
+      questions,is_blocking,supported,observed_at,state,version,created_at,updated_at)
+      VALUES($1,$2,$3,$4,'"r1"','th','tu','it','item/tool/requestUserInput','[{"id":"q"}]',true,true,now(),'pending',1,now(),now())`, [projectId, randomUUID(), owned, randomUUID()]);
+    const after = await reader.directory({ limit: 10, membership: "current" });
+    assert.equal(after.items.find(item => item.key === `owned:${owned}`)?.awaitingReader, true);
+  } finally { client.release(); }
+});
+
 test("directory keeps separate same-Role chats, deduplicates aliases, includes unbound owned Session", async () => {
   const client = await pool.connect();
   try {

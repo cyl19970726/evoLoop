@@ -1,4 +1,5 @@
 import type { ObservedSession, ObservedTask, SessionResult } from "@evoloop/contracts/session-observation";
+import type { StatusTone } from "@evoloop/ui";
 import type { NativeProgressView } from "./NativeSessionPanel";
 
 type StatusSource = Pick<ObservedSession, "kind" | "runtimeState" | "busy"> & {
@@ -181,4 +182,22 @@ export function sessionIdleSummary(session: StatusSource): string {
   if (session.kind === "external") return session.busy === false ? "外部观察为空闲" : "外部会话状态需核对";
   if (session.runtimeState !== "ready" || session.busy !== false) return sessionStatusLabel(session);
   return "项目记录无在途占用，原生状态待核";
+}
+
+/**
+ * One agent's status for a directory row, from what the directory read carries (no native progress is fetched per row):
+ * the mark's tone and the one sentence. A fact that was not read says 状态未读到, never 空闲.
+ */
+export interface RowStatus { tone: StatusTone; text: string; waitingOnMe: boolean }
+export function agentRowStatus(session: ObservedSession, holdReason?: string | null): RowStatus {
+  if (session.kind === "owned" && holdReason !== undefined && holdReason !== null) return { tone: "blocked", text: `已暂停（${holdReason}）`, waitingOnMe: false };
+  if (session.kind === "owned" && session.awaitingReader === true) return { tone: "waiting", text: "等你处理", waitingOnMe: true };
+  const unusable = unusableLabel(session);
+  if (unusable) return { tone: "blocked", text: unusable, waitingOnMe: false };
+  if (session.kind !== "owned" || session.busy === null) return { tone: "unknown", text: "状态未读到", waitingOnMe: false };
+  if (session.runtimeState !== "ready") return { tone: "blocked", text: agentStatusLabel(session), waitingOnMe: false };
+  if (session.busy) return session.currentTask?.title
+    ? { tone: "progress", text: `正在做 ${session.currentTask.title}`, waitingOnMe: false }
+    : { tone: "progress", text: "在回复消息", waitingOnMe: false };
+  return { tone: "idle", text: "空闲", waitingOnMe: false };
 }

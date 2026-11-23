@@ -31,7 +31,7 @@ const selectedIdentity = (row: Row): SessionIdentity | null => {
     target: i.target_kind === "owned" ? { kind: "owned", sessionId: i.target_id } : { kind: "external", linkId: i.target_id },
     version: i.version, color: i.identity_color, mark: i.identity_mark, actorId: i.actor_id, reason: i.reason, updatedAt: iso(i.updated_at)! };
 };
-interface PreparedSessions { runs: Map<string, Row>; work: Map<string, Row>; busy: Set<string> }
+interface PreparedSessions { runs: Map<string, Row>; work: Map<string, Row>; busy: Set<string>; asking: Set<string> }
 
 /** Only current project identities are combined; the CTE never reads native history. */
 const catalog = `WITH hosts AS (
@@ -172,15 +172,18 @@ export class PgSessionObservation implements SessionObservationReader {
         JOIN task t ON t.project_id=r.project_id AND t.task_id=r.task_id
         WHERE r.project_id=$1 AND r.session_id=ANY($2::uuid[]) AND r.state=ANY($3::text[])
         ORDER BY r.session_id,r.created_at DESC,r.run_id DESC`, [this.projectId, owned, active]);
-    const activeMessages = await this.client.query(`SELECT DISTINCT session_id FROM session_message_processing WHERE project_id=$1 AND session_id=ANY($2::uuid[])
-        AND state IN ('dispatching','running','unknown')`, [this.projectId, owned]);
+    // One read for both: messages in flight make a Session busy; a pending native question means it waits for its reader.
+    const flags = await this.client.query(`SELECT DISTINCT session_id,'busy'::text AS flag FROM session_message_processing WHERE project_id=$1 AND session_id=ANY($2::uuid[])
+        AND state IN ('dispatching','running','unknown')
+      UNION SELECT DISTINCT session_id,'asking' FROM session_native_input_request WHERE project_id=$1 AND session_id=ANY($2::uuid[]) AND state='pending'`, [this.projectId, owned]);
     const work = new Map<string, Row>();
     for (const row of assignments.rows) work.set(`${row.target_kind}:${row.target_id}`, row);
     for (const row of claims.rows) work.set(`owned:${row.session_id}`, row);
     // The Task a live Run is executing is the current work, whatever later happened to its revision or assignment (defect 52eb5ecf item 6).
     for (const row of activeRuns.rows) work.set(`owned:${row.session_id}`, row);
     return { runs: new Map(runs.rows.map(row => [row.session_id, row])), work,
-      busy: new Set([...activeRuns.rows, ...activeMessages.rows].map(row => row.session_id)) };
+      busy: new Set([...activeRuns.rows, ...flags.rows.filter(row => row.flag === "busy")].map(row => row.session_id)),
+      asking: new Set(flags.rows.filter(row => row.flag === "asking").map(row => row.session_id)) };
   }
   private async describe(row: Row, prepared?: PreparedSessions): Promise<ObservedSession> {
     const target: SessionTarget = row.kind === "owned" ? { kind: "owned", sessionId: row.identity } : { kind: "external", linkId: row.identity };
@@ -221,6 +224,7 @@ export class PgSessionObservation implements SessionObservationReader {
       runtime: row.kind === "owned" && row.runtime ? { provider: row.runtime.runtime_provider === "claude" ? "claude" : "codex",
         model: (row.runtime.model ?? row.runtime.observed_model ?? null) as string | null } : null,
       runtimeState: row.runtime?.state ?? null, busy: row.kind === "owned" ? !!inFlight.rows[0]?.busy : null,
+      ...(prepared && row.kind === "owned" ? { awaitingReader: prepared.asking.has(row.identity) } : {}),
       currentTask: current ? this.task(current, current.relation) : null,
       latestBusinessRun: run ? { id: run.run_id, taskId: run.task_id, state: run.state, updatedAt: iso(run.updated_at)!, source: this.source("run", run.run_id),
         // One Session's own read looks the dispatch up; the directory's batch read leaves it out (no per-row query).

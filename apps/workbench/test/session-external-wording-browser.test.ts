@@ -113,12 +113,10 @@ test("external agents are named without the short identifier, same-role ones sta
   const itemA = directory.locator(`.session-nav-item[href*="${linkA}"]`), itemB = directory.locator(`.session-nav-item[href*="${linkB}"]`);
   await itemA.getByText(shownName, { exact: true }).waitFor();
   await itemB.getByText(shownName, { exact: true }).waitFor();
-  const [signalA, signalB] = [await itemA.locator(".session-nav-signal").getAttribute("title"), await itemB.locator(".session-nav-signal").getAttribute("title")];
-  assert.match(signalA!, /^标识 0aba35cb · 接入更新于 /);
-  assert.match(signalB!, /^标识 7f3e0c11 · 接入更新于 /);
-  assert.notEqual(signalA, signalB);
-  assert.doesNotMatch(`${signalA}${signalB}`, /最近活动/, "an external agent records no activity time, so none is claimed");
-  assert.doesNotMatch(await directory.locator(`.session-nav-item[href*="${ownedId}"]`).innerText(), /标识/, "a name nobody shares needs no identifier");
+  assert.equal(await itemA.locator(".session-nav-short").innerText(), "0aba", "the first four characters of the identifier, after the name");
+  assert.equal(await itemB.locator(".session-nav-short").innerText(), "7f3e");
+  assert.doesNotMatch(`${await itemA.innerText()}${await itemB.innerText()}`, /标识|接入更新于|最近活动/, "no identifier or record time in a row");
+  assert.equal(await directory.locator(`.session-nav-item[href*="${ownedId}"] .session-nav-short`).count(), 0, "a name nobody shares needs no identifier");
 
   // 运行环境: not applicable, and still so after the page has had time to read (its 配置记录 is open for an external agent).
   if (await page.getByRole("button", { name: "展开右栏" }).count()) await page.getByRole("button", { name: "展开右栏" }).click();

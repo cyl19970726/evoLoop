@@ -23,7 +23,7 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 
 | 栏 | Session | Leader 安排 |
 | --- | --- | --- |
-| 内层栏（对象列表） | 顶部固定“Leader 安排”，下面是 Session 目录：搜索，分业务 / System / 待归类，历史可展开。已绑定职责的 Session（无论经 `session prepare` 还是 reserve + bind 建立）按职责类别归入业务或 System，不进待归类；每行写运行时与模型，没人命名的同职责 Session 写成“<职责> · Claude/Codex”，重名再加“标识 <8 位>” | 同左 |
+| 内层栏（对象列表） | 顶部固定“Leader 安排”，下面是 Session 目录：搜索，分业务 / System / 待归类，历史可展开。已绑定职责的 Session（无论经 `session prepare` 还是 reserve + bind 建立）按职责类别归入业务或 System，不进待归类；每行两行字（见“目录行”），没人命名的同职责 Session 写成“<职责> · Claude/Codex”，重名在第一行末尾加标识前 4 位 | 同左 |
 | 中间 | 对话与 Agent 活动流（见下方“目标体验”），输入框固定在底部；从别处进来时页首写“返回任务：<名称>”“返回统筹安排”“返回文档：<名称>”等，点回原页面和页签 | 上半部分是当前的编排总览文档，下半部分是安排看板：每个 Session 一行，写职责、当前任务、排队任务和状态；没有承接者的任务单独一组。下一步是派发（待接手、可开始、返工）而分派固定在任务旧修订上的，写“分派（接手）属于旧修订 · 要重新指定”，不写“待接手”；规则同服务端派发时的 `ASSIGNMENT_STALE`，交付、运行中、待验收换了修订是正常流程，不算。从看板点进的任务和智能体页首写“返回统筹安排”。最后是“项目用量”块（锚点 `#project-usage`）：今日用量对每日上限，用与智能体“上下文”同一种进度条和状态（正常、接近上限、已达上限；未设上限时只写“未设上限”）；近 7 天按日历每天一行（到项目时区的今天为止），输入、输出、缓存输入用“万”，费用没报告写“未报告”，服务没有记账记录的日子写“没有记录”而不是 0（记了 0 才写 0）；计日时区和读取时间放在块底部小字 |
 | 右栏（可收起） | 按下表“右栏信息层级”：实体卡 → 正在做 → 接下来（“动态”页签；“资料库”页签是成果）→ 运行环境 → 上下文与用量 → 详情与来源（收起）；所在机器 #219 之前写“待接入” | 数据能证明的冲突与风险：同一 Session 有多项进行中任务、依赖未通过验收就已开始、截止已过、待验收却未登记下一责任、下一步是派发而分派或接手是按旧版任务做的（要重新指定；任务索引带回分派固定的修订、队列也读回、没有队列领取时才判断）；再下面是空闲与过载、截止临近 |
 
@@ -97,7 +97,7 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 | --- | --- | --- |
 | 读取范围的限制（`Native history is unsupported for this Session`、`Manual handoff records do not prove native delivery or reading`、`Live native updates unavailable` 等） | 已知的逐条写成中文，包括服务端带实现词的中文（“原生 Item / Turn”“原输入 ID”）；纯中文原样保留；不认识的英文和中英混写写“来源还说明了一项读取限制（原文未翻译，可展开“原文”查看）”；对话读取失败的错误行也一样 | “消息怎样处理与读取范围”、“来源限制与未确认信息”和读取失败提示下的“原文” |
 | 外部智能体的目标模型、思考强度、执行权限 | “外部接入不提供”（外部主机报过的模型照写）。受管智能体读取中写“正在读取”，读取失败写“无法判断（读取失败）”，读到但没登记写“未登记执行配置” | — |
-| 没登记名称的智能体（服务端生成“职责 · 外部 0aba35cb”或职责 ID） | “职责 · 外部接入的智能体”或“职责 · 受管智能体”（职责在前，窄栏截断时仍看得到）。目录第二行写服务端记录的时间：外部智能体是“接入更新于 …”（服务端不给外部智能体活动时间），受管智能体是“最近活动 …”。同名的几个在目录第二行开头加“标识 0aba35cb”，`@` 菜单里写成“名称（标识 0aba35cb）”，不会出现两项完全同名。任务页首、任务表格、手机列表和右栏用同一个名称。“设置展示信息”的名称默认值仍是服务端的名称，只改团队归属不会把通用称呼登记成名字 | 右栏“详情与来源”的完整标识（服务生成的名称） |
+| 没登记名称的智能体（服务端生成“职责 · 外部 0aba35cb”或职责 ID） | “职责 · 外部接入的智能体”或“职责 · 受管智能体”（职责在前，窄栏截断时仍看得到）。目录第二行写状态一句话（见“目录行”）。同名的几个在目录第一行末尾加标识前 4 位（“0aba”），`@` 菜单里写成“名称（标识 0aba35cb）”，不会出现两项完全同名。任务页首、任务表格、手机列表和右栏用同一个名称。“设置展示信息”的名称默认值仍是服务端的名称，只改团队归属不会把通用称呼登记成名字 | 右栏“详情与来源”的完整标识（服务生成的名称） |
 | 统筹安排旁的数字 | “共 N 个智能体”（含历史与待归类） | — |
 | 统筹安排页首的空闲数 | 任务或队列没读全、或Leader 以外的智能体占用都待核对（右栏写“暂不能确认谁空闲”）时写“无法判断”，不写 0；部分待核对时照数，旁注“另有 N 个待核对” | — |
 
@@ -180,7 +180,7 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 | 范围 | 源码（`apps/workbench/src/`） | 测试（`apps/workbench/test/`） |
 | --- | --- | --- |
 | 外壳 | `app/shell/AppShell.tsx` | `shell.test.ts`、`shell-browser.test.ts`（切换空间后保留各空间的地址与智能体目录搜索）、`session-directory-groups-browser.test.ts` |
-| 智能体目录（内层栏） | `features/sessions/SessionNavigation.tsx`（新目录）、`features/sessions/sessionDirectoryPresentation.ts`、`features/sessions/useSessionDirectoryGroup.ts` | `session-directory-presentation.test.ts`、`session-directory-groups.test.ts`、`session-directory-groups-browser.test.ts` |
+| 智能体目录（内层栏） | `features/sessions/SessionNavigation.tsx`（新目录）、`features/sessions/sessionDirectoryPresentation.ts`、`features/sessions/useSessionDirectoryGroup.ts` | `session-directory-presentation.test.ts`、`session-directory-groups.test.ts`、`session-directory-groups-browser.test.ts`、`agent-list-rows-ci-browser.test.ts` |
 | 智能体详情 | `features/sessions/SessionWorkspace.tsx`（页首、右栏；执行队列由 `app/App.tsx` 传入 `features/workflow` 的面板）、`features/sessions/sessionWorkPresentation.ts`（正在做与接下来的判定与用语）、`features/sessions/RuntimeEnvironmentCard.tsx`（运行环境卡片）、`features/sessions/environmentPresentation.ts`（环境与用量的三种状态）、`features/sessions/SessionTimeline.tsx`（对话流）、`features/sessions/readingScopePresentation.ts` 与 `features/sessions/SourceLimitations.tsx`（读取限制的中文与原文）、`shared/agentNamePresentation.ts`（没登记名称时怎样称呼）、`features/sessions/conversationPresentation.ts`（工具、计划、状态行与每轮小结的用语）、`features/sessions/workspaceTimelineModel.ts`、`features/sessions/NativeSessionPanel.tsx`、`features/sessions/SessionModelControl.tsx`、`features/sessions/SessionClosePanel.tsx` | `session-work-presentation.test.ts`、`session-rail-browser.test.ts`（三类智能体在 1440 与 390 宽的首屏、溢出、队伍读取失败）、`session-wording-presentation.test.ts`、`agent-name-presentation.test.ts`、`session-external-wording-browser.test.ts`（`EVOLOOP_AGENT_WORDING_SCREENSHOT_DIR`）、`session-workspace-redesign-browser.test.ts`、`session-timeline-browser.test.ts`、`session-workspace-timeline-model.test.ts`、`session-conversation-presentation.test.ts`、`session-native-input-browser.test.ts`、`session-native-progress-browser.test.ts`、`session-close-entry-browser.test.ts`、`session-activity-narrow-browser.test.ts`、`task-session-return-browser.test.ts` |
 | 对话时间线（一轮工作） | `features/sessions/timelineRounds.ts`（把原生条目、保存消息和消息记录合成按时间排的“轮”，来源、折叠与分组规则）、`features/sessions/useMessageFacts.ts`（读消息记录的发送者、发送与开始时间、回复预览）、`features/sessions/roundPresentation.ts`、`features/sessions/RoundTimes.tsx`、`features/sessions/CoordinationLine.tsx`（折叠的一行与分组）、`features/sessions/SessionTimeline.tsx`（渲染与落点） | `timeline-rounds.test.ts`、`session-timeline-browser.test.ts`、`session-rounds-ci-browser.test.ts`（落在最后一次回复、折叠与分组、时间、来源与状态用语） |
 | 上下文与用量 | `features/sessions/UsageBudgetPanel.tsx`（上下文与用量卡片）、`features/sessions/usagePresentation.ts`（进度、今日、项目上限提醒） | `usage-presentation.test.ts`、`usage-budget-panel.test.ts`、`usage-today-large-browser.test.ts`（今日四格与统筹安排的项目用量在十亿量级下两种宽度可读，单位与完整值都在；无记录与记录为 0 的区别）、`runtime-environment-presentation.test.ts`（运行环境主行与上下文、今日、提醒的说法） |
@@ -198,3 +198,25 @@ Session 页说明一个具体实例此刻在做什么、做出了什么；“Lea
 - 合同：[Session 工作观察](../../architecture/contracts.md#session-工作观察有界读取同一份事实)、[RoleRegistry 与 SessionRuntime](../../architecture/contracts.md#4-roleregistry-与-sessionruntime)、[具体承接与职责分开](../../architecture/contracts.md#具体承接与职责分开)
 - 运行时：[普通消息与业务执行](../../architecture/codex-integration.md#普通消息与业务执行共用原会话)、[执行配置](../../architecture/codex-integration.md#受控-session-恢复与执行配置)、[Session 关闭](../../architecture/codex-integration.md#端口合同拟议)、[消息额度](../../development/agent-cli.md#普通消息累计用量与旧试用-grant-转换)
 - 团队与职责见[团队](team.md)。
+
+## 目录行（Task f1e8829a）
+
+| 状态 | 状态标记（与页首同一个 `StatusTag`，颜色加形状） | 第二行 | 依据 |
+| --- | --- | --- | --- |
+| 在做任务 | 进行中（转圈） | “正在做 〈任务标题〉”，单行截断，全文在悬停里 | 目录读到它占用且有当前任务 |
+| 在回复消息 | 进行中 | “在回复消息” | 占用但没有当前任务 |
+| 等你处理 | 等待（时钟） | “等你处理” | 目录读到它有一个未回答的提问（只读字段 `awaitingReader`，来自原生输入请求，不需迁移） |
+| 已暂停 | 受阻（三角） | “已暂停（原因短语）” | 它所用的模型服务被暂停，原因与页首同一词 |
+| 空闲 | 空心点 | “空闲” | 读到不占用 |
+| 读不到 | 问号 | “状态未读到” | 外部智能体或占用未知，不写成“空闲” |
+
+| 其他规则 | 写法 |
+| --- | --- |
+| 行 | 两行字、行高一致：第一行显示名，第二行状态一句话；运行时、模型、标识、接入时间留在右栏 |
+| 同名 | 第一行末尾加标识前 4 位，仅同名时出现；显示名最多 16 字，默认 1440 宽度不截断 |
+| 选中、悬停、聚焦 | 设计语言：中性底色加字重 600，无胶囊；顺序不因状态变化重排 |
+| 分组 | 标题“〈类别〉 · N”，不写“已加载”；没有“测试与样本”，不按名字猜分类 |
+| 历史与待归类 · N | 默认收起；选中的智能体在组内（含刷新后）自动展开；总数为 0 整组不显示；组内行写法同当前团队 |
+| 页首对照 | 页首状态标记与行内是同一个组件；页首文字带来路与空闲时长，行内取同一状态的短形式 |
+| M 个等你处理 | 显示在“共 N 个智能体”下；点击只看这些，再点恢复；为 0 不显示；按已加载的行计数 |
+| 验证 | `agent-list-rows-ci-browser.test.ts`（九个夹具智能体，1440×900 与 390×844，浅色与深色）；截图用 `FIXTURE_ROWS=1` 夹具数据，不是真实项目 |
