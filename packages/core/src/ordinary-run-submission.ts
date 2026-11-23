@@ -25,6 +25,8 @@ const authorized = (principal: Principal, projectId: string): boolean =>
 export async function submitOrdinaryRun(
   store: OrdinaryRunSubmissionStore, principal: Principal, input: OrdinaryRunSubmissionCommand,
   nowUtc: string, hasher: ContentHasher,
+  /** Runs after a replay has been answered and the fixed Run checked, before anything is written: it may refuse by throwing. */
+  beforeInsert?: (command: OrdinaryRunSubmissionCommand) => Promise<void>,
 ): Promise<OrdinaryRunSubmissionRecord> {
   const parsed = ordinaryRunSubmissionSchema.safeParse(input);
   if (!parsed.success) throw new DomainError("INVALID_COMMAND", parsed.error.message);
@@ -78,6 +80,7 @@ export async function submitOrdinaryRun(
       throw new DomainError('ARTIFACT_HASH_MISMATCH',
         'contentHash must equal the saved Document revision SHA-256; read that revision and retry');
   }
+  await beforeInsert?.(command);
   const record: OrdinaryRunSubmissionRecord = {
     projectId: command.projectId, id: command.submissionId, runId: run.id,
     taskId: run.taskId, sessionId: run.sessionId, taskRevisionId: run.taskRevisionId,
