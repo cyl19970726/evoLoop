@@ -124,7 +124,8 @@ test("jump box and short ids in the address", { skip }, async t => {
 
   // ---- Esc closes and focus returns to where it was ----
   await page.keyboard.press("Escape");
-  await page.getByRole("dialog").waitFor({ state: "detached" });
+  // The box gives focus back a tick after it is gone; moving focus before that lets the return overwrite it (Task 06868d2a).
+  await closed(page);
   await page.getByRole("link", { name: "智能体" }).first().focus();
   const focusedLabel = await page.evaluate(() => (document.activeElement as HTMLElement).outerHTML.slice(0, 120));
   assert.match(focusedLabel, /^<a /, "a link had focus before the box opened");
