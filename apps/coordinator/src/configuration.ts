@@ -139,6 +139,8 @@ const integrationSchema = z.strictObject({
   alerts: z.strictObject({
     enabled: z.boolean(), pollIntervalMs: z.number().int().min(1000).max(300000).default(15000),
     stallMinutes: z.number().int().min(1).max(10080).default(30),
+    /** Optional: minutes of scheduler silence (or a lasting error) before a scheduling-stall alert. Default: the larger of two scheduling poll intervals and 5 minutes. */
+    schedulingStallMinutes: z.number().int().min(1).max(10080).optional(),
     outlet: z.discriminatedUnion("kind", [
       z.strictObject({ kind: z.literal("webhook"), url: z.url({ protocol: /^https?$/ }), headers: z.record(z.string().min(1).max(100), z.string().max(2000)).default({}), timeoutMs: z.number().int().min(500).max(60000).default(5000) }),
       z.strictObject({ kind: z.literal("command"), argv: z.array(z.string().min(1).max(4096)).min(1).max(32).refine(value => value[0]!.startsWith("/"), "The alert command must be an absolute executable path"), timeoutMs: z.number().int().min(500).max(120000).default(10000) }),

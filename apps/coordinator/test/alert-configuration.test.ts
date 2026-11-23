@@ -18,11 +18,14 @@ test("the alert outlet is private configuration: a webhook or an absolute local 
   assert.equal((hook.outlet as { timeoutMs: number }).timeoutMs, 5000);
   const command = (await load({ enabled: true, stallMinutes: 45, outlet: { kind: "command", argv: ["/usr/local/bin/notify", "--urgent"] } })).alerts!;
   assert.equal(command.stallMinutes, 45);
+  assert.equal(hook.schedulingStallMinutes, undefined, "the scheduling-stall threshold is optional");
+  assert.equal((await load({ enabled: true, schedulingStallMinutes: 12, outlet: { kind: "command", argv: ["/usr/local/bin/notify"] } })).alerts!.schedulingStallMinutes, 12);
   assert.equal((await load(undefined)).alerts, undefined, "off unless configured");
   for (const bad of [
     { enabled: true, outlet: { kind: "command", argv: ["notify"] } },                           // not an absolute path
     { enabled: true, outlet: { kind: "webhook", url: "file:///etc/passwd" } },                  // not http(s)
     { enabled: true, outlet: { kind: "webhook", url: "ftp://x.example.test/" } },
+    { enabled: true, schedulingStallMinutes: 0, outlet: { kind: "webhook", url: "https://x.example.test/" } },
     { enabled: true, stallMinutes: 0, outlet: { kind: "webhook", url: "https://x.example.test/" } },
     { enabled: true, pollIntervalMs: 10, outlet: { kind: "webhook", url: "https://x.example.test/" } },
     { enabled: true, outlet: { kind: "webhook", url: "https://x.example.test/", extra: 1 } },
