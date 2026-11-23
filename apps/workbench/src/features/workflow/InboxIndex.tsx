@@ -4,7 +4,7 @@
 // in words, never as the command line; a basis change is decided on the task's 依据与影响. Open to-do tasks are in the
 // task table, filtered to 待办. The reads and their keys are shared with the count in the shell (inboxReads.ts). While
 // a list is being read or cannot be read, the page never says there is nothing waiting.
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { RefreshCw } from "lucide-react";
 import type { AcceptanceHumanItem } from "@evoloop/contracts/acceptance-relay";
 import type { Impact } from "@evoloop/contracts";
@@ -51,6 +51,15 @@ export function InboxIndex({ context }: { context: MutationContext; refresh: num
   const reading = mine.isFetching || impacts.isFetching || deliveries.isFetching || decisions.isFetching;
   const decide = decisions.data?.items;
   const held = holdSummary(holds.data);
+  // A link from the overview names a category (#inbox-runtime, #inbox-usage): once that category is on the page, bring it into view, once.
+  const scrolled = useRef(false);
+  const anchorReady = holds.data !== undefined && alerts.data !== undefined;
+  useEffect(() => {
+    const id = typeof location === "undefined" ? "" : location.hash.slice(1);
+    if (scrolled.current || !anchorReady || !id.startsWith("inbox-")) return;
+    scrolled.current = true;
+    document.getElementById(id)?.scrollIntoView?.({ block: "start" });
+  }, [anchorReady]);
   // A category with something in it comes first; one not read yet or whose read failed stays as it is (a failed read never says "nothing");
   // a category read and empty folds into one line below.
   const categories: InboxCategory[] = [
@@ -78,7 +87,7 @@ export function InboxIndex({ context }: { context: MutationContext; refresh: num
       {pending?.length === 0 && <p className="text-small text-text-secondary">当前没有待复核的依据变化。</p>}
       {!!pending?.length && <ul aria-label="依据变化" className="flex flex-col">{pending.map(item => <li key={item.id}><ImpactRow projectId={projectId} actorId={actorId} item={item} /></li>)}</ul>}
     </PageSection> },
-    { key: "usage", label: "用量与上下文告警", empty: settledEmpty(alerts, alerts.data?.length), node: <PageSection key="usage" title="用量与上下文告警" action={<span className={mutedText}>{countText(alerts, alerts.data?.length)}</span>}
+    { key: "usage", label: "用量与上下文告警", empty: settledEmpty(alerts, alerts.data?.length), node: <PageSection key="usage" id="inbox-usage" title="用量与上下文告警" action={<span className={mutedText}>{countText(alerts, alerts.data?.length)}</span>}
       description="今日预算接近或达到上限，或某个智能体的上下文已满需要交接。这些告警发给你，不发给 Leader；处理方式在“智能体”页的用量与对话里。">
       <ReadState read={alerts} what="用量与上下文告警" />
       {alerts.data?.length === 0 && <p className="text-small text-text-secondary">当前没有用量或上下文告警。</p>}
@@ -112,7 +121,7 @@ export function InboxIndex({ context }: { context: MutationContext; refresh: num
  * number of rows in the list below (each affected Session once, a Session under two holds not twice); the way to release is told in words.
  */
 function RuntimeProblems({ projectId, read, summary }: { projectId: string; read: Read<unknown>; summary: HoldSummary | null }) {
-  return <PageSection title="只有你能办的运行问题" action={<span className={mutedText}>{read.data !== undefined ? `${summary?.holds.length ?? 0} 项` : read.error ? "暂不可读取" : "正在读取"}</span>}
+  return <PageSection id="inbox-runtime" title="只有你能办的运行问题" action={<span className={mutedText}>{read.data !== undefined ? `${summary?.holds.length ?? 0} 项` : read.error ? "暂不可读取" : "正在读取"}</span>}
     description="模型服务额度用完或鉴权失败时，受影响的智能体停着，它们自己恢复不了：需要你充值或重新授权，再由复核者一次放行。与每页顶部的“运行受阻”一行指向同一处。">
     <ReadState read={read} what="运行受阻状态" />
     {summary && <div data-runtime-problems="" className="flex flex-col gap-2">

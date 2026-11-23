@@ -48,12 +48,17 @@ export function lastUseText(last: DeliveryForMe["last"]): string {
   return last ? `你上次：${lastResultText[last.result]}` : "尚未记录使用";
 }
 
+/** The page a link came from, so the task or place it opens can lead back: 待我处理 (the default) or 总览 (the overview's first screen reads the same lists). */
+export type ReturnFrom = "inbox" | "overview";
+const backParams = (projectId: string, actorId: string, from: ReturnFrom) =>
+  ({ return: `/p/${projectId}/${from}`, actor: actorId, returnTitle: from === "inbox" ? "待我处理" : "总览" });
+
 /**
  * 待我处理 › a task (its 交付与使用 or 依据与影响 tab, or its first tab), carrying where it came from (`return`, `actor`,
  * `returnTitle`, as other returns do): every row of the page leads back to 待我处理.
  */
-export function inboxTaskLink(projectId: string, taskId: string, actorId: string, tab?: "delivery" | "basis"): string {
-  const params = new URLSearchParams({ ...tab ? { tab } : {}, return: `/p/${projectId}/inbox`, actor: actorId, returnTitle: "待我处理" });
+export function inboxTaskLink(projectId: string, taskId: string, actorId: string, tab?: "delivery" | "basis", from: ReturnFrom = "inbox"): string {
+  const params = new URLSearchParams({ ...tab ? { tab } : {}, ...backParams(projectId, actorId, from) });
   return `/p/${projectId}/tasks/${taskId}?${params}`;
 }
 
@@ -127,16 +132,16 @@ export function decisionLinkProblem(item: DecisionItem): string | null {
  * or the task page on its collaboration section at that discussion and question. Null when the item is answered in the list, or when its
  * id is missing (see {@link decisionLinkProblem}).
  */
-export function decisionLink(projectId: string, item: DecisionItem, actorId: string): string | null {
+export function decisionLink(projectId: string, item: DecisionItem, actorId: string, from: ReturnFrom = "inbox"): string | null {
   if (decisionLinkProblem(item)) return null;
-  const back = { return: `/p/${projectId}/inbox`, actor: actorId, returnTitle: "待我处理" };
-  const decisionBack = { ...back, returnTitle: "待我处理" };
+  const back = backParams(projectId, actorId, from);
+  const decisionBack = back;
   switch (item.kind) {
     case "role_proposal": return `/p/${projectId}/roles?${new URLSearchParams({ role: item.roleId, ...decisionBack })}`;
     case "stage_proposal": return `/p/${projectId}/journey?${new URLSearchParams({ stage: item.stageId, ...decisionBack })}`;
     case "task_question": return `/p/${projectId}/tasks/${item.taskId}?${new URLSearchParams({ section: "collaboration", discussion: item.discussionId, question: item.eventId,
       ...back })}`;
-    case "decision_request": return item.taskId ? inboxTaskLink(projectId, item.taskId, actorId) : null;
+    case "decision_request": return item.taskId ? inboxTaskLink(projectId, item.taskId, actorId, undefined, from) : null;
   }
 }
 

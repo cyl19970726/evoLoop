@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Task } from "@evoloop/contracts";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
-import { isMine, matchesFilters, rowMeta, sortTasks, sortValue } from "../src/features/workflow/taskListModel.ts";
+import { isMine, matchesFilters, matchesPhase, rowMeta, sortTasks, sortValue, taskOfProjection } from "../src/features/workflow/taskListModel.ts";
 import { rowStatus } from "../src/shared/taskStatus.ts";
 import { agentFacts, phaseFact } from "../src/features/workflow/taskFactsPresentation.ts";
 import { submissionRefusal } from "../src/shared/command/index.ts";
@@ -49,7 +49,7 @@ test("sorts order by projection facts; tasks without the fact keep list order at
   assert.deepEqual(ids("due"), ["c", "a", "b", "d"]);
   assert.deepEqual(ids("progress"), ["c", "b", "a", "d"], "most recent progress first; no recorded progress last");
   assert.deepEqual(ids("phase"), ["c", "a", "b", "d"], "rework comes before ready");
-  assert.deepEqual(ids("default"), ["a", "b", "c", "d"]);
+  assert.deepEqual(ids("default"), ["c", "a", "b", "d"], "default: the most urgent phase first (rework before ready); a task without a projection after them");
 });
 
 test("default order keeps work in progress first, then to-do, then closed", () => {
@@ -129,4 +129,28 @@ test("tab links keep the list view and the verified agent return, and drop the r
   assert.equal(next.get("actor"), "me");
   assert.equal(next.get("run"), null);
   assert.equal(taskTabHref("/p/p1/tasks/t1", "p1", "t1", "runtime"), "/p/p1/tasks/t1?tab=runtime", "a plain task keeps a plain tab address");
+});
+
+test("default order follows the urgency list, and within a phase the longest-waiting task comes first", async () => {
+  const { phaseOrder } = await import("../src/shared/taskStatus.ts");
+  assert.deepEqual([...phaseOrder], ["unknown", "rework", "blocked", "awaiting_acceptance", "awaiting_close", "awaiting_release", "awaiting_prerequisite", "awaiting_delivery", "awaiting_assignment", "ready", "running", "unassigned"]);
+  const items = phaseOrder.map((phase, index) => task(`p${index}`));
+  const projections = Object.fromEntries(items.map((item, index) => [item.id, projection(item, { phase: phaseOrder[index]! })]));
+  assert.deepEqual(sortTasks([...items].reverse(), "default", projections).map(item => item.id), items.map(item => item.id));
+  const older = task("older"), newer = task("newer");
+  const same = { older: projection(older, { phase: "blocked", dates: { ...projection(older).dates, businessChangedAt: "2026-11-01T00:00:00Z" } }),
+    newer: projection(newer, { phase: "blocked", dates: { ...projection(newer).dates, businessChangedAt: "2026-11-20T00:00:00Z" } }) };
+  assert.deepEqual(sortTasks([newer, older], "default", same).map(item => item.id), ["older", "newer"]);
+});
+
+test("a list row can be built from a work-index row, and a phase narrows by phase or by review mark", () => {
+  const base = task("x");
+  const item = projection(base, { owner: "role-9", phase: "awaiting_close", review: { reviewId: "r", decision: "deferred", actorId: "a", reason: "x", operationId: "o", reviewedChangeSequence: 1, at: "2026-11-01T00:00:00Z" } });
+  assert.deepEqual({ id: taskOfProjection("p", item).id, owner: taskOfProjection("p", item).owner, state: taskOfProjection("p", item).state }, { id: "x", owner: "role-9", state: "todo" });
+  assert.equal(matchesPhase("", undefined), true);
+  assert.equal(matchesPhase("awaiting_close", item), true);
+  assert.equal(matchesPhase("rework", item), false);
+  assert.equal(matchesPhase("review_deferred", item), true);
+  assert.equal(matchesPhase("review_acknowledged", item), false);
+  assert.equal(matchesPhase("rework", undefined), false);
 });

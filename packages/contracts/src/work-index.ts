@@ -147,6 +147,8 @@ export interface LeaderWorkTask {
   title: string;
   taskKind: TaskKind | null;
   taskState: TaskState;
+  /** The Task's owner Role id, as the Task list names it; read-only, absent from an older service. */
+  owner?: string | null;
   phase: LeaderWorkPhase;
   nextAction: string;
   responsible: {
@@ -214,7 +216,7 @@ export interface LeaderWorkDocumentReference {
   taskId: string;
   title: string;
   state: TaskState;
-  relations: Array<"content" | "link" | "basis">;
+  relations: Array<"content" | "link" | "basis" | "delivery" | "origin">;
 }
 
 /** A process Document's lifecycle projection, never a substitute for adopting a fixed revision. */

@@ -136,9 +136,9 @@ test("task list sort survives opening, Back and reload; documents open beside th
   await selectedAgent.getByText("未分派").waitFor();
   assert.equal(await selectedAgent.getByRole("button", { name: "绑定智能体" }).isDisabled(), false);
 
-  // Sort by priority: written to the address, scoped to the loaded pages, and kept across open → Back → reload.
+  // Sort by priority: written to the address, scoped to all open tasks, and kept across open → Back → reload.
   await page.getByLabel("任务排序").selectOption("priority");
-  await rail.getByText(/按优先级排序只作用于已载入的 3 项/).waitFor();
+  await rail.getByText(/按优先级排序作用于全部未完成的 2 项/).waitFor();
   assert.deepEqual(await railTitles(), ["乙：待办的任务", "甲：进行中的任务"]);
   assert.match(page.url(), /\/work\?.*sort=priority/);
   await rail.getByRole("link", { name: /甲：进行中的任务/ }).click();

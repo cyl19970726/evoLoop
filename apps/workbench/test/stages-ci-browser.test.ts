@@ -92,20 +92,20 @@ test("stages: overview block and journey table", { skip }, async t => {
     // Each stage keeps its two rows at 390: the name line and the check method, all of them inside the block.
     if (width < 500) for (const index of [0, 1, 2, 3, 4]) { const box = await rows.nth(index).boundingBox(); assert.ok(box && box.height > 0 && box.x + box.width <= width + 0.5, `row ${index} is drawn inside the width`); }
     const flow = await overflow(page); assert.equal(flow.over <= 0, true, `no horizontal overflow at ${width}`); assert.equal(flow.past, 0);
-    // The first screen (docs/frontend/pages/overview.md): the title of 本次优先核对 and its first item stay above the lower edge (the phone's 64px tab bar covers the bottom of 390x844).
+    // The first screen (docs/frontend/pages/overview.md): the same order at both widths (the DOM order is the order seen), ①②③ whole and the 阶段 title row at 1440,
+    // ① whole and the title of ② at 390 (the phone's 64px tab bar covers the bottom of 390x844).
     const edge = height - (width >= 1000 ? 0 : 64);
-    const read = await page.evaluate(`(() => { const r = s => { const e = document.querySelector(s); return e ? Math.round(e.getBoundingClientRect().bottom) : null; };
-      return { stagesBottom: r("[data-overview-stages]"), titleBottom: r(".overview-attention h2"), itemBottom: r(".overview-attention h3 a") }; })()`) as { stagesBottom: number; titleBottom: number; itemBottom: number };
+    const read = await page.evaluate(`(() => { const top = s => { const e = document.querySelector(s); return e ? Math.round(e.getBoundingClientRect().top) : null; }; const bottom = s => { const e = document.querySelector(s); return e ? Math.round(e.getBoundingClientRect().bottom) : null; };
+      return { order: ["[data-overview-block=priority]", "[data-overview-block=use]", "[data-overview-block=outcome]", "[data-overview-stages]", "[data-overview-block=organisation]", "[data-overview-goal]", "[data-overview-version]"].map(top),
+        priorityBottom: bottom("[data-overview-block=priority]"), useTitleBottom: bottom("[data-overview-block=use] h2"), useBottom: bottom("[data-overview-block=use]"), outcomeBottom: bottom("[data-overview-block=outcome]"), stagesTitleBottom: bottom("[data-overview-stages] h2") }; })()`) as
+      { order: (number | null)[]; priorityBottom: number; useTitleBottom: number; useBottom: number; outcomeBottom: number; stagesTitleBottom: number };
     readings.push({ view: `overview ${width}x${height}, five stages`, scrollOver: flow.over, edge, ...read });
-    // Both widths are asserted. At 1440 the item also clears the edge by the 64px of the 有 N 个名称未读回 notice (ProjectSummary) that a project with an unreadable name shows above it; at 390 the stage block follows 本次优先核对 so the item is on the first screen.
-    const reserve = width >= 1000 ? 64 + 8 : 0;
-    assert.ok(read.titleBottom <= edge - reserve, `the 本次优先核对 title is on the first screen at ${width}x${height} (bottom ${read.titleBottom}, edge ${edge}, reserve ${reserve})`);
-    assert.ok(read.itemBottom <= edge - reserve, `its first item is on the first screen at ${width}x${height} (bottom ${read.itemBottom}, edge ${edge}, reserve ${reserve})`);
-    if (width < 500) assert.ok(read.stagesBottom > read.itemBottom, "at 390 the stage block follows 本次优先核对, all five rows still drawn");
-    // Only the stage block moves at 390: 线上当前版本 stays right after 当前目标, before 本次优先核对 and on the first screen.
-    const version = await page.evaluate(`(() => { const v = document.querySelector("[data-overview-version]").getBoundingClientRect(), a = document.querySelector(".overview-attention").getBoundingClientRect(), g = document.querySelector(".overview-goal").getBoundingClientRect(); return { top: Math.round(v.top), bottom: Math.round(v.bottom), attentionTop: Math.round(a.top), goalBottom: Math.round(g.bottom) }; })()`) as { top: number; bottom: number; attentionTop: number; goalBottom: number };
-    if (width < 500) { assert.ok(version.top >= version.goalBottom && version.bottom <= version.attentionTop, `at 390 the version strip sits between the goal and 本次优先核对 (${JSON.stringify(version)})`); assert.ok(version.bottom <= edge, "and inside the first screen"); }
-    else assert.ok(version.bottom <= read.stagesBottom, "at 1440 the order is goal, version, stages");
+    assert.ok(read.order.every((value, index) => value !== null && (index === 0 || value > read.order[index - 1]!)), `the blocks follow one order at ${width}: ${JSON.stringify(read.order)}`);
+    assert.ok(read.priorityBottom <= edge, `① is whole on the first screen at ${width}x${height} (bottom ${read.priorityBottom}, edge ${edge})`);
+    assert.ok(read.useTitleBottom <= edge, `the title of ② is on the first screen at ${width}x${height} (bottom ${read.useTitleBottom}, edge ${edge})`);
+    if (width >= 1000) for (const [name, value] of Object.entries({ useBottom: read.useBottom, outcomeBottom: read.outcomeBottom, stagesTitleBottom: read.stagesTitleBottom })) assert.ok(value <= edge, `${name} is on the first screen at ${width}x${height} (${value}, edge ${edge})`);
+    assert.equal(await page.locator(".overview-attention").count(), 0, "本次优先核对 is gone");
+    for (const [selector, open] of [["[data-overview-block=organisation]", false], ["[data-overview-goal]", false], ["[data-overview-version]", false]] as const) assert.equal(await page.locator(selector).evaluate(node => (node as HTMLDetailsElement).open), open, `${selector} starts folded`);
     if (shots) await page.screenshot({ path: `${shots}/overview-${width}-light.png` });
     // Clicking a row lands on that stage's row in the journey page, opened and in the address.
     await rows.nth(2).click(); await page.locator("[data-stages] [data-stage-row]").first().waitFor();

@@ -4,7 +4,7 @@ import { registerReferenceRoutes, type ReferenceRouteOptions } from "./reference
 import Fastify from "fastify";
 import staticPlugin from "@fastify/static";
 import { commandSchema, capabilities, hasAnyDecisionAuthority, hasDecisionAuthority, hasPermission, isProjectMember,
-  mayAccessSession, idSchema, documentKindSchema, documentStatusSchema, type Command, type Principal, type RuntimeSessionRecord } from "@evoloop/contracts";
+  mayAccessSession, idSchema, documentKindSchema, documentListKindSchema, documentStatusSchema, type Command, type Principal, type RuntimeSessionRecord } from "@evoloop/contracts";
 import { DomainError } from "@evoloop/contracts/ports";
 import { sessionPreparationHints } from "@evoloop/contracts/session-preparation";
 import type { WorkflowService } from "@evoloop/core";
@@ -903,11 +903,12 @@ export async function buildServer(options: {
     app.get(`/api/projects/:projectId/${entity}`, async request => {
       const p = params(request.params); const q = pageSchema.parse(request.query);
       const filter = entity === "documents" ? z.object({
-        kind: documentKindSchema.optional(),
+        kind: documentListKindSchema.optional(),
         status: z.union([documentStatusSchema, z.literal("active")]).optional(),
+        search: z.string().trim().max(200).optional(),
       }).parse(request.query) : null;
       return entity === "documents"
-        ? options.service.listDocuments(who(request.principal), p.projectId!, q.limit, q.cursor, filter!.kind, filter!.status)
+        ? options.service.listDocuments(who(request.principal), p.projectId!, q.limit, q.cursor, filter!.kind, filter!.status, filter!.search || undefined)
         : options.service.listTasks(who(request.principal), p.projectId!, q.limit, q.cursor);
     });
     app.get(`/api/projects/:projectId/${entity}/:id`, async request => {

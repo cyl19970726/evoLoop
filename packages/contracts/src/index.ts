@@ -60,7 +60,7 @@ export const documentBasisSchema = z.strictObject({ documentId: idSchema, revisi
 export type DocumentBasis = z.infer<typeof documentBasisSchema>;
 const basisSchema = z.array(documentBasisSchema).min(1).max(20);
 export const taskKindSchema = z.enum(["implementation", "research", "validation", "defect", "documentation", "operation"]);
-export const documentKindSchema = z.enum(["task", "issue", "spec", "discussion", "report", "organization_review"]);
+export const documentKindSchema = z.enum(["task", "issue", "spec", "discussion", "report", "organization_review", "brief"]);
 export const documentStatusSchema = z.enum(["draft", "published", "archived"]);
 export const documentOriginSchema = z.strictObject({ taskId: idSchema, runId: idSchema.optional() });
 // Only the implemented command surface is exported; a missing integration is not a no-op command.
@@ -114,7 +114,14 @@ export interface Document {
   updatedAt?: string;
   origin?: { taskId: string; runId: string | null; taskRevisionId: string } | null;
 }
-export type DocumentKind = "task" | "issue" | "spec" | "discussion" | "report" | "organization_review";
+export type DocumentKind = "task" | "issue" | "spec" | "discussion" | "report" | "organization_review" | "brief";
+/**
+ * What a document list can be filtered by: a stored kind, or one of two relations that are not kinds: 交付报告 (a document some
+ * Task's Delivery names as its artifact) and 其他报告 (a report that is not one). Newest change first; `updatedAt` is the time of
+ * the current revision.
+ */
+export const documentListKindSchema = z.union([documentKindSchema, z.enum(["delivery_report", "other_report"])]);
+export type DocumentListKind = DocumentKind | "delivery_report" | "other_report";
 export type DocumentStatus = z.infer<typeof documentStatusSchema>;
 /** A list's lifecycle filter: one stored status, or every status that is not archived. */
 export type DocumentStatusFilter = DocumentStatus | "active";

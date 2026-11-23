@@ -103,7 +103,7 @@ test("Session navigation retains order, pages and filters across selection, back
   if (await navigationToggle.getAttribute("aria-expanded") !== "true") await navigationToggle.click();
   const sidebar = page.locator("aside[aria-label=项目导航] .session-navigation");
   const current = sidebar.locator(".session-nav-current");
-  await current.getByText("业务智能体 · 已加载 5", { exact: true }).waitFor();
+  await current.getByText("业务智能体 · 5", { exact: true }).waitFor();
   assert.equal(await current.locator(".session-nav-item").count(), 5,
     "the Sessions root shows all five rows in its first current page");
   const firstPageOrder = await current.locator(".session-nav-item").evaluateAll(nodes => nodes.map(node => node.getAttribute("href")));
@@ -149,7 +149,7 @@ test("Session navigation retains order, pages and filters across selection, back
   assert.equal(await current.locator(".session-nav-item").count(), 51,
     "the Sessions root continues until all 51 current rows are loaded");
   assert.deepEqual(await current.locator(".session-nav-class > span").allTextContents(),
-    ["业务智能体 · 已加载 6", "系统智能体 · 已加载 1", "待归类 · 已加载 44"]);
+    ["业务智能体 · 6", "系统智能体 · 1", "待归类 · 44"]);
   await current.locator(".session-nav-item").first().click();
   await page.waitForURL(/session=external%3Acurrent-0/);
   await page.setViewportSize({ width: 1920, height: 1200 });

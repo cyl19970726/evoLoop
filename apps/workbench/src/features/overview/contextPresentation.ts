@@ -1,13 +1,5 @@
 import type { TaskDetail } from "@evoloop/contracts";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
-import type { WorkTaskStatus } from "../../shared/workStatusPresentation";
-
-const phaseOrder = ["unknown", "rework", "blocked", "awaiting_delivery", "awaiting_acceptance", "awaiting_prerequisite", "awaiting_release", "awaiting_close", "awaiting_assignment", "unassigned", "ready", "running"];
-export function selectAttention(rows: LeaderWorkTask[], statuses: Record<string, WorkTaskStatus>): LeaderWorkTask | null {
-  return rows.filter(row => !["done", "cancelled"].includes(row.taskState) && statuses[row.taskId]?.cognition === false)
-    .sort((a, b) => Number(a.review?.decision === "deferred") - Number(b.review?.decision === "deferred") ||
-      (a.plan?.priority ?? 5) - (b.plan?.priority ?? 5) || phaseOrder.indexOf(a.phase) - phaseOrder.indexOf(b.phase))[0] ?? null;
-}
 
 /** Follow the projection's current/closure-bound result, never an unrelated latest result. */
 export function readOutcome(row: LeaderWorkTask, detail: TaskDetail) {

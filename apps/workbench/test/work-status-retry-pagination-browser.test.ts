@@ -59,7 +59,8 @@ test("a delayed retry preserves statuses from a newly loaded Task page", { skip:
   const browser = await chromium.launch({ headless: true,
     executablePath: process.env.EVOLOOP_BROWSER_TEST_CHROMIUM_EXECUTABLE || undefined }); t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
-  await page.goto(`${base}/p/${projectId}/work`);
+  // Paging only exists in the 全部 range; the 未完成 range is read whole from the index.
+  await page.goto(`${base}/p/${projectId}/work?state=all`);
   await page.getByLabel("访问令牌").fill("fixture-token");
   await page.getByRole("button", { name: "进入", exact: true }).click();
   // The table view (center) and the inner rail both report it; assertions use the table's copy.

@@ -36,6 +36,8 @@ export const docs = {
     body: "# 窄屏下内层栏遮住正文\n\n390 宽度下打开内层栏后，关闭按钮不明显。" },
   discussion: { id: id(113), rev: id(114), title: "验收排队怎样分担", kind: "discussion", status: "draft",
     body: "# 验收排队怎样分担\n\n两种做法：增加一位常驻验收，或让设计走查分担界面验收。" },
+  brief: { id: id(117), rev: id(118), title: "每日简报 2026-11-20", kind: "brief", status: "published",
+    body: "# 每日简报 2026-11-20\n\n昨天两项任务通过验收，一项被阻塞。" },
   html: { id: id(115), rev: id(116), title: "首轮试用报告", kind: "report", status: "published", html: [
     "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><title>首轮试用报告</title><style>",
     "body{font-family:system-ui,sans-serif;margin:0;padding:32px 40px;color:#1f2a2e;line-height:1.7}h1{font-size:26px;margin:0 0 8px}",
@@ -56,7 +58,7 @@ const docList = Object.values(docs);
 export function documentRecord(d) {
   return { projectId, id: d.id, title: d.title, version: d.oldRev ? 2 : 1, currentRevisionId: d.rev,
     adoptedRevisionId: d.status === "published" ? d.rev : null, kind: d.kind, status: d.status,
-    primaryTaskId: d === docs.taskBody ? tasks.t1.id : null, createdAt: ago(60 * 24 * 4), updatedAt: ago(90), origin: null };
+    primaryTaskId: d === docs.taskBody ? tasks.t1.id : null, createdAt: ago(60 * 24 * 4), updatedAt: ago(90 + docList.indexOf(d) * 60), origin: null };
 }
 export function revisionRecord(d, revisionId = d.rev) {
   const old = revisionId === d.oldRev;
@@ -67,7 +69,16 @@ export function revisionRecord(d, revisionId = d.rev) {
     author: actorId, createdAt: old ? ago(60 * 24 * 3) : ago(90), previousRevisionId: !old && d.oldRev ? d.oldRev : null,
     reason: old ? "建立对账规则" : "补充交付与验收的区分", revisionNumber: old || !d.oldRev ? 1 : 2 };
 }
-export const documentList = () => docList.map(documentRecord);
+/**
+ * GET /documents as the service answers it: newest current revision first; the type (交付报告 is a relation, here the two reports
+ * a Delivery names), the lifecycle and a title search are applied before the page is cut.
+ */
+const delivered = new Set([docs.report, docs.html]);
+export const documentList = ({ kind = null, status = null, search = "" } = {}) => docList
+  .filter(d => !kind || (kind === "delivery_report" ? delivered.has(d) : kind === "other_report" ? d.kind === "report" && !delivered.has(d) : d.kind === kind))
+  .filter(d => !status || (status === "active" ? d.status !== "archived" : d.status === status))
+  .filter(d => !search || d.title.toLowerCase().includes(search.toLowerCase()))
+  .map(documentRecord).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 /** The revision list of a document (GET /documents/:id/revisions): newest first, metadata only, with the head and count. */
 export function revisionPage(d) {
   const head = documentRecord(d);

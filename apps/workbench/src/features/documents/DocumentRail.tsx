@@ -4,6 +4,7 @@
 import { useEffect, useRef } from "react";
 import { Button, ListRow, RefreshingIndicator } from "@evoloop/ui";
 import { href } from "../../shared/routes";
+import { date } from "../../shared/ui/shared";
 import { ContextRailContent } from "../../shared/ui/ContextRail";
 import { DocumentFilters } from "./DocumentFilters";
 import { coverageText, emptyListText, kindText, lifecycleLabel } from "./documentPresentation";
@@ -24,7 +25,7 @@ function DocumentRailList({ projectId, scope, selectedId }: { projectId: string;
     if (!selectedId) return;
     listRef.current?.querySelector<HTMLElement>(`[data-document-id="${CSS.escape(selectedId)}"]`)?.scrollIntoView({ block: "nearest" });
   }, [selectedId, shown]);
-  const empty = emptyListText({ filtered: list.filtered, more: list.more });
+  const empty = emptyListText({ filtered: list.filtered });
   return <section data-ui="" aria-label="文档列表" className="flex flex-col gap-2.5 pb-2">
     <DocumentFilters state={state} update={update} />
     {list.error && <p role="alert" className="mx-1 rounded-md bg-danger-soft px-3 py-2 text-caption text-text-secondary">
@@ -41,13 +42,12 @@ function DocumentRailList({ projectId, scope, selectedId }: { projectId: string;
         <ListRow href={href(projectId, "document", document.id)} selected={document.id === selectedId}
           onSelect={() => update({ lastOpened: document.id })}
           title={<span title={document.title}>{document.title}</span>}
-          meta={`${kindText(document.kind)} · ${lifecycleLabel[document.status]}`} />
+          meta={`${kindText(document.kind)} · ${lifecycleLabel[document.status]}${document.updatedAt ? ` · ${date(document.updatedAt)}` : ""}`} />
       </li>)}
     </ul>}
     <div className="mx-1 flex flex-col gap-1.5 text-caption text-muted-foreground">
-      <span>{coverageText({ loaded: list.items.length, matched: shown, filtered: list.filtered, more: list.more, coverage: list.coverage })}</span>
-      {list.checking && <RefreshingIndicator label={list.filtered && state.query.trim() ? "正在搜索后续页面" : "正在核对列表"} />}
-      {list.searchLimited && <span>搜索已自动读到上限，结果可能不完整；可以继续载入。</span>}
+      <span>{coverageText({ loaded: list.items.length, matched: shown, filtered: false, more: list.more, coverage: list.coverage })}</span>
+      {(list.checking || list.searchPending) && <RefreshingIndicator label={state.query.trim() ? "正在按关键词搜索全部文档" : "正在核对列表"} />}
       {list.more && !list.pageError && <Button variant="secondary" size="compact" className="self-start" disabled={list.checking} onClick={list.loadMore}>载入更多</Button>}
     </div>
   </section>;
