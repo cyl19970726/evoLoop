@@ -9,7 +9,8 @@
 //                    idle and clean, on a detached commit -> detached checkout of the release commit
 //                    idle and clean, on a business branch already merged into the release (0 commits ahead of it), whole work tree clean
 //                                         -> detached checkout of the release commit, the record says "从已合并分支 X 切到发布提交" (the branch itself is kept)
-//                    a business branch with commits not in the release, or a changed work tree, or a Session with a Run in progress -> unsynced, the reason says which
+//                    a business branch with commits not in the release, or a changed work tree, or a Session with a Run in progress (read from the coordinator),
+//                    or no way to read that -> unsynced, the reason says which
 //   afterwards every updated workspace is read back and compared file by file with the release; one that still differs is unsynced.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -81,13 +82,43 @@ export function checkSkillSync(skillSync) {
   if (typeof skillSync !== "object" || !Array.isArray(skillSync.workspaces) || skillSync.workspaces.some(path => typeof path !== "string" || !isAbsolute(path))) throw new Error("config.skillSync.workspaces must be a list of absolute paths");
   if (skillSync.baseBranch !== undefined && (typeof skillSync.baseBranch !== "string" || !skillSync.baseBranch)) throw new Error("config.skillSync.baseBranch must be a branch name");
   if (skillSync.remote !== undefined && (typeof skillSync.remote !== "string" || !skillSync.remote)) throw new Error("config.skillSync.remote must be a remote name");
+  const sessions = skillSync.sessions;
+  if (sessions !== undefined && (typeof sessions !== "object" || sessions === null || typeof sessions.cli !== "string" || !isAbsolute(sessions.cli) || typeof sessions.project !== "string" || !sessions.project)) throw new Error("config.skillSync.sessions must be { cli: absolute path of the evoloop CLI, project: project id }");
   return skillSync;
 }
 
 /**
+ * The real "does the Session working here have a Run in progress" source for a release: the coordinator's own read-only state through the agent CLI.
+ * `list sessions` gives every Session's working directory, `work board` what each is doing now (a Run or a message Turn; null when idle). A process in the directory
+ * is not that signal: a Codex app-server stays resident in another directory, and a Claude Turn is a process only while it runs.
+ * Returns async (workspace) => a reason string when a Session whose working directory is the workspace is busy (or being closed), false when all are idle.
+ * Throws when either read fails or the answer is not understood: the caller then treats it as "cannot confirm".
+ */
+export function sessionRunCheck({ cli, project, exec = (...argv) => run(argv) }) {
+  const read = async (...args) => JSON.parse(await exec(cli, ...args, "--project", project));
+  const real = async path => { try { return await realpath(path); } catch { return path; } };
+  return async workspace => {
+    const [sessions, board] = await Promise.all([read("list", "sessions"), read("work", "board")]);
+    if (!Array.isArray(sessions) || !Array.isArray(board?.sessions)) throw new Error("unexpected session list or work board");
+    const want = new Set([workspace, await real(workspace)]);
+    const here = [];
+    for (const item of sessions) if (typeof item.cwd === "string" && item.state !== "closed" && (want.has(item.cwd) || want.has(await real(item.cwd)))) here.push(item);
+    const busy = [];
+    for (const item of here) {
+      const entry = board.sessions.find(row => row.sessionId === item.id);
+      if (!entry) throw new Error(`Session ${String(item.id).slice(0, 8)} is not on the work board`);
+      if (entry.current) busy.push(`${entry.current.kind === "run" ? "Run" : "消息轮次"} ${String(entry.current.id).slice(0, 8)}${entry.current.taskTitle ? ` · ${String(entry.current.taskTitle).slice(0, 30)}` : ""}`);
+      else if (entry.state && entry.state !== "ready") busy.push(`Session ${String(item.id).slice(0, 8)} 状态 ${entry.state}`);
+    }
+    return busy.length ? busy.slice(0, 3).join("；") : false;
+  };
+}
+
+/**
  * Sync one workspace to the release commit `sha`, whose skills are `want` (the hashes of the release's .agents/skills).
- * `runActive(path)` (optional) answers whether the Session working there has a Run in progress: a reason string when it has, falsy when not; it throwing counts as "cannot confirm".
- * A Run's process has its working directory in the workspace, so the process check below already catches a running one; the hook is for a source that knows better.
+ * `runActive(path)` answers whether a Session working there has a Run (or message Turn) in progress: a reason string when it has, falsy when not; it throwing counts as "cannot confirm".
+ * A release gets it from the coordinator (`sessionRunCheck`, config `skillSync.sessions`), not from processes: a resident Codex app-server is not in the workspace and a Claude Turn is a process only while it runs.
+ * Moving a business branch needs this source; without one it stays untouched. The process check below stays as a second guard.
  * Returns { path, result: "consistent" | "updated" | "unsynced", reason?, from?, mode?, fromBranch? }; never throws.
  */
 export async function syncWorkspace({ path, sha, want, baseBranch = "main", remote = "origin", git = (cwd, ...args) => run(["git", "-C", cwd, ...args]), lister, runActive }) {
@@ -118,11 +149,13 @@ export async function syncWorkspace({ path, sha, want, baseBranch = "main", remo
       try { await git(path, "merge", "--ff-only", "--quiet", sha); } catch (error) { return { path, result: "unsynced", reason: `${baseBranch} 不能快进到发布提交（${error.message.slice(0, 120)}）`, differing: diffBefore.length }; }
       mode = `${baseBranch} 快进到发布提交`;
     } else {
-      // a business branch: only one already merged into the release (nothing ahead of it) with a clean work tree is left; the branch stays as it is
+      // only one already merged into the release (nothing ahead of it) with a clean work tree is left; the branch stays as it is
       const ahead = Number((await git(path, "rev-list", "--count", `${sha}..HEAD`)).trim());
       if (ahead > 0) return { path, result: "unsynced", reason: `在业务分支 ${branch} 上，有 ${ahead} 个提交不在发布提交里（未合并），不切换分支也不移动它`, differing: diffBefore.length };
       const changes = (await git(path, "status", "--porcelain", "--untracked-files=all")).split("\n").filter(Boolean);
       if (changes.length) return { path, result: "unsynced", reason: `分支 ${branch} 已合并，但工作树有改动（${changes.length} 项，如 ${changes[0].trim()}），未动`, differing: diffBefore.length };
+      // a business branch: a switch moves HEAD under whoever works here, so it needs a real answer to "is a Run in progress": without a source, nothing moves
+      if (!runActive) return { path, result: "unsynced", reason: `在业务分支 ${branch} 上，没有配置能读出 Session 进行中 Run 的来源（skillSync.sessions），不能确认没有在使用，未切换`, differing: diffBefore.length };
       await git(path, "checkout", "--quiet", "--detach", sha); mode = `从已合并分支 ${branch} 切到发布提交（游离，分支保留）`; fromBranch = branch;
     }
     const diffAfter = differences(want, await hashTree(skills));
