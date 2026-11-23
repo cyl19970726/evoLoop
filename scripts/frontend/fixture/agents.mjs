@@ -1,4 +1,5 @@
 // Agents (owned sessions) of the screenshot fixture: the directory, one agent's snapshot and conversation, runtime facts.
+import { refMarkdown } from "./refs.mjs";
 import { actorId, agentKey, agents, ago, id, metadata, projectId, roles } from "./common.mjs";
 import { revisionIdOf, runIdOf, tasks } from "./work.mjs";
 
@@ -153,7 +154,7 @@ export function timeline(name) {
     assistant(`answer-${variant}`, `已接手「${task.title}」。`, 118 - index * 15, `turn-${variant}`)];
   });
   const entries = process.env.FIXTURE_ROUND_SOURCES ? sourceRounds : name !== "dev" ? [] : [
-    message("m1", "任务列表的筛选要写进地址，返回时保留。先做这一项。", 95,
+    message("m1", "任务列表的筛选要写进地址，返回时保留。先做这一项。" + (refMarkdown() ? `\n\n${refMarkdown()}` : ""), 95,
       { origin: { kind: "message", id: "m1", taskId: tasks.t2.id, taskRevisionId: revisionIdOf(tasks.t2), initiatingActorId: actorId } }),
     tool("tool-1", "读取需求总图", "读到第 1 版，共 4 节", 93, "turn-1"),
     tool("tool-2", "运行单元测试", "48 项通过", 80, "turn-1"),

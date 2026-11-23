@@ -4,7 +4,8 @@
 // Type and spacing come from readingProse, on design tokens only.
 import { useEffect, useMemo, useState } from "react";
 import { cn } from "@evoloop/ui";
-import { maxDiagramLength, splitMarkdown } from "./markdownContent";
+import { useRefAnswers } from "../refLinks";
+import { markdownRefKeys, maxDiagramLength, splitMarkdown } from "./markdownContent";
 import { readingProse } from "./readingProse";
 
 function Diagram({ source, id }: { source: string; id: string }) {
@@ -48,12 +49,19 @@ function Diagram({ source, id }: { source: string; id: string }) {
  * `markdown-body` class stays as the hook the document outline and tests find headings by. The page keeps its only
  * h1: the text's headings start at `topHeading` (2 right under the page title, one more under each section heading).
  */
-export function MarkdownBody({ source, identity, omitLeadingTitle, projectId, className, topHeading = 2, linkify = false }: {
+export function MarkdownBody({ source, identity, omitLeadingTitle, projectId, className, topHeading = 2, linkify = false, refLinks = false }: {
   source: string; identity: string; omitLeadingTitle?: string; projectId?: string; className?: string; topHeading?: 2 | 3 | 4 | 5;
   /** Chat text: a complete http(s) address becomes a link. Documents keep their written links only. */
   linkify?: boolean;
+  /** 正文里的编号成链接 (Task a910ee96): ids, `#12` and `PR #12` that name one object of this project become links to it. */
+  refLinks?: boolean;
 }) {
-  const parts = useMemo(() => splitMarkdown(source, { omitLeadingTitle, projectId, topHeading, linkify }), [source, omitLeadingTitle, projectId, topHeading, linkify]);
+  const keys = useMemo(() => refLinks ? markdownRefKeys(source, projectId) : [], [refLinks, source, projectId]);
+  const refs = useRefAnswers(projectId, keys, refLinks);
+  const answered = keys.map(key => refs(key) ? key : "").join("|");
+  const parts = useMemo(() => splitMarkdown(source, { omitLeadingTitle, projectId, topHeading, linkify, ...(refLinks && answered.replaceAll("|", "") ? { refs } : {}) }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `refs` reads the store; `answered` says when its answers changed
+    [source, omitLeadingTitle, projectId, topHeading, linkify, refLinks, answered]);
   return <div className={cn("markdown-body min-w-0 [overflow-wrap:anywhere] [&>:first-child>:first-child]:mt-0", readingProse, className)}>
     {parts.map((part, index) => part.kind === "diagram"
       ? <Diagram key={`${identity}:${index}`} source={part.value} id={`${identity}-${index}`} />

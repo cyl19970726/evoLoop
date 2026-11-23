@@ -18,7 +18,7 @@ import type {
   LeaderWorkPlanCommand, LeaderWorkReviewCommand, LeaderWorkTask,
 } from "@evoloop/contracts/work-index";
 import type { ProviderHoldListing } from "@evoloop/contracts/provider-hold";
-import type { JumpResult } from "@evoloop/contracts/object-jump";
+import type { JumpBatchResult, JumpResult } from "@evoloop/contracts/object-jump";
 import type { ProjectCapabilitiesView, ProjectMembersView, ProjectRepositoriesView } from "@evoloop/contracts/project-configuration";
 export type {
   ProjectCapabilitiesView, ProjectCapability, ProjectMember, ProjectMembersView, ProjectRepositoriesView, ProjectRepository,
@@ -166,6 +166,8 @@ export function api(token = "", timeoutMs = 15000) {
     },
     /** “跳到”: the objects of this project a pasted id, id prefix or PR number names (at most 10). */
     jump: (p: string, text: string, signal?: AbortSignal) => call<JumpResult>(`${projectPath(p)}/jump?q=${key(text)}`, signal ? { signal } : undefined),
+    /** Body links: what up to 50 candidates found in a text name in this project (one read per page). */
+    jumpRefs: (p: string, candidates: readonly string[], signal?: AbortSignal) => call<JumpBatchResult>(`${projectPath(p)}/jump/refs?q=${key(candidates.join(","))}`, signal ? { signal } : undefined),
     providerHolds: (p: string) => call<ProviderHoldListing>(`${projectPath(p)}/runtime/provider-holds`),
     /** Repositories configured for this project; `unavailable` is not "none". */
     projectRepositories: async (p: string) => checkedProjectView<ProjectRepositoriesView>(await call<unknown>(`${projectPath(p)}/repositories`), p),

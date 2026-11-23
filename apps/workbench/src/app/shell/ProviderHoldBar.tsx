@@ -5,17 +5,16 @@
 import { ChevronDown } from "lucide-react";
 import type { ProviderHoldListing } from "@evoloop/contracts/provider-hold";
 import { cn } from "@evoloop/ui";
-import { SessionName, useSessionName } from "../../shared/ui/RecordName";
+import { SessionName } from "../../shared/ui/RecordName";
+import { useHoldSentence } from "../../shared/ui/HoldSentence";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
-import { holdFacts, holdIdentifiers, holdIsHere, holdLine, holdSummary, holdTarget } from "../../shared/providerHoldPresentation";
+import { holdFacts, holdIdentifiers, holdIsHere, holdSummary, holdTarget } from "../../shared/providerHoldPresentation";
 
 export function ProviderHoldBar({ listing, projectId, route }: { listing: ProviderHoldListing | undefined; projectId: string; route: { section: string; session?: string | undefined } }) {
   const summary = holdSummary(listing);
-  const first = summary?.sessionIds[0];
-  const name = useSessionName(projectId, first ? `owned:${first}` : null);
-  if (!summary) return null;
+  const line = useHoldSentence(projectId, summary);
+  if (!summary || line === null) return null;
   const here = holdIsHere(summary, route);
-  const line = holdLine(summary, name.state === "named" ? name.name : null);
   return <div data-ui="" className="px-4 pt-3 compact:px-8" data-provider-hold-bar="" data-here={here ? "true" : "false"}>
     <details className={cn("group rounded-lg", here ? "bg-danger-soft" : "bg-muted")}>
       <summary className="flex h-9 cursor-pointer list-none items-center gap-2 px-3 text-label [&::-webkit-details-marker]:hidden" data-provider-hold-line="">

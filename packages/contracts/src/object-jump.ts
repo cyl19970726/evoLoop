@@ -62,3 +62,10 @@ export const jumpHint = {
   short: "至少要 8 位",
   none: (text: string) => `没有找到以 ${text} 开头的任务、文档、智能体、阶段或日程`,
 } as const;
+
+/** Body links (Task a910ee96): the most candidates one page asks about, and what the batch read returns for each. */
+export const jumpBatchLimit = 50;
+export interface JumpBatchResult {
+  /** Keyed by the candidate as sent. At most two matches are kept: one links straight to its object, two or more link to the choice page. */
+  results: Record<string, { matches: JumpMatch[]; truncated: boolean }>;
+}
