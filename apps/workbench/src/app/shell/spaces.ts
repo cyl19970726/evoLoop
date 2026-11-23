@@ -49,7 +49,7 @@ export const sectionLabels: Record<Section, string> = {
   overview: "总览", work: "任务", "create-task": "新建任务", inbox: "待我处理", task: "任务", documents: "过程文档",
   document: "文档", knowledge: "知识空间", sessions: "智能体", journey: "目标与阶段", discussions: "分工讨论", reviews: "组织复盘",
   collaboration: "协作回执", runtime: "运行与接入", arrangement: "统筹安排", schedules: "日程", roles: "职责", repository: "仓库规范",
-  operations: "结果未知的操作", evaluations: "评价与后果", settings: "项目设置", connectors: "微信连接", "not-found": "找不到页面",
+  operations: "结果未知的操作", evaluations: "评价与后果", settings: "项目设置", connectors: "微信连接", go: "跳到", "not-found": "找不到页面",
 };
 
 export function spaceOf(route: Route): Space {
@@ -91,7 +91,7 @@ const memoryKey = (actorId: string, projectId: string, space: Space) => `evoloop
  * no page is not kept: the space reopens where the reader last was on a real page.
  */
 export function rememberSpace(store: Store | null, actorId: string, projectId: string, route: Route, path: string): void {
-  if (!route.projectId || route.projectId !== projectId || !path.startsWith(`/p/${projectId}/`) || route.section === "not-found") return;
+  if (!route.projectId || route.projectId !== projectId || !path.startsWith(`/p/${projectId}/`) || route.section === "not-found" || route.section === "go") return;
   try { store?.setItem(memoryKey(actorId, projectId, spaceOf(route)), path); } catch { /* memory is a convenience */ }
 }
 

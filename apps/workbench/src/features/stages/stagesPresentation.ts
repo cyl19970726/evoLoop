@@ -36,11 +36,17 @@ export function dueCell(dueOn: string | null): { text: string; title: string } {
 /** 怎样算到了: the registered text, or 未登记. */
 export const checkCell = (checkMethod: string | null): string => checkMethod?.trim() ? checkMethod.trim() : NOT_REGISTERED;
 
-export const firstLine = (text: string): string => text.split("\n").map(line => line.trim()).find(Boolean) ?? "";
+/** The first non-empty line of a stage's text, without a leading "名称：" label (old stages wrote their name that way). */
+export const firstLine = (text: string): string => (text.split("\n").map(line => line.trim()).find(Boolean) ?? "").replace(/^名称\s*[:：]\s*/, "");
 
 /** The name in a row: the short name; an old stage without one falls back to the first line of its text, then to its id. */
 export function stageName(stage: Pick<StageProjectionStage, "id" | "shortName">, deliverable?: string): string {
   return stage.shortName?.trim() || (deliverable ? firstLine(deliverable) : "") || stage.id.slice(0, 8);
+}
+
+/** A stage in a left-column list: its name and, always, its due date (the projection's own 未定 when none; nothing before the projection is read). */
+export function stageLabel(known: Pick<StageProjectionStage, "id" | "shortName" | "dueOn"> | undefined, stage: { id: string; deliverable: string }): { name: string; due: { text: string; title: string } | null } {
+  return { name: stageName(known ?? { id: stage.id, shortName: null }, stage.deliverable), due: known ? dueCell(known.dueOn) : null };
 }
 
 const byDue = (a: StageProjectionStage, b: StageProjectionStage) => a.dueOn && b.dueOn ? (a.dueOn < b.dueOn ? -1 : a.dueOn > b.dueOn ? 1 : 0) : a.dueOn ? -1 : b.dueOn ? 1 : 0;
@@ -68,8 +74,11 @@ export interface LadderLine { key: string; name: string; status: string }
 export function ladderLines(ladder: LadderView): LadderLine[] {
   return ladder.levels.map(level => ({ key: level.key, name: level.name, status: level.status?.trim() || NOT_REGISTERED }));
 }
-/** "M0 已完成 · M1 …": the row that stays visible while the ladder is folded. */
-export const ladderSummary = (ladder: LadderView): string => ladderLines(ladder).map(line => `${line.key} ${line.status}`).join(" · ");
+/** The folded row names every level by its number; only a level the roadmap has no status for carries a mark (未登记). A status sentence is never summarised by guessing: it is read in full when the row is opened. */
+export interface LadderMark { key: string; registered: boolean; full: string }
+export const ladderMarks = (ladder: LadderView): LadderMark[] => ladderLines(ladder).map(line => ({ key: line.key, registered: line.status !== NOT_REGISTERED, full: line.status }));
+/** "验证阶梯 · 6 级": the words at the left of the folded row. */
+export const ladderHeading = (ladder: LadderView): string => `验证阶梯 · ${ladder.levels.length} 级`;
 
 export type Bucket = ReturnType<typeof taskBucket>;
 export const bucketLabel: Record<Bucket, string> = { inProgress: "进行", blocked: "卡住", notStarted: "未开始", closed: "已关闭" };

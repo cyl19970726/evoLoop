@@ -77,6 +77,17 @@ test('rejects manifest traversal and symlinked sources', async t => {
   await assert.rejects(check(root), /symlinks are not allowed/);
 });
 
+test('a root directory named undefined or null fails the check and says why; removing it passes', async t => {
+  const root = await fixture(t);
+  await check(root);
+  for (const name of ['undefined', 'null']) {
+    await fs.mkdir(path.join(root, name));
+    await assert.rejects(check(root), new RegExp(`${name}/: a root directory named .*undefined path variable`));
+    await fs.rm(path.join(root, name), { recursive: true });
+    await check(root);
+  }
+});
+
 test('keeps renamed heading links pointing at the new section', async t => {
   const root = await fixture(t, [
     { path: 'README.md', title: 'Home', group: 'Start', headingAliases: { 'old-section': 'new-section' } },

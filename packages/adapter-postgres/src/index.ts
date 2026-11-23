@@ -301,15 +301,6 @@ class PgReader implements Reader {
     pageLimit(limit); const r=await this.client.query("SELECT * FROM project_goal WHERE project_id=$1 AND ($2::uuid IS NULL OR goal_id>$2::uuid) ORDER BY goal_id LIMIT $3",[this.projectId,cursor??null,limit+1]); return page(r.rows,limit,rowGoal,x=>x.goal_id);
   }
   async listGoalRevisions(goalId:string):Promise<GoalRevision[]> {const r=await this.client.query("SELECT * FROM goal_revision WHERE project_id=$1 AND goal_id=$2 ORDER BY version LIMIT $3",[this.projectId,goalId,maxDetailRows+1]);return bounded(r.rows.map(rowGoalRevision),"goal revisions");}
-  async listStagePhaseLinks():Promise<import("@evoloop/contracts/milestones").StagePhaseLink[]> {
-    const r=await this.client.query(`SELECT k.stage_id,s.goal_id,k.phase_key,s.state,rv.adopted,rv.rejected,rv.gap,rv.created_at AS review_at
-      FROM stage_phase_key k JOIN project_stage s ON s.project_id=k.project_id AND s.stage_id=k.stage_id
-      LEFT JOIN LATERAL (SELECT adopted,rejected,gap,created_at FROM stage_review v WHERE v.project_id=k.project_id AND v.stage_id=k.stage_id
-        ORDER BY v.created_at DESC,v.review_id DESC LIMIT 1) rv ON true
-      WHERE k.project_id=$1 ORDER BY k.phase_key,s.created_at,s.stage_id LIMIT $2`,[this.projectId,maxDetailRows+1]);
-    return bounded(r.rows.map(x=>({stageId:x.stage_id,goalId:x.goal_id,phaseKey:x.phase_key,state:x.state,
-      review:x.review_at?{adopted:x.adopted,rejected:x.rejected,gap:x.gap,createdAt:new Date(x.review_at).toISOString()}:null})),"stage phase links");
-  }
   async getStageMilestone(stageId:string):Promise<StageMilestone|null> {const r=await this.client.query("SELECT *,to_char(due_on,'YYYY-MM-DD') AS due_on_text FROM stage_milestone WHERE project_id=$1 AND stage_id=$2",[this.projectId,stageId]);return r.rows[0]?rowMilestone(r.rows[0]):null;}
   async listStageMilestoneHistory(stageId:string):Promise<StageMilestone[]> {const r=await this.client.query("SELECT *,to_char(due_on,'YYYY-MM-DD') AS due_on_text FROM stage_milestone_history WHERE project_id=$1 AND stage_id=$2 ORDER BY version LIMIT $3",[this.projectId,stageId,maxDetailRows+1]);return bounded(r.rows.map(rowMilestone),"stage milestone history");}
   async listStageMilestones():Promise<StageMilestone[]> {const r=await this.client.query("SELECT *,to_char(due_on,'YYYY-MM-DD') AS due_on_text FROM stage_milestone WHERE project_id=$1 ORDER BY stage_id LIMIT $2",[this.projectId,maxDetailRows+1]);return bounded(r.rows.map(rowMilestone),"stage milestones");}

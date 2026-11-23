@@ -18,6 +18,7 @@ import type {
   LeaderWorkPlanCommand, LeaderWorkReviewCommand, LeaderWorkTask,
 } from "@evoloop/contracts/work-index";
 import type { ProviderHoldListing } from "@evoloop/contracts/provider-hold";
+import type { JumpResult } from "@evoloop/contracts/object-jump";
 import type { ProjectCapabilitiesView, ProjectMembersView, ProjectRepositoriesView } from "@evoloop/contracts/project-configuration";
 export type {
   ProjectCapabilitiesView, ProjectCapability, ProjectMember, ProjectMembersView, ProjectRepositoriesView, ProjectRepository,
@@ -163,6 +164,8 @@ export function api(token = "", timeoutMs = 15000) {
       const hub = (await call<{ project: HubProject }>(projectPath(p))).project;
       return hubProjectView(hub);
     },
+    /** “跳到”: the objects of this project a pasted id, id prefix or PR number names (at most 10). */
+    jump: (p: string, text: string, signal?: AbortSignal) => call<JumpResult>(`${projectPath(p)}/jump?q=${key(text)}`, signal ? { signal } : undefined),
     providerHolds: (p: string) => call<ProviderHoldListing>(`${projectPath(p)}/runtime/provider-holds`),
     /** Repositories configured for this project; `unavailable` is not "none". */
     projectRepositories: async (p: string) => checkedProjectView<ProjectRepositoriesView>(await call<unknown>(`${projectPath(p)}/repositories`), p),
@@ -184,7 +187,6 @@ export function api(token = "", timeoutMs = 15000) {
     stageProjection: (p: string, signal?: AbortSignal, timeZone?: string) => call<import("@evoloop/contracts/stage-projection").StageProjection>(`${projectPath(p)}/stages/milestones${timeZone ? `?timeZone=${encodeURIComponent(timeZone)}` : ""}`, { signal }),
     /** The project's verification ladder (M0 …): `available:false` is "this project has none"; an unreadable repository is the error LADDER_UNREADABLE. */
     ladder: (p: string, signal?: AbortSignal) => call<import("@evoloop/contracts/milestones").LadderView>(`${projectPath(p)}/ladder`, { signal }),
-    milestones: (p: string, signal?: AbortSignal) => call<import("@evoloop/contracts/milestones").MilestonesView>(`${projectPath(p)}/milestones`, { signal }),
     stageReviews: (p: string, id: string) => call<StageReview[]>(`${projectPath(p)}/stages/${key(id)}/reviews`),
     discussions: (p: string, cursor?: string, kind?: DiscussionRecord["kind"]) => call<Page<DiscussionRecord>>(`${projectPath(p)}/discussions?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}${kind ? `&kind=${key(kind)}` : ""}`),
     discussion: (p: string, id: string) => call<DiscussionRecord>(`${projectPath(p)}/discussions/${key(id)}`),

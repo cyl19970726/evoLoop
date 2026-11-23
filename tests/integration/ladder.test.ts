@@ -144,7 +144,7 @@ test("a repository without a main ref is an identifiable error, different from '
   assert.equal(body.source.commit, head);
 });
 
-test("permission is project read permission; the old /milestones answer is unchanged; the other project's repository is never read", async t => {
+test("permission is project read permission; the old /milestones route is gone; the other project's repository is never read", async t => {
   const f = await setup(t);
   const a = await f.makeProject(), b = await f.makeProject();
   f.repos.push({ projectId: a.projectId, root: bareRepo(f.base, "only-a", { "docs/roadmap.md": roadmap("A") }).bare });
@@ -152,6 +152,5 @@ test("permission is project read permission; the old /milestones answer is uncha
   assert.equal((await f.get(a.projectId, "ladder", "x".repeat(40))).statusCode, 401);
   assert.equal((await f.get(b.projectId)).json().available, false, "project B registered nothing, so it sees nothing of A's roadmap");
   const old = await f.get(a.projectId, "milestones");
-  assert.equal(old.statusCode, 200);
-  assert.deepEqual(Object.keys(old.json()).sort(), ["currentNote", "currentPhaseId", "phases", "source"]);
+  assert.equal(old.statusCode, 404);
 });

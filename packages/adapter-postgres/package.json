@@ -13,6 +13,7 @@
     "./references": "./dist/references.js",
     "./orchestration": "./dist/orchestration.js",
     "./work-index": "./dist/work-index.js",
+    "./object-jump": "./dist/object-jump.js",
     "./leader-notice-packets": "./dist/leader-notice-packets.js",
     "./work-board": "./dist/work-board.js",
     "./decisions-for-me": "./dist/decisions-for-me.js",

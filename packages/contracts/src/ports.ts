@@ -67,7 +67,6 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
   getStage(id: string): Promise<Stage | null>;
   listStages(goalId?: string): Promise<Stage[]>;
   /** Stages linked to a roadmap phase with their latest review. */
-  listStagePhaseLinks?(): Promise<import("./milestones.js").StagePhaseLink[]>;
   listStageRevisions(stageId: string): Promise<StageRevision[]>;
   /** Milestone fields of a stage (migration 118); null when the stage has no row. */
   getStageMilestone?(stageId: string): Promise<import("./workflow.js").StageMilestone | null>;

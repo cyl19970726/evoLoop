@@ -151,7 +151,7 @@ test("stages: overview block and journey table", { skip }, async t => {
   const present = await overview(1440, 900);
   assert.equal(await present.locator("[data-overview-stages] [data-ladder]").count(), 1);
   assert.equal(await present.locator("[data-overview-stages] details[data-ladder]").evaluate(node => (node as HTMLDetailsElement).open), false);
-  assert.ok(await present.locator("[data-overview-stages]").innerText().then(text => text.includes("M0.5 未登记")), "a level with no status is listed as 未登记");
+  assert.match(await present.locator('[data-overview-stages] [data-ladder-mark="M0.5"]').innerText(), /未登记/, "a level with no status is marked 未登记");
   await clean(present);
   const absent = await overview(1440, 900, { ladder: "absent" });
   assert.equal(await absent.locator("[data-ladder], [data-ladder-error]").count(), 0, "no ladder element when the service says it is not available");

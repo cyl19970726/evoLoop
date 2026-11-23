@@ -21,6 +21,7 @@ import { ArtifactReferenceError, parseArtifactReference } from "@evoloop/contrac
 import type { Transaction } from "@evoloop/contracts/ports";
 import { currentRetentions } from "./runtime/basis.js";
 import { canonicalTaskInputJson, taskInputSignature } from "./task-input.js";
+import { assertNotRejectedResubmission } from "./resubmission-guard.js";
 import { appendObservationRework } from "./task-dispatch-guard.js";
 
 type WorkflowCommand = Extract<
@@ -421,6 +422,8 @@ export async function applyWorkflow({
       if (task.state !== "in_progress") throw new DomainError("INVALID_STATE", "task must be in progress to deliver");
       if ((await tx.listRuntimeRuns(task.id)).some(run => ["requested", "dispatching", "running", "unknown"].includes(run.state)))
         throw new DomainError("TASK_BUSY", "resolve the current or uncertain run before recording delivery");
+      // A delivery that repeats an artifact the consumer already sent back, against an unchanged Task, is refused (Task 399fdac2).
+      await assertNotRejectedResubmission(tx, task.id, { artifactRevision: c.artifactRevision, contentHash: c.contentHash });
       const proposal = await tx.getTaskProposal(task.id);
       let submittedByActorId: string | null = actorId;
       let sourceRunVersion: number | null = null;
