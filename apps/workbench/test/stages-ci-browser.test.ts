@@ -102,6 +102,10 @@ test("stages: overview block and journey table", { skip }, async t => {
     assert.ok(read.titleBottom <= edge - reserve, `the 本次优先核对 title is on the first screen at ${width}x${height} (bottom ${read.titleBottom}, edge ${edge}, reserve ${reserve})`);
     assert.ok(read.itemBottom <= edge - reserve, `its first item is on the first screen at ${width}x${height} (bottom ${read.itemBottom}, edge ${edge}, reserve ${reserve})`);
     if (width < 500) assert.ok(read.stagesBottom > read.itemBottom, "at 390 the stage block follows 本次优先核对, all five rows still drawn");
+    // Only the stage block moves at 390: 线上当前版本 stays right after 当前目标, before 本次优先核对 and on the first screen.
+    const version = await page.evaluate(`(() => { const v = document.querySelector("[data-overview-version]").getBoundingClientRect(), a = document.querySelector(".overview-attention").getBoundingClientRect(), g = document.querySelector(".overview-goal").getBoundingClientRect(); return { top: Math.round(v.top), bottom: Math.round(v.bottom), attentionTop: Math.round(a.top), goalBottom: Math.round(g.bottom) }; })()`) as { top: number; bottom: number; attentionTop: number; goalBottom: number };
+    if (width < 500) { assert.ok(version.top >= version.goalBottom && version.bottom <= version.attentionTop, `at 390 the version strip sits between the goal and 本次优先核对 (${JSON.stringify(version)})`); assert.ok(version.bottom <= edge, "and inside the first screen"); }
+    else assert.ok(version.bottom <= read.stagesBottom, "at 1440 the order is goal, version, stages");
     if (shots) await page.screenshot({ path: `${shots}/overview-${width}-light.png` });
     // Clicking a row lands on that stage's row in the journey page, opened and in the address.
     await rows.nth(2).click(); await page.locator("[data-stages] [data-stage-row]").first().waitFor();

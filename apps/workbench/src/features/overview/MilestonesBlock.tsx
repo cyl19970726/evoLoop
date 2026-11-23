@@ -12,8 +12,8 @@ const heading = "text-label font-semibold text-foreground";
 export function MilestonesBlock({ projectId, active }: { projectId: string; active: boolean }) {
   const version = useProjectQuery(projectId, ["overview", "version"], signal => api().version(signal, projectId), { enabled: active, retry: false });
   const v = versionView(version.data ?? null);
-  return <div className="@container max-md:order-1" data-overview-top="">
-    <div className="flex flex-col gap-2">
+  return <div className="@container max-md:contents" data-overview-top="">
+    <div className="flex flex-col gap-2 max-md:contents">
       <section className={card} aria-label="线上当前版本" data-overview-version="">
         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5"><h2 className={heading}>线上当前版本</h2>
         <p className="m-0 flex flex-wrap gap-x-3 text-caption">{v.links.map(link => <a key={link.href} className="text-primary hover:underline" href={link.href} target="_blank" rel="noreferrer">{link.label}</a>)}</p>
@@ -26,7 +26,8 @@ export function MilestonesBlock({ projectId, active }: { projectId: string; acti
         </dl>}
         {version.isError && <p className={muted} role="status">版本接口这次没有读到（{errorText(version.error)}）；不显示旧版本。</p>}
       </section>
-      <StagesBlock projectId={projectId} active={active} />
+      {/* Below 768px the wrappers above drop out of the layout: 线上当前版本 stays right after 当前目标, only the 阶段 block moves behind 本次优先核对 and 最近使用反馈. */}
+      <div className="@container max-md:order-1"><StagesBlock projectId={projectId} active={active} /></div>
     </div>
   </div>;
 }

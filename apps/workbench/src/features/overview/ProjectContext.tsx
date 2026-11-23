@@ -201,6 +201,6 @@ export function ProjectContext({ token, projectId, refresh, active }: { token: s
         </section>
       </div>
     </div>
-    <p className={cn(muted, "max-md:order-2")}>{value ? `目标与证据读于 ${date(value.observedAt)}${reading ? " · 正在重新核对" : ""}` : "目标与使用证据尚未读回"}。各来源分别读取，完整依据在原对象中查阅。</p>
+    <p className={muted}>{value ? `目标与证据读于 ${date(value.observedAt)}${reading ? " · 正在重新核对" : ""}` : "目标与使用证据尚未读回"}。各来源分别读取，完整依据在原对象中查阅。</p>
   </section>;
 }
