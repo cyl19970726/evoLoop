@@ -4,7 +4,7 @@ import type { SessionActivityPage, SessionChanges, SessionDirectory, SessionSnap
 import type { SessionAssignmentPage, SessionProfileRecord, TaskSessionAssignment } from "@evoloop/contracts/session-assignments";
 
 type DirectoryOptions = { limit: number; cursor?: string; search?: string; membership?: string };
-type HistoryOptions = { limit: number; cursor?: string; taskId?: string; importance?: "important" | "all" };
+type HistoryOptions = { limit: number; cursor?: string; taskId?: string; importance?: "important" | "all"; business?: boolean; since?: string };
 type ChangesOptions = { cursor: string; limit: number; key?: string };
 const requireRead = (principal: Principal, projectId: string): void => {
   if (!isProjectMember(principal, projectId))

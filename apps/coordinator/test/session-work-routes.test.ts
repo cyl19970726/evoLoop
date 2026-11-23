@@ -31,6 +31,12 @@ test("Session work routes parse bounded query parameters and pass the authentica
     assert.equal((await app.inject({ url: `${base}/session-work?limit=51` })).statusCode, 400);
     assert.equal((await app.inject({ url: `${base}/session-work/changes` })).statusCode, 400);
     assert.equal((await app.inject({ url: `${base}/session-work/${sessionKey}/activities?taskId=${taskId}&importance=important` })).statusCode, 200);
+    const since = "2026-11-10T08:00:00.000Z";
+    seen.length = 0;
+    assert.equal((await app.inject({ url: `${base}/session-work/${sessionKey}/activities?business=1&since=${since}&limit=50` })).statusCode, 200);
+    assert.deepEqual(seen[0]?.slice(3), [{ limit: 50, business: true, since }], "business nodes are asked for with a time bound");
+    assert.equal((await app.inject({ url: `${base}/session-work/${sessionKey}/activities?business=1&since=yesterday` })).statusCode, 400);
+    assert.equal((await app.inject({ url: `${base}/session-work/${sessionKey}/activities?business=2` })).statusCode, 400);
     assert.equal((await app.inject({ url: `${base}/session-work/${sessionKey}/profile/history?cursor=2` })).statusCode, 200);
     assert.equal((await app.inject({ url: `${base}/tasks/${taskId}/assignment/history?cursor=2` })).statusCode, 200);
   } finally { await app.close(); }

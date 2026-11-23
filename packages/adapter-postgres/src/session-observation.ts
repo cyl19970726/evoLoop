@@ -5,7 +5,7 @@ import type { ObservationMetadata, ObservationSource, SessionTarget } from "@evo
 import type { SessionProfileRecord } from "@evoloop/contracts/session-assignments";
 import type { SessionIdentity } from "@evoloop/contracts/session-identity";
 import type { ObservedRole, ObservedSession, ObservedTask, SessionActivity, SessionActivityPage, SessionChanges,
-  SessionDirectory, SessionObservationReader, SessionSnapshot, ObservedResource } from "@evoloop/contracts/session-observation";
+  SessionDirectory, SessionObservationReader, SessionSnapshot, ObservedResource, BusinessNode } from "@evoloop/contracts/session-observation";
 import { PgSessionAssignments } from "./session-assignments.js";
 import { readRunDispatches } from "./session-line.js";
 
@@ -370,8 +370,70 @@ export class PgSessionObservation implements SessionObservationReader {
       [...snapshot.metadata.limitations, `响应大小限制：已省略部分${omitted.join("、")}，可从对应任务与固定来源继续读取。`]);
     return snapshot;
   }
-  async history(key: string, options: { limit: number; cursor?: string; taskId?: string; importance?: "important" | "all" }): Promise<SessionActivityPage | null> {
+  /** Task 13518ac6: the business steps of the Tasks this Session accepted, newest first, from `since`; paged by time, not by journal sequence. */
+  private async businessHistory(row: Row, options: { limit: number; cursor?: string; since?: string }): Promise<SessionActivityPage> {
+    const windows = (await this.acceptedWindows(row)).slice(0, 200);
+    const starts = new Map<string, Date>();
+    for (const w of windows) { const had = starts.get(w.task_id); if (!had || w.start_at < had) starts.set(w.task_id, w.start_at); }
+    const filter = JSON.stringify({ key: row.key, business: true, since: options.since ?? null });
+    const position = options.cursor ? this.decode(options.cursor, "business", filter) : null;
+    const [cursorAt, cursorId] = position ? position.split("|") : [null, null];
+    if (position && (!cursorAt || Number.isNaN(Date.parse(cursorAt)) || !cursorId)) throw new DomainError("INVALID_CURSOR", "历史读取位置无效。");
+    const ids = [...starts.keys()], from = ids.map(id => starts.get(id)!);
+    const r = ids.length === 0 ? { rows: [] } : await this.client.query(`WITH w AS (SELECT * FROM unnest($2::uuid[],$3::timestamptz[]) AS w(task_id,start_at)),
+      numbered AS (SELECT d.*,row_number() OVER (PARTITION BY d.task_id ORDER BY d.created_at,d.delivery_id)::int AS n FROM delivery d WHERE d.project_id=$1 AND d.task_id=ANY($2::uuid[])),
+      nodes AS (
+        SELECT 'accepted'::text AS node_kind,r.task_id,r.ack_at AS at,'a:'||r.task_id||':'||r.version AS nid,r.actor_id,
+          jsonb_build_object('method',r.ack_method,'by',(SELECT p.actor_id FROM task_session_assignment_revision p
+            WHERE p.project_id=r.project_id AND p.task_id=r.task_id AND p.version<r.version AND p.state='assigned' ORDER BY p.version DESC LIMIT 1)) AS d
+          FROM task_session_assignment_revision r WHERE r.project_id=$1 AND r.task_id=ANY($2::uuid[]) AND r.target_kind=$4 AND r.target_id=ANY($5::uuid[])
+            AND r.state='accepted' AND r.ack_at IS NOT NULL
+        UNION ALL SELECT 'delivered',n.task_id,n.created_at,'d:'||n.delivery_id,n.actor_id,
+          jsonb_build_object('deliveryId',n.delivery_id,'ref',n.artifact_ref,'revision',n.artifact_revision,'technical',n.technical_result,'number',n.n)
+          FROM numbered n JOIN w ON w.task_id=n.task_id AND n.created_at>=w.start_at
+        UNION ALL SELECT 'observed',o.task_id,o.created_at,'o:'||o.observation_id,o.actor_id,
+          jsonb_build_object('deliveryId',o.delivery_id,'result',o.result,'observer',o.observer,'reason',o.reason,
+            'number',(SELECT n.n FROM numbered n WHERE n.delivery_id=o.delivery_id))
+          FROM consumer_observation o JOIN w ON w.task_id=o.task_id AND o.created_at>=w.start_at WHERE o.project_id=$1
+        UNION ALL SELECT 'closed',c.task_id,c.created_at,'c:'||c.closure_id,c.actor_id,jsonb_build_object('cancelled',false)
+          FROM task_closure c JOIN w ON w.task_id=c.task_id AND c.created_at>=w.start_at WHERE c.project_id=$1
+        UNION ALL SELECT 'closed',v.task_id,v.created_at,'x:'||v.revision_id,v.actor_id,jsonb_build_object('cancelled',true)
+          FROM task_revision v JOIN w ON w.task_id=v.task_id AND v.created_at>=w.start_at WHERE v.project_id=$1 AND v.state='cancelled')
+      SELECT x.*,to_char(x.at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at_text,tr.title FROM nodes x
+        JOIN task t ON t.project_id=$1 AND t.task_id=x.task_id
+        JOIN task_revision tr ON tr.project_id=t.project_id AND tr.task_id=t.task_id AND tr.revision_id=t.current_revision_id
+      WHERE ($6::timestamptz IS NULL OR x.at>=$6::timestamptz)
+        AND ($7::timestamptz IS NULL OR (x.at,x.nid)<($7::timestamptz,$8::text))
+      ORDER BY x.at DESC,x.nid DESC LIMIT $9`,
+      [this.projectId, ids, from, row.kind, row.all_aliases, options.since ?? null, cursorAt, cursorId, options.limit + 1]);
+    const chosen = r.rows.slice(0, options.limit);
+    const documentIds = [...new Set(chosen.flatMap(x => x.node_kind === "delivered" ? [/documents\/([0-9a-f-]{36})/i.exec(x.d.ref)?.[1]] : []).filter((v): v is string => !!v))];
+    const titles = new Map<string, string>();
+    if (documentIds.length) for (const d of (await this.client.query("SELECT document_id,title FROM process_document WHERE project_id=$1 AND document_id=ANY($2::uuid[])", [this.projectId, documentIds])).rows) titles.set(d.document_id, d.title);
+    const sentence = (text: unknown): string | null => {
+      const first = typeof text === "string" ? text.trim().split(/(?<=[。！？!?])|\n/, 1)[0]?.trim() ?? "" : "";
+      return first ? (first.length > 120 ? `${first.slice(0, 120)}…` : first) : null;
+    };
+    const items: SessionActivity[] = chosen.map(x => {
+      let node: BusinessNode;
+      if (x.node_kind === "accepted") node = { kind: "accepted", taskId: x.task_id, title: x.title, by: x.d.by ?? null, method: x.d.method ?? null };
+      else if (x.node_kind === "delivered") {
+        const pr = /\/pull\/(\d+)/.exec(x.d.ref), doc = /documents\/([0-9a-f-]{36})/i.exec(x.d.ref);
+        node = { kind: "delivered", taskId: x.task_id, title: x.title, deliveryId: x.d.deliveryId, number: x.d.number, by: x.actor_id, technicalResult: x.d.technical,
+          artifact: pr ? { kind: "pr", label: `PR #${pr[1]}` } : doc ? { kind: "document", label: titles.get(doc[1]!) ?? "文档" } : { kind: "other", label: clip(x.d.ref, 80) } };
+      } else if (x.node_kind === "observed") node = { kind: "observed", taskId: x.task_id, title: x.title, deliveryId: x.d.deliveryId, deliveryNumber: x.d.number ?? 0,
+        result: x.d.result, observer: x.d.observer, reason: x.d.result === "used" ? null : sentence(x.d.reason) };
+      else node = { kind: "closed", taskId: x.task_id, title: x.title, cancelled: x.d.cancelled === true, by: x.actor_id };
+      return { id: `${this.projectId}:node:${x.nid}`, sequence: "0", sessionKey: row.key, kind: `business_${x.node_kind}`, summary: "", occurredAt: iso(x.at), recordedAt: iso(x.at)!,
+        actorId: x.actor_id, taskId: x.task_id, importance: "important" as const, source: this.source(x.node_kind === "accepted" ? "task-assignment" : x.node_kind === "delivered" ? "delivery" : x.node_kind === "observed" ? "consumer-observation" : "task", x.task_id, null, "project-record", x.task_id), node };
+    });
+    const last = chosen.at(-1);
+    return { items, nextCursor: r.rows.length > chosen.length && last ? this.encode("business", `${last.at_text}|${last.nid}`, filter) : null,
+      metadata: { ...this.meta(null, ["节点来自这个会话接手过的任务的记录，不表示该会话执行过全部步骤。"]), partial: windows.length >= 200 } };
+  }
+  async history(key: string, options: { limit: number; cursor?: string; taskId?: string; importance?: "important" | "all"; business?: boolean; since?: string }): Promise<SessionActivityPage | null> {
     this.bound(options.limit, 50); const row = await this.raw(key); if (!row) return null;
+    if (options.business) return this.businessHistory(row, options);
     const tasks = await this.taskIds(row); const scope = await this.changeScope(row, tasks);
     const filter = JSON.stringify({ key: row.key, taskId: options.taskId ?? null, importance: options.importance ?? "important" });
     const position = options.cursor ? this.decode(options.cursor, "history", filter) : await this.head();
