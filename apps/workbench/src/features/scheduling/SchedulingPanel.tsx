@@ -9,7 +9,7 @@ import { ContextRailContent } from "../../shared/ui/ContextRail";
 import { SectionBoundary } from "../../shared/ui/SectionBoundary";
 import { date } from "../../shared/ui/shared";
 import type { Occurrence, ScheduleDefinition, ScheduleRevision, ScheduleRule } from "@evoloop/contracts/scheduling";
-import { errorText } from "../../shared/api";
+import { api, errorText } from "../../shared/api";
 import { ActionForm, option, reasonField, type MutationContext } from "../../shared/ActionForm";
 import { isRoleOwnerId, readOwnerRole } from "../../shared/ownerRole";
 import { projectQueryOptions, useProjectQuery } from "../../shared/query";
@@ -24,9 +24,10 @@ import { RoleName } from "../../shared/ui/RecordName";
 
 import {
   coordinatorErrorText, grantEmptyText, latestOccurrence, nextTimeText, occurrenceLabel,
-  scheduleFromPath, scheduleReadView, scheduleRuleText, scheduleTaskHref, scheduleTime, zoneName,
+  scheduleFromPath, scheduleHref, scheduleReadView, scheduleRuleText, scheduleTaskHref, scheduleTime, zoneName,
 } from "./presentation";
-import { currentPath, onNavigate } from "../../shared/navigation";
+import { currentPath, navigate, onNavigate } from "../../shared/navigation";
+import { RoutineHealthTable } from "./RoutineHealthTable";
 import { TimedTasksSection } from "./TimedTasksSection";
 import { DispatchFacts, TriggerList, useScheduleDispatch } from "./ScheduleDispatch";
 import { triggerRows } from "./dispatch";
@@ -112,11 +113,15 @@ export function SchedulingPanel({ context, refresh }: { context: MutationContext
   const [focusedTiming, setFocusedTiming] = useState<string | null>(() => timingFromPath(currentPath(), context.projectId));
   useEffect(() => onNavigate(() => {
     const named = scheduleFromPath(currentPath(), context.projectId);
+    // On this page the address is the choice: a named schedule opens its detail, the bare page (Back) is the health table.
     if (named) { setSelectedScheduleId(named); setCreating(false); }
+    else if (currentPath().split("?")[0] === `/p/${context.projectId}/schedules`) setSelectedScheduleId(null);
     setFocusedTiming(timingFromPath(currentPath(), context.projectId));
   }), [context.projectId]);
   const [lastResults, setLastResults] = useState<Record<string, string>>({});
-  const selectedSchedule = schedules.find(item => item.id === selectedScheduleId) ?? schedules[0];
+  const selectedSchedule = selectedScheduleId ? schedules.find(item => item.id === selectedScheduleId) : undefined;
+  // 例行健康: one read for the table on the first screen; the schedule list and the detail below do not wait for it.
+  const healthRead = useProjectQuery(context.projectId, ["routine-health", refresh], signal => api(context.token).routineHealth(context.projectId, signal));
   const formContext = { ...context, blocked: context.blocked || !fresh };
   const names = useScheduleRoleNames(context.projectId, [...status?.grants.map(grant => grant.roleId) ?? [],
     ...selectedSchedule ? [selectedSchedule.revision.template.owner, selectedSchedule.revision.authorization.roleId] : []]);
@@ -137,7 +142,8 @@ export function SchedulingPanel({ context, refresh }: { context: MutationContext
     return () => { active = false; };
   }, [context.token, context.projectId, context.principal.actorId, refresh, scope, readKey]);
   const showCreate = creating || (!!value && schedules.length === 0);
-  const select = (id: string) => { setSelectedScheduleId(id); setCreating(false); };
+  const select = (id: string) => { setSelectedScheduleId(id); setCreating(false); navigate(scheduleHref(context.projectId, id)); };
+  const toTable = () => { setSelectedScheduleId(null); setCreating(false); navigate(`/p/${context.projectId}/schedules`); };
   const listItem = (schedule: ScheduleDefinition) => {
     const selected = !showCreate && selectedSchedule?.id === schedule.id;
     return <ListRow key={schedule.id} className="schedule-item" selected={selected} onSelect={() => select(schedule.id)} title={schedule.revision.template.title}
@@ -172,8 +178,9 @@ export function SchedulingPanel({ context, refresh }: { context: MutationContext
     {error && <UiNotice tone="error">日程与授权本次未读完整：{error}。{value ? "旧定义仅供阅读，保存与创建已暂停。" : "请重试读取。"}</UiNotice>}
     {status && ["disabled","unavailable","no-authority","error","stopped"].includes(status.state) && <UiNotice tone="error">{fresh ? "协调器状态" : "上次读回的协调器状态"}：{coordinatorLabel[status.state]}{status.lastError ? "，最近一次检查出错（原文在右栏的来源里）" : ""}。已登记的规则不会自行执行。</UiNotice>}
     {schedules.length > 1 && <label className="flex flex-col gap-1 desktop:hidden"><span className={muted}>切换日程</span>
-      <Select className="w-full" value={showCreate ? "" : selectedSchedule?.id ?? ""} onChange={event => select(event.target.value)}>
+      <Select className="w-full" value={showCreate ? "" : selectedSchedule?.id ?? ""} onChange={event => event.target.value ? select(event.target.value) : toTable()}>
         {showCreate && <option value="">正在创建新日程</option>}
+        {!showCreate && !selectedSchedule && <option value="">例行健康（总表）</option>}
         {schedules.map(schedule => <option key={schedule.id} value={schedule.id}>{schedule.revision.template.title} · {stateLabel[schedule.state]}</option>)}
       </Select></label>}
     {showCreate
@@ -181,9 +188,12 @@ export function SchedulingPanel({ context, refresh }: { context: MutationContext
         {schedules.length === 0 && !loading && !error ? <EmptyState title="还没有日程" reason="这里不会自行启动定时任务。建立日程后，协调器按规则和授权创建待办任务。" /> : <h2 className="text-heading font-semibold text-foreground">创建日程</h2>}
         <p className={muted}>支持一次、固定分钟间隔和每天固定时刻，暂不支持更复杂的重复规则。时间按所选时区的当地时间填写；授权和到期时间需与协调器实际许可一致。</p>
         {createForm}
-        {schedules.length > 0 && <Button variant="ghost" className="w-fit" onClick={() => setCreating(false)}>返回日程</Button>}
+        {schedules.length > 0 && <Button variant="ghost" className="w-fit" onClick={toTable}>返回日程</Button>}
       </section>
-      : selectedSchedule && <ScheduleCard key={`${readKey}:${selectedSchedule.id}:${selectedSchedule.version}`} definition={selectedSchedule} context={formContext} grants={status?.grants ?? []} names={names} status={status} fresh={fresh} loading={loading} onResult={(result) => setLastResults(previous => ({ ...previous, [`${selectedSchedule.id}:${selectedSchedule.version}`]: result }))} />}
+      : !selectedSchedule
+      ? <RoutineHealthTable view={{ health: healthRead.data ?? null, loading: healthRead.isFetching, error: healthRead.isError ? errorText(healthRead.error) : null }}
+        projectId={context.projectId} actorId={context.principal.actorId} onOpen={select} onRetry={() => void healthRead.refetch()} />
+      : <><Button variant="ghost" className="w-fit" onClick={toTable}>返回例行健康</Button><ScheduleCard key={`${readKey}:${selectedSchedule.id}:${selectedSchedule.version}`} definition={selectedSchedule} context={formContext} grants={status?.grants ?? []} names={names} status={status} fresh={fresh} loading={loading} onResult={(result) => setLastResults(previous => ({ ...previous, [`${selectedSchedule.id}:${selectedSchedule.version}`]: result }))} /></>}
     <TimedTasksSection context={context} status={status} focus={focusedTiming} />
     {(showCreate || !selectedSchedule) && <ContextPanelContent><div className="flex flex-col gap-4"><PanelSection title="协调器与授权"><CoordinatorFacts status={status} fresh={fresh} loading={loading} projectId={context.projectId} /></PanelSection></div></ContextPanelContent>}
   </div>;

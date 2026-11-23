@@ -6,6 +6,7 @@ import type { Delivery } from "@evoloop/contracts/workflow";
 import type { OrdinaryRunSubmissionCommand, OrdinaryRunSubmissionRecord } from "@evoloop/contracts/ordinary-run-submission";
 import { DomainError, type UnitOfWork } from "@evoloop/contracts/ports";
 import { submitOrdinaryRun } from "@evoloop/core/ordinary-run-submission";
+import { assertNotRejectedResubmission } from "@evoloop/core/resubmission-guard";
 import { PgOrdinaryRunSubmissionStore } from "@evoloop/adapter-postgres/ordinary-run-submission";
 
 export class OrdinaryRunSubmissionService {
@@ -36,7 +37,10 @@ export class OrdinaryRunSubmissionService {
 
   async submit(principal: Principal, command: OrdinaryRunSubmissionCommand): Promise<OrdinaryRunSubmissionRecord> {
     return this.transaction(command.projectId, store => submitOrdinaryRun(store, principal, command,
-      new Date().toISOString(), {hash: value => createHash("sha256").update(value).digest("hex")}));
+      new Date().toISOString(), {hash: value => createHash("sha256").update(value).digest("hex")},
+      // Reads committed data on its own connection (no project lock taken), so it cannot wait on this transaction.
+      next => this.uow.read(next.projectId, reader => assertNotRejectedResubmission(reader, next.taskId,
+        { artifactRevision: next.deliveryIntent.artifactRevision, contentHash: next.deliveryIntent.contentHash }))));
   }
 
   async getByOperation(principal: Principal, projectId: string, operationId: string): Promise<OrdinaryRunSubmissionRecord | null> {

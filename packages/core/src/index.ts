@@ -33,6 +33,7 @@ import { applyDecisionRequest } from "./decision-requests/index.js";
 import type { SessionAssignmentCommand } from "@evoloop/contracts/session-assignments";
 import type { DomainRoute, HostLink } from "@evoloop/contracts/resident-hosts";
 import { applySchedule } from "./scheduling/commands.js";
+import { buildRoutineHealth } from "./scheduling/health.js";
 import { applyScheduleDispatch } from "./scheduling/dispatch.js";
 import { applyDiscussion } from "./discussions.js";
 import { applyTaskCollaboration, taskAnswerInputBlock } from "./task-collaboration.js";
@@ -1417,6 +1418,24 @@ export class WorkflowService {
   listSchedules(principal: Principal, projectId: string) { return this.read(principal, projectId, reader => reader.listSchedules()); }
   listScheduleRevisions(principal: Principal, projectId: string, scheduleId: string) { return this.read(principal, projectId, async reader => { required(await reader.getSchedule(scheduleId), "Schedule"); return reader.listScheduleRevisions(scheduleId); }); }
   listScheduleOccurrences(principal: Principal, projectId: string, scheduleId: string) { return this.read(principal, projectId, async reader => { required(await reader.getSchedule(scheduleId), "Schedule"); return reader.listOccurrences(scheduleId); }); }
+  /** 例行健康: every schedule and timed series of the project in one read (no per-routine reads); read-only and derived. */
+  getRoutineHealth(principal: Principal, projectId: string): Promise<import("@evoloop/contracts/routine-health").RoutineHealth> {
+    return this.read(principal, projectId, async reader => {
+      if (!reader.scheduleHealth) throw new DomainError("CAPABILITY_UNAVAILABLE", "Routine health reads are not configured");
+      const [schedules, facts] = await Promise.all([reader.listSchedules(), reader.scheduleHealth.scheduleHealthFacts()]);
+      const series: import("@evoloop/contracts/task-timing").TaskTimingSeriesSummary[] = [];
+      let cursor: string | undefined, complete = true;
+      // At most 500 timed series in one answer; past that the answer says it is not whole.
+      for (let page = 0; reader.taskTiming; page++) {
+        const read = await reader.taskTiming.list(100, cursor);
+        series.push(...read.items);
+        if (!read.nextCursor) break;
+        if (page >= 4) { complete = false; break; }
+        cursor = read.nextCursor;
+      }
+      return buildRoutineHealth({ projectId, schedules, facts, series, now: new Date().toISOString(), complete });
+    });
+  }
   getScheduleDispatchPolicy(principal: Principal, projectId: string, scheduleId: string) {
     return this.read(principal, projectId, async reader => {
       required(await reader.getSchedule(scheduleId), "Schedule");

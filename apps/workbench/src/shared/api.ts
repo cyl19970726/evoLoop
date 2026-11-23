@@ -18,6 +18,7 @@ import type {
   LeaderWorkPlanCommand, LeaderWorkReviewCommand, LeaderWorkTask,
 } from "@evoloop/contracts/work-index";
 import type { ProviderHoldListing } from "@evoloop/contracts/provider-hold";
+import type { JumpResult } from "@evoloop/contracts/object-jump";
 import type { ProjectCapabilitiesView, ProjectMembersView, ProjectRepositoriesView } from "@evoloop/contracts/project-configuration";
 export type {
   ProjectCapabilitiesView, ProjectCapability, ProjectMember, ProjectMembersView, ProjectRepositoriesView, ProjectRepository,
@@ -163,6 +164,8 @@ export function api(token = "", timeoutMs = 15000) {
       const hub = (await call<{ project: HubProject }>(projectPath(p))).project;
       return hubProjectView(hub);
     },
+    /** “跳到”: the objects of this project a pasted id, id prefix or PR number names (at most 10). */
+    jump: (p: string, text: string, signal?: AbortSignal) => call<JumpResult>(`${projectPath(p)}/jump?q=${key(text)}`, signal ? { signal } : undefined),
     providerHolds: (p: string) => call<ProviderHoldListing>(`${projectPath(p)}/runtime/provider-holds`),
     /** Repositories configured for this project; `unavailable` is not "none". */
     projectRepositories: async (p: string) => checkedProjectView<ProjectRepositoriesView>(await call<unknown>(`${projectPath(p)}/repositories`), p),
@@ -244,6 +247,13 @@ export function api(token = "", timeoutMs = 15000) {
       if (!page || !Array.isArray(page.items) || page.items.some(item => item.projectId !== p || typeof item.seriesId !== "string" || typeof item.rootTaskId !== "string" || !item.latestTask || typeof item.latestTask.taskId !== "string"))
         throw new ApiError(0, "定时任务响应与当前项目不符；请重新读取。");
       return page;
+    },
+    /** 例行健康: every schedule and timed Task series of the project with its last trigger, skips in a row and next time, in one read. */
+    routineHealth: async (p: string, signal?: AbortSignal) => {
+      const health = await requestJson<import("@evoloop/contracts/routine-health").RoutineHealth>(token, `${projectPath(p)}/routine-health`, timeoutMs, { signal });
+      if (!health || health.projectId !== p || !Array.isArray(health.items) || health.items.some(item => typeof item.id !== "string" || typeof item.title !== "string" || !["active", "paused", "stopped"].includes(item.state)))
+        throw new ApiError(0, "例行健康响应与当前项目不符；请重新读取。");
+      return health;
     },
     /** Drain mode: instance-wide state of the release gate (not project scoped). */
     /** Drain state. Behind the Hub (which forwards only a project's own API) it is read at the project's path; a local login reads the instance path as before. */

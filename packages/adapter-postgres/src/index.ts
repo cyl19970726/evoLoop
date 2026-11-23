@@ -1,3 +1,4 @@
+import { PgRoutineHealth } from "./routine-health.js";
 import { PgReferenceStore } from "./references.js";
 import { readTaskStageFacts } from "./work-index.js";
 import type { FormalSourceDecision, TaskExternalReferenceRecord, TaskExternalReferenceHead } from "@evoloop/contracts/references";
@@ -178,6 +179,7 @@ class PgReader implements Reader {
   readonly leaderNoticePackets: PgLeaderNoticePackets;
   readonly sessionLines: PgSessionLine;
   readonly scheduleDispatch: PgScheduleDispatch;
+  readonly scheduleHealth: PgRoutineHealth;
   readonly decisionRequests: PgDecisionRequests;
   protected readonly runtime: PgRuntimeStore;
   protected readonly roles: PgRoleQueries;
@@ -201,6 +203,7 @@ class PgReader implements Reader {
     this.leaderNoticePackets = new PgLeaderNoticePackets(client, projectId);
     this.sessionLines = new PgSessionLine(client, projectId);
     this.scheduleDispatch = new PgScheduleDispatch(client, projectId);
+    this.scheduleHealth = new PgRoutineHealth(client, projectId);
     this.decisionRequests = new PgDecisionRequests(client, projectId);
     this.roles = new PgRoleQueries(client, projectId);
     this.residents = new PgResidentHosts(client, projectId);

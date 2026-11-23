@@ -157,6 +157,8 @@ npm run --silent cli -- operation "$OPERATION_ID" --project "$PROJECT_ID"
 
 先用本 Run 配置的 CLI `session` 核身份，读取固定输入和产物原件。`request schema ordinary.submit` 给出精确正文：`projectId`、原 `operationId`、独立 `submissionId`、`runId`、`taskId`、`sessionId`、`taskRevisionId`、`runInputHash`、预留的 `deliveryOperationId`，以及 `deliveryIntent` 中产物引用、修订、内容 hash、`technicalResult`、检查证据和原因。在 Run 仍有效时用 `request ordinary.submit --project UUID --file PRIVATE_JSON` 署名提交；服务从该 Run 的固定接收者校验作者，不能用请求字段指定作者，队列预留者或 Session 创建者也不能代签。旧 direct Run 若没有固定 assignment／recipient 事实，本路径明确拒绝首次提交；须由有权者核旧产物并按旧合同登记，后续新 Run 再固定接收者，不能从可变的 Session actor 猜作者。`failed`／`interrupted` 的部分成果若提交，技术结果须为 `failed`。
 
+**被退回的产物不能原样再交（`RESUBMIT_REJECTED_ARTIFACT`）。** `ordinary.submit` 和 `delivery.record` 都会先看同一 Task 上最近一份带 `failed` 或 `notUsed` 观察的交付：这次要交的产物指纹（`artifactRevision` 加 `contentHash`，PR 交付就是头提交）与它相同，并且从那条观察之后任务的业务输入（标题、正文、验收条件、负责人、依据等）没有变，就以这个错误码拒绝，不留交付记录，Run 状态不变。错误信息写明被退回的观察编号、所属交付、退回原因的第一句和怎么继续：按原因改了再交；认为不用改，请需求 Session 改任务的验收条件。不拦：产物变了；观察之后任务的业务输入变了（系统开 Run 生成的同内容新修订不算）；那条观察之后又有 `used` 观察；其他 Task。只读判断，不改观察和关闭规则，也不回头处理已有交付。
+
 产物只填一个位置。项目 Document 可填 `document:DOCUMENT_UUID@REVISION_UUID`，CLI 会规范化为 `#/p/PROJECT_UUID/documents/DOCUMENT_UUID?revision=REVISION_UUID`；也可直接填该固定工作台路由或本机工作台完整 URL。`artifactRevision` 单填同一个修订 UUID，`contentHash` 填回读该修订的 SHA-256。服务在普通与受管 worker 提交事务内核项目、确切修订与 hash，拒绝缺版本、错项目、错修订及错 hash。外部 PR／网页填单个 http(s) URL，修订单填 commit／标签等单个标识；不会联网证明外部内容。既有 `repo:`／`git:` 文件引用可追溯但工作台未必能直接打开，要求收件人点击时应改用固定网页链接。PR、Git 说明和其他位置写进 `technicalEvidence`，不要把多个位置拼进 `artifactRef` 或在 `artifactRevision` 拼说明。旧 Delivery 和已经签署、尚待封存的旧意图保留原值，不由新规则猜测或回写。
 
 **交付要引用 CI 结果时，在本轮前台等完再提交。** Run 就是本轮对话：本轮结束，Run 也就结束了，放到后台的检查（后台命令、稍后再看的轮询）不会回到这个 Run，等不到的结果不能写进交付。用前台阻塞命令等到结果，例如 `gh pr checks PR号 --watch`，五项作业都出结果后再写报告、再 `ordinary.submit`；本机测试同理。
@@ -456,6 +458,10 @@ Leader 用 `evoloop command run` 提交 `line.append`（sessionId、taskId、exp
 
 业务 Session 收到“执行确认请求”消息后，只做确认，不开始改文件：读固定 Task 修订，然后提交 `task.assignment.acknowledge`，`verdict=confirm`（`plan` 简短计划、`expectedRevisionId`）或 `verdict=return`（`missing` 列出缺什么）。确认后系统自动开 Run；退回的 Task 退出队伍、保持未开始。需要的私有配置：队伍调度程序随运行时启用而运行，Session 的业务身份取自 `residentQueue.roleActors`（没有则该项挂起为 `RECIPIENT_UNAVAILABLE`）。
 
+## 按编号跳到对象（只读）
+
+`evoloop get '/api/projects/P/jump?q=<文字>'`（CLI 暂无专门命令，通用 `get` 即可）按完整编号、8 位以上十六进制前缀或 PR 号（`#527` / `527`）在本项目内找任务、文档、智能体（owned 会话）、阶段、日程和交付，最多返回 10 条 `{kind, id, title, href}`，超出时 `truncated: true`。不足 8 位且不是 PR 号、没有匹配、含引号或 `%`、`_`、`;` 的文字都返回空 `matches`，不报错；需要项目成员身份，否则 403/401。前缀按主键范围查（`id BETWEEN 前缀补0 AND 前缀补f ORDER BY id LIMIT 11`，走主键索引）；PR 号按交付地址里的 `/pull/N` 在本项目的交付行里匹配，不走索引，落到所属任务的“交付与使用”。外部（非 owned）智能体不在范围内。
+
 ## 调度板与调度事件流
 
 `work board --project P [--brief]` 读调度板：每个 Session 现在做的（Run，或由消息、即时输入开的这一轮，带开始时间和已用时长）、队伍里排着的项（Session 队伍 `session_line_entry` 与旧的批量队伍合在一起；顺序、状态 queued / held（挂起）/ claimed（轮到、正在启动）、来源、追加时间、已等待多久；“就绪但不在任何队伍里”同样排除 Session 队伍里的 Task）、排队中的普通消息数、恢复门阶段和模型服务暂停；还有就绪但不在任何队伍里的 Task，以及等 Leader 决定的事项（已送入或已看到、尚未处置的通知项，受阻的通知包，开放的决定请求，处于 `blocked`、超过 30 分钟且后面有排队消息的恢复门——`kind` 为 `recovery_gate`，排在这个列表最前、`--brief` 里也不会被截掉，`waitingOn` 写最近决定过这个门的身份，没有则任一复核身份可以 `runtime.session.recovery.resume`）。`--brief` 只留安排工作用的字段，不超过 6 KB，通常不到完整输出的一半；ID 保持完整，标题截短，没有内容的字段省略；超出时从各列表尾部丢项并写明省略了几项。Leader 每轮先读 `--brief`，要看某一项的全部字段再读不带 `--brief` 的完整输出。两种输出都带 `eventSeq`：这份快照读取时事件流的最新序号。
@@ -473,6 +479,8 @@ Leader 收到的是“Leader 通知包”消息：先 `get /api/projects/PROJECT
 通知有级别（立即/汇总，见[接口合同](../architecture/contracts.md#leader-通知层)）：立即项在包里行首标“立即·”，不等 60 秒、排在前面，来源是验收安排受阻、提交受阻、Run 结束未提交、Task 提问与阻塞、验收观察失败；验收观察按结论拆成 `observation_used`（汇总）和 `observation_failed`（立即）。只记录事件（Run 已按请求停止、关注项已解决、通知撤回）不是通知，读 `get /api/projects/PROJECT/leader-records`（`taskId`、`kind`、`limit`、`cursor` 可选，从旧到新续页）。
 
 定时直派的三条写命令（`command schema` 取结构，都要项目管理权限和决定权）：`schedule.directList.set`（某个 Role 的直派名单）、`schedule.dispatch.set`（某个日程交 Leader 还是直接进队伍，含等待上限与每日预算）、`schedule.directEntry.withdraw`（撤下一个定时项，必须选 `cancel` 或 `to_leader`；普通 `line.remove` 拒绝定时项）。直派的 Task 不发待分诊，直派与跳过读 `get /api/projects/PROJECT/leader-records?kind=direct_dispatched`（或 `direct_dispatch_skipped`）。
+
+例行健康用一次只读请求读全部：`get /api/projects/PROJECT/routine-health`（项目成员读取）按“逾期、连续跳过两次及以上、上次任务还开着、其余按下次时间”的顺序返回每个日程和定时任务系列的上次触发（时间、创建或跳过及原因、任务及其状态）、连续跳过次数、下次时间和逾期标记；只读，不新增迁移，`complete:false` 表示定时任务读到上限被截断。
 
 直派事实的只读入口只要项目成员读取，不要项目管理权限：`read schedule SCHEDULE --project PROJECT --dispatch` 读当前策略（无策略时为 `null`）；`read role ROLE --project PROJECT --direct-list` 读该 Role 的名单；`read schedule SCHEDULE --project PROJECT --dispatches [--limit 1..100 --cursor CURSOR]` 从旧到新分页读每次触发，`plannedAtUtc` 与 `read schedule SCHEDULE --occurrences` 的同一时间对应。HTTP 路径分别是 `/api/projects/PROJECT/schedules/SCHEDULE/dispatch`、`/roles/ROLE/direct-list`、`/schedules/SCHEDULE/dispatches`；游标只属于原项目和日程，不能跨项目复用。
 

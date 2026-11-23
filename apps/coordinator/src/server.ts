@@ -56,6 +56,7 @@ import type { AcceptanceRelayService } from "./acceptance-relay/service.js";
 import type { LeaderWorkIndexReader } from "./work-management/work-index.js";
 import { registerLeaderNoticeRoutes, type LeaderNoticeReader } from "./work-management/leader-notice-routes.js";
 import { registerTaskAttentionRoutes } from "./task-attention/routes.js";
+import { registerObjectJumpRoutes } from "./object-jump/routes.js";
 import type { Pool } from "pg";
 import { registerEvaluationRoutes, type ReadEvaluationPacket } from "./evaluation/routes.js";
 import { OrchestrationError } from "@evoloop/core/orchestration";
@@ -195,6 +196,8 @@ export async function buildServer(options: {
   /** 待我决定: what waits for the caller to decide (Role and stage proposals, named questions, decision requests addressed to them). */
   decisionsForMe?: (projectId: string, actorId: string, canDecide: boolean) => Promise<unknown>;
   taskAttentionPool?: Pool;
+  /** Enables `GET /api/projects/:projectId/jump` (Task 5eb93990). */
+  objectJumpPool?: Pool;
   planningSources?: PlanningSourcesReader;
   workers?: { authenticate(header: string | undefined): Promise<WorkerIdentity | null>; facts(identity: WorkerIdentity): WorkerGuardFacts };
   ordinarySubmissions?: OrdinaryRunSubmissionRoutes;
@@ -941,6 +944,7 @@ export async function buildServer(options: {
   if (options.milestones) registerMilestoneRoutes(app, { service: options.service, ...options.milestones });
   if (options.leaderNotices) registerLeaderNoticeRoutes(app, options.service, options.leaderNotices);
   if (options.taskAttentionPool) registerTaskAttentionRoutes(app, options.service, options.taskAttentionPool);
+  if (options.objectJumpPool) registerObjectJumpRoutes(app, options.service, options.objectJumpPool);
   registerEvaluationRoutes(app, options.service, options.readEvaluationPacket);
   registerProjectConfigurationRoutes(app, options.service, options.projectConfiguration);
   if (options.knowledge) registerKnowledgeRoutes(app, { workflow: options.service, ...options.knowledge });
