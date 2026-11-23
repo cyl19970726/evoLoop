@@ -41,7 +41,7 @@ test("migration 019 preserves an existing Delivery closure without changing its 
   await issue({type:"project.create",title:"Legacy closure"});
   const ownerRoleId=fixtureRoleId(actorId);
   await seedFixtureRole(pool,projectId,ownerRoleId);
-  await issue({type:"task.create",taskId,title:"Old delivered task",content:"# Old body",acceptance:"Artifact checked",owner:ownerRoleId});
+  await issue({type:"task.create",taskId,title:"Old delivered task",content:"# Old body\n关闭后下一步：无",acceptance:"Artifact checked",owner:ownerRoleId});
   await issue({type:"task.start",taskId,expectedVersion:1,reason:"Begin"});
   const delivery=await issue({type:"delivery.record",taskId,expectedVersion:2,artifactRef:"fixture:old",artifactRevision:"r1",
     contentHash:"a".repeat(64),technicalResult:"passed",technicalEvidence:"Checked",reason:"Original delivery"});
@@ -112,7 +112,7 @@ test("HTTP and PostgreSQL: a simple Task owns its Document body and closes witho
   applied((await send({ type: "project.create", title: "Simple Task" })).result);
   const ownerRoleId=fixtureRoleId(principal.actorId);
   await seedFixtureRole(pool,projectId,ownerRoleId);
-  const original = "# Produce one report\n\nShow the checked result.";
+  const original = "# Produce one report\n\nShow the checked result.\n关闭后下一步：无";
   const created = applied((await send({ type: "task.create", taskId, title: "Report", content: original,
     acceptance: "The report exists and its check passes", owner: ownerRoleId })).result);
   const first = await service.getTask(principal, projectId, taskId);
@@ -255,7 +255,7 @@ test("HTTP and PostgreSQL: a simple Task owns its Document body and closes witho
 
   const linkedTaskId = randomUUID();
   applied((await send({ type: "task.create", taskId: linkedTaskId, title: "Use fixed specification",
-    content: "# Follow the published specification", acceptance: "One checked result", owner: ownerRoleId,
+    content: "# Follow the published specification\n关闭后下一步：无", acceptance: "One checked result", owner: ownerRoleId,
     documentIds: [specId] })).result);
   const linkedStart = applied((await send({ type: "task.start", taskId: linkedTaskId, expectedVersion: 1,
     basis: [{ documentId: specId, revisionId: spec.revisionId }], reason: "Start with fixed specification" })).result);

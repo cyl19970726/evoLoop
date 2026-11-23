@@ -435,6 +435,7 @@ export async function buildServer(options: {
         throw new DomainError("FORBIDDEN", "当前身份没有此项目、范围和职责的日程授权。");
       }
     }
+    await options.service.checkRequiredLines?.(command); // optional: unit-test doubles of the service do not implement it
     const result = command.type === "session.message.manualStop"
       ? await options.manualStop!.execute(who(request.principal),command)
       : await options.service.execute(who(request.principal), command);
@@ -904,7 +905,9 @@ export async function buildServer(options: {
   });
   for (const entity of ["documents", "tasks"] as const) {
     app.get(`/api/projects/:projectId/${entity}`, async request => {
-      const p = params(request.params); const q = pageSchema.parse(request.query);
+      const p = params(request.params);
+      // A document list's cursor is the opaque (time, id) position the server itself issued, not a UUID; the Task list's is a Task id.
+      const q = (entity === "documents" ? pageSchema.extend({ cursor: z.string().min(1).max(512).optional() }) : pageSchema).parse(request.query);
       const filter = entity === "documents" ? z.object({
         kind: documentListKindSchema.optional(),
         status: z.union([documentStatusSchema, z.literal("active")]).optional(),

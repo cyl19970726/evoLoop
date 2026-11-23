@@ -33,6 +33,7 @@ import { queuedMessageSummary } from "./queuedMessagePresentation";
 import { nameOnly } from "../../shared/workPresentation";
 import { useTaskName } from "../../shared/ui/RecordName";
 import { date } from "../../shared/ui/shared";
+import { noticeFor, useFileGuard } from "./fileGuard";
 
 type Agent = ComposerAgent & { target: SessionTarget };
 
@@ -77,12 +78,16 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
   const [worked, setWorked] = useState(false);
   const [stopOpen, setStopOpen] = useState(false);
   // The message is gone: clear the box and its kept draft, the chosen skill and @ names, and what was said about it.
-  const sent = () => { setValue(""); setSkill(null); setPicked([]); setOutcome(null); };
+  const sent = () => { setValue(""); setSkill(null); setPicked([]); setOutcome(null); guard.dismiss(); };
+  // A pasted or dropped file is not sent (Task 5415aed3): the line says so until the next typing or the next send.
+  const guard = useFileGuard();
   // Ordinary messages: the shared command hook keeps the draft (and an unknown operation) under this agent's key.
   // The page is mounted once per agent, so the key never changes under it.
   const command = useCommand(context, undefined, { draft: { store: commandDrafts, key: draftKey }, onApplied: () => { sent(); onApplied(); } });
   const [value, setValue] = useState(() => String((command.restoredDraft as { content?: string } | undefined)?.content ?? ""));
-  const change = (next: string) => {
+  const change = (next: string, inputType?: string) => {
+    // Text pasted or dropped along with a file keeps the line about the file; typing or deleting takes it away.
+    if (inputType !== "insertFromPaste" && inputType !== "insertFromDrop") guard.dismiss();
     setValue(next);
     if (next || command.unconfirmed) command.saveDraft({ content: next }); else command.dropDraft();
   };
@@ -268,6 +273,9 @@ export function SessionComposer({ context, snapshot, entries, activeTurn, live, 
       running={plan.running}
       sendMode={plan.sendMode}
       splitSend={plan.split ?? undefined}
+      notice={guard.notice ? { text: guard.notice, onDismiss: guard.dismiss } : undefined}
+      fileDrag={guard.dragging}
+      onPasteFiles={files => guard.setNotice(noticeFor(files))}
       onSend={text => { if (plan.enter) void deliver(plan.enter, text); }}
       onQueue={plan.modEnter ? text => void deliver(plan.modEnter!, text) : undefined}
       onQueueUnavailable={() => setOutcome({ text: plan.queueNote ?? "现在不能排到下一轮。", failed: false })}

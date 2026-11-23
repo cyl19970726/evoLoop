@@ -260,11 +260,11 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
       <TabsContent value="overview" forceMount hidden={tab !== "overview"} id={panelId("overview")} aria-labelledby={tabId("overview")} className="flex flex-col gap-7 pt-5 outline-none">
         {goal && <section aria-labelledby={`${panelId("overview")}-goal`} className="flex flex-col gap-2">
           <h2 id={`${panelId("overview")}-goal`} className={heading}>目标</h2>
-          <MarkdownBody source={goal} identity={`task-goal-${detail.revision.id}`} projectId={projectId} topHeading={3} />
+          <MarkdownBody source={goal} identity={`task-goal-${detail.revision.id}`} projectId={projectId} topHeading={3} refLinks />
         </section>}
         <section aria-labelledby={`${panelId("overview")}-acceptance`} className="flex flex-col gap-2" data-task-acceptance="">
           <h2 id={`${panelId("overview")}-acceptance`} className={heading}>完成条件</h2>
-          <MarkdownBody source={detail.task.acceptance} identity={`task-acceptance-${detail.revision.id}`} projectId={projectId} topHeading={3} />
+          <MarkdownBody source={detail.task.acceptance} identity={`task-acceptance-${detail.revision.id}`} projectId={projectId} topHeading={3} refLinks />
           <p className="text-caption text-muted-foreground">{acceptanceNote}</p>
         </section>
         <section aria-labelledby={`${panelId("overview")}-body`} className="flex flex-col gap-2">
@@ -273,7 +273,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
             {panel ? <Button variant="link" className="text-label" onClick={openContent}>在右栏核对固定原件</Button>
               : <a className="text-label text-primary hover:underline" href={href(projectId, "document", detail.task.contentDocumentId, detail.task.contentRevisionId)}>阅读固定原件</a>}
           </div>
-          <MarkdownBody source={detail.task.content} identity={`task-${detail.revision.id}`} projectId={projectId} topHeading={3} />
+          <MarkdownBody source={detail.task.content} identity={`task-${detail.revision.id}`} projectId={projectId} topHeading={3} refLinks />
           <p className="text-caption text-muted-foreground">正文来自任务固定的主文档修订；修改走“任务操作”里的“更新任务内容”，不从文档页绕过任务。</p>
         </section>
         <section aria-labelledby={`${panelId("overview")}-progress`} className="flex flex-col gap-3" data-task-progress="">

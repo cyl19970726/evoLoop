@@ -67,6 +67,17 @@ export interface SessionDirectory {
   /** Project-wide aggregates, independent of the currently loaded directory page. */
   attention: { unansweredQuestions: number; pendingMessages: number; pendingAcceptance: number | null; unclassifiedSessions: number };
 }
+/**
+ * A business step of a Task this Session took on, for the conversation timeline (Task 13518ac6). Read from the records of the
+ * tasks it accepted, from the acceptance onward; it says what the records say, not that this Session did the step.
+ */
+export type BusinessNode =
+  | { kind: "accepted"; taskId: string; title: string; /** Who dispatched it (the earlier assignment record's actor); null when no such record. */ by: string | null; method: "direct" | "lead-observed" | null }
+  | { kind: "delivered"; taskId: string; title: string; deliveryId: string; /** 1-based, in the order the Task's deliveries were made. */ number: number;
+      artifact: { kind: "pr" | "document" | "other"; label: string }; technicalResult: "passed" | "failed"; by: string }
+  | { kind: "observed"; taskId: string; title: string; deliveryId: string; deliveryNumber: number; result: "used" | "failed" | "notUsed"; observer: string;
+      /** The first sentence of the recorded reason; null when the record has none. */ reason: string | null }
+  | { kind: "closed"; taskId: string; title: string; cancelled: boolean; by: string };
 export interface SessionActivity {
   id: string;
   sequence: string;
@@ -81,6 +92,8 @@ export interface SessionActivity {
   taskId: string | null;
   importance: "important" | "detail";
   source: ObservationSource;
+  /** Present on the items of a business-node read (`history` with `business`). */
+  node?: BusinessNode;
 }
 export interface SessionQueueItem {
   queueId: string;
@@ -179,6 +192,6 @@ export interface SessionChanges {
 export interface SessionObservationReader {
   directory(options: { limit: number; cursor?: string; search?: string; membership?: string }): Promise<SessionDirectory>;
   snapshot(key: SessionKey): Promise<SessionSnapshot | null>;
-  history(key: SessionKey, options: { limit: number; cursor?: string; taskId?: string; importance?: "important" | "all" }): Promise<SessionActivityPage | null>;
+  history(key: SessionKey, options: { limit: number; cursor?: string; taskId?: string; importance?: "important" | "all"; business?: boolean; since?: string }): Promise<SessionActivityPage | null>;
   changes(options: { cursor: string; limit: number; key?: SessionKey }): Promise<SessionChanges>;
 }

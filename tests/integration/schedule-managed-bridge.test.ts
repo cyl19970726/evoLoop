@@ -105,7 +105,7 @@ test("a targeted Schedule occurrence creates one Stage Task and enters only its 
   const scheduleId = randomUUID(), revisionId = randomUUID();
   const command = { type: "schedule.create", scheduleId, revisionId, timezone: "UTC",
     rule: { kind: "once", atUtc: planned }, misfire: { kind: "latest" }, overlap: "skip",
-    template: { title: "Recurring check", content: `# Do scheduled check\n${"Read the fixed occurrence. ".repeat(55)}`, acceptance: "Record result",
+    template: { title: "Recurring check", content: `# Do scheduled check\n${"Read the fixed occurrence. ".repeat(55)}\n关闭后下一步：无`, acceptance: "Record result",
       owner: business, managedTarget: { loopId, stageId } },
     authorization: { scopeId: "schedule-scope", roleId: business, authorizedBy: owner, expiresAtUtc: null },
     reason: "Create managed Schedule", watermarkUtc: now, state: "active" };
@@ -311,7 +311,7 @@ test("a targeted Schedule occurrence creates one Stage Task and enters only its 
   const legacyTime = new Date(Date.parse(now) + 60_000).toISOString();
   await write({ ...command, scheduleId: legacyId, revisionId: legacyRevisionId,
     watermarkUtc: now, rule: { kind: "once", atUtc: legacyTime },
-    template: { title: "Ordinary check", content: "# Ordinary", acceptance: "Record", owner: business } });
+    template: { title: "Ordinary check", content: "# Ordinary\n关闭后下一步：无", acceptance: "Record", owner: business } });
   now = legacyTime;
   const legacy = (await scheduling.tick(principal(), projectId, now, ["schedule-scope"])).find(item => item.scheduleId === legacyId);
   assert(legacy?.taskId);
@@ -324,7 +324,7 @@ test("a targeted Schedule occurrence creates one Stage Task and enters only its 
     watermarkUtc: now, rule: { kind: "once", atUtc: future } });
   await write({ ...command, scheduleId: ordinaryScheduleId, revisionId: randomUUID(),
     watermarkUtc: now, rule: { kind: "once", atUtc: future },
-    template: { title: "Unscoped after stop", content: "# Ordinary", acceptance: "Record", owner: business } });
+    template: { title: "Unscoped after stop", content: "# Ordinary\n关闭后下一步：无", acceptance: "Record", owner: business } });
   const { watermarkUtc: _stoppedWatermark, ...stoppedTemplate } = command;
   await write({ ...stoppedTemplate, type: "schedule.revise", revisionId: randomUUID(),
     expectedVersion: 1, state: "stopped", reason: "End the original occurrence window" });

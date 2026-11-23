@@ -360,7 +360,7 @@ export function QueuedMessages({ items, note = "这一轮结束后按顺序送�
 export interface TurnSummaryProps {
   /** What this turn produced, for example 改了 3 个文件. */
   produced: string;
-  delivered?: string | undefined;
+  delivered?: React.ReactNode;
   /** Who moves next, for example 下一步等你验收. */
   next?: string | undefined;
   className?: string | undefined;

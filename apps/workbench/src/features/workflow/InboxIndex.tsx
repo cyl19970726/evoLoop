@@ -14,6 +14,7 @@ import type { MutationContext } from "../../shared/ActionForm";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { PageSection, mutedText } from "../../shared/ui/PageParts";
 import { SessionName, useTaskName } from "../../shared/ui/RecordName";
+import { HoldSentence } from "../../shared/ui/HoldSentence";
 import { holdFacts, holdIdentifiers, holdSummary, type HoldSummary } from "../../shared/providerHoldPresentation";
 import { date } from "../../shared/ui/shared";
 import { nameOnly } from "../../shared/workPresentation";
@@ -125,6 +126,7 @@ function RuntimeProblems({ projectId, read, summary }: { projectId: string; read
     description="模型服务额度用完或鉴权失败时，受影响的智能体停着，它们自己恢复不了：需要你充值或重新授权，再由复核者一次放行。与每页顶部的“运行受阻”一行指向同一处。">
     <ReadState read={read} what="运行受阻状态" />
     {summary && <div data-runtime-problems="" className="flex flex-col gap-2">
+      <p className="m-0 text-body text-foreground" data-hold-sentence=""><HoldSentence projectId={projectId} summary={summary} /></p>
       {summary.holds.map(hold => <p key={hold.id} className="m-0 text-small text-text-secondary">{holdFacts(hold)}</p>)}
       {summary.sessionIds.length > 0 && <ul aria-label="受影响的智能体" className="flex flex-col">{summary.sessionIds.map(id => <li key={id}>
         <ListRow href={`/p/${projectId}/sessions?session=${encodeURIComponent(`owned:${id}`)}`} title={<SessionName projectId={projectId} sessionKey={`owned:${id}`} />}

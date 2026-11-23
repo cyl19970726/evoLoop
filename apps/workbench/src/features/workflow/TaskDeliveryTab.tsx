@@ -134,8 +134,8 @@ export function TaskDeliveryTab({ projectId, detail, active, actionsHref, actorI
         : <div className="flex flex-col gap-4">{(detail.closures ?? []).map(closure => <article key={closure.id} className="flex flex-col gap-2 border-t border-border pt-3 first:border-t-0 first:pt-0">
           <h3 className="text-small font-semibold text-foreground">验收决定 · {date(closure.createdAt)}</h3>
           <Fine>{closure.decisionId ? "依据：已结算的判断。只完成本轮判断，不代表来源业务任务完成。" : "依据：本任务的交付。"} 审阅者 {actorText(closure.actorId)}</Fine>
-          <EvidenceText label="逐项验收证据" value={closure.acceptanceEvidence} />
-          <EvidenceText label="理由" value={closure.reason} />
+          <EvidenceText label="逐项验收证据" value={closure.acceptanceEvidence} projectId={projectId} />
+          <EvidenceText label="理由" value={closure.reason} projectId={projectId} />
           {(closure.sourceTaskId || closure.handoffTaskId) && <p className="flex flex-wrap gap-x-3 text-label">
             {closure.sourceTaskId && <a className="text-primary hover:underline" href={href(projectId, "task", closure.sourceTaskId)}>原业务任务</a>}
             {closure.handoffTaskId && <a className="text-primary hover:underline" href={href(projectId, "task", closure.handoffTaskId)}>交接出的待办任务（仍要独立完成）</a>}
@@ -190,12 +190,12 @@ function DeliveryRecord({ projectId, detail, delivery, latest, title, run, activ
           : run?.isFetching ? "正在核对来源运行…"
             : <span>尚未核对。<Button size="compact" variant="ghost" disabled={!active} onClick={() => onCheckRun(delivery.runId!)}>核对来源运行</Button>
               {!!run?.error && <span className="text-destructive"> {errorText(run.error)}</span>}</span>}</div>
-    <EvidenceText label="技术检查证据" value={delivery.technicalEvidence} />
+    <EvidenceText label="技术检查证据" value={delivery.technicalEvidence} projectId={projectId} />
     <Fine>来源运行由登记者声明；运行结束不代表交付合格，也不证明产物由模型生成。产物修订、摘要和实际内容要分别核对。</Fine>
     <div className="flex flex-col gap-2" aria-label="这次交付的使用观察">
       <h4 className="text-label font-semibold text-foreground">这次交付的使用观察</h4>
       {!observations.length ? <p className="text-label text-text-secondary">尚无这次交付的使用观察。</p>
-        : observations.map(item => <ObservationRecord key={item.id} observation={item} />)}
+        : observations.map(item => <ObservationRecord key={item.id} observation={item} projectId={projectId} />)}
     </div>
     <FullIdentifiers summary="核对完整位置、修订与摘要" rows={[{ label: "原始位置", value: delivery.artifactRef },
       ...(target.kind !== "fallback" ? [{ label: "入口固定修订", value: target.revisionId }] : []),
@@ -205,13 +205,13 @@ function DeliveryRecord({ projectId, detail, delivery, latest, title, run, activ
   </article>;
 }
 
-export function ObservationRecord({ observation }: { observation: Observation }) {
+export function ObservationRecord({ observation, projectId }: { observation: Observation; projectId: string }) {
   const located = locatedObservation() === observation.id;
   return <div className={cn("flex flex-col gap-1.5 border-t border-border py-3", located ? "-mx-2 rounded-sm bg-selected px-2" : "px-0")} data-observation={observation.id} data-observation-located={located ? "" : undefined} {...(located ? { "aria-current": "true" } : {})}>
     <p className="text-label font-medium text-foreground">{actorText(observation.observer)} · {observerKindLabel[observation.observerKind]} · {observationResultLabel[observation.result]}</p>
     <Fine>观察登记于 {date(observation.createdAt)} · 登记者 {actorText(observation.actorId)}</Fine>
-    <EvidenceText label="使用证据" value={observation.evidence} />
-    <EvidenceText label="记录理由" value={observation.reason} />
+    <EvidenceText label="使用证据" value={observation.evidence} projectId={projectId} />
+    <EvidenceText label="记录理由" value={observation.reason} projectId={projectId} />
     <ActorIdentifiers actors={[["使用者", observation.observer], ["登记者", observation.actorId]]} />
   </div>;
 }

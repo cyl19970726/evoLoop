@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ArrowUp, FileText, ListChecks, Plus, Slash, Sparkles, Square, X } from "lucide-react";
+import { ArrowUp, FileText, Info, ListChecks, Plus, Slash, Sparkles, Square, X } from "lucide-react";
 import { cn } from "../lib/cn";
 
 /* The agent page composer. Enter sends; while a turn runs the message is queued (or added to the turn where the
@@ -61,7 +61,8 @@ const sendLabels: Record<ComposerSendMode, string> = { send: "发送", steer: "�
 
 export interface ComposerProps {
   value: string;
-  onChange: (value: string) => void;
+  /** `inputType` is the browser's own (insertText, insertFromPaste, insertFromDrop, deleteContentBackward …) when the change came from the box. */
+  onChange: (value: string, inputType?: string) => void;
   /** Sends the current text (Enter or the send button); the caller clears `value` once the message is saved. */
   onSend: (value: string) => void;
   /** Cmd/Ctrl+Enter: queue the text for the next turn. Without it Cmd/Ctrl+Enter does nothing; see `onQueueUnavailable`. */
@@ -101,6 +102,12 @@ export interface ComposerProps {
    * Used where the person must see which of two ways the message goes; the keys stay as they are.
    */
   splitSend?: { sendLabel: string; queueLabel: string; sendWay?: "insert" | "queue"; queueWay?: "insert" | "queue" } | undefined;
+  /** A file or image was pasted into the box: the caller says it was not sent (the text part is pasted as usual). */
+  onPasteFiles?: ((files: File[]) => void) | undefined;
+  /** One line above the box (for example that a pasted or dropped file was not sent); the person can close it. */
+  notice?: { text: string; onDismiss: () => void } | undefined;
+  /** A file is being dragged over the page: the box shows that nothing can be dropped here. */
+  fileDrag?: boolean | undefined;
 }
 
 type MenuItem = { type: "command"; item: ComposerCommand } | { type: "agent"; item: ComposerAgent };
@@ -108,6 +115,7 @@ type MenuItem = { type: "command"; item: ComposerCommand } | { type: "agent"; it
 export function Composer({
   value, onChange, onSend, onQueue, onQueueUnavailable, sendMode, splitSend, busy, label = "消息", maxLength, onStop, running, placeholder = "发消息，/ 调用技能，@ 转给其他智能体",
   attachments = [], onRemoveAttachment, onAttach, commands = [], commandStatus, onPickCommand, agents = [], onPickAgent, meta, disabled, className, skillScope,
+  onPasteFiles, notice, fileDrag,
 }: ComposerProps) {
   const mode: ComposerSendMode = sendMode ?? (running ? "queue" : "send");
   const textarea = React.useRef<HTMLTextAreaElement>(null);
@@ -263,7 +271,17 @@ export function Composer({
         </div>
       )}
 
-      <div className={cn("flex flex-col gap-2 rounded-xl border border-border-strong bg-raised px-2.5 py-2 has-[textarea:focus-visible]:outline-solid has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:-outline-offset-2 has-[textarea:focus-visible]:outline-primary", open && "shadow-[var(--focus-ring),var(--shadow-panel)]", disabled && "opacity-60")}>
+      {notice && (
+        <p role="status" data-composer-notice="" className="m-0 flex items-start gap-2 text-caption text-text-secondary">
+          <Info aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+          <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{notice.text}</span>
+          <button type="button" aria-label="关闭提示" onClick={notice.onDismiss} className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md border-0 bg-transparent p-0 text-muted-foreground outline-none hover:bg-field hover:text-foreground focus-visible:shadow-[var(--focus-ring)]">
+            <X aria-hidden="true" className="size-3" />
+          </button>
+        </p>
+      )}
+      <div data-file-drag={fileDrag ? "blocked" : undefined} className={cn("flex flex-col gap-2 rounded-xl border border-border-strong bg-raised px-2.5 py-2 has-[textarea:focus-visible]:outline-solid has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:-outline-offset-2 has-[textarea:focus-visible]:outline-primary", open && "shadow-[var(--focus-ring),var(--shadow-panel)]", disabled && "opacity-60", fileDrag && "cursor-not-allowed border-dashed border-destructive")}>
+        {fileDrag && <p role="status" data-file-drag-label="" className="m-0 px-1 text-caption text-destructive">不能放在这里：现在还不能附图片或文件。</p>}
         {attachments.length > 0 && (
           <div className="flex flex-wrap gap-1.5 px-1 pt-0.5">
             {attachments.map(attachment => (
@@ -298,9 +316,10 @@ export function Composer({
             aria-controls={open ? listId : undefined}
             aria-autocomplete="list"
             aria-activedescendant={open && hasItems ? optionId(activeIndex) : undefined}
-            onChange={event => { onChange(event.target.value); setCaret(event.target.selectionStart); setDismissed(null); }}
+            onChange={event => { onChange(event.target.value, (event.nativeEvent as InputEvent).inputType); setCaret(event.target.selectionStart); setDismissed(null); }}
             onSelect={event => setCaret(event.currentTarget.selectionStart)}
             onKeyDown={onKeyDown}
+            onPaste={event => { const files = [...event.clipboardData.files]; if (files.length) onPasteFiles?.(files); }}
             onBlur={() => setDismissed(value)}
             onFocus={() => setDismissed(null)}
             className="max-h-40 min-h-[34px] min-w-0 flex-1 resize-none border-0 bg-transparent px-0.5 py-1.5 text-body leading-(--leading-tight) text-foreground outline-none placeholder:text-muted-foreground"

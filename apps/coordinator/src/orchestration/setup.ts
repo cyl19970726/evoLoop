@@ -202,6 +202,7 @@ export function setupManagedLoops(options: {
   const orchestration = new OrchestrationService({store, now: options.now, nextId: randomUUID,
     hasCurrentStudyReviewer: currentStudyReviewer,
     hash: value => createHash("sha256").update(value).digest("hex"),
+    checkDeliveryReport: (projectId, contentHash) => options.workflow.checkRequiredLines({ type: "delivery.record", projectId, contentHash }),
     getDelegationTemplate: options.integrations.getDelegationTemplate,
     getWorkerScope: async actorId => (await broker.identityForActor(actorId))?.scope ?? null,
     canReadStudySourceRun: async (principal, projectId, runId) => {

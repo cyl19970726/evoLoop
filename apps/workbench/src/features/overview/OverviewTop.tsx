@@ -9,9 +9,10 @@ import { useProjectQuery } from "../../shared/query";
 import { date, href } from "../../shared/ui/shared";
 import { useTaskName } from "../../shared/ui/RecordName";
 import { nameOnly } from "../../shared/workPresentation";
-import { holdLine, holdSummary, holdTarget } from "../../shared/providerHoldPresentation";
+import { holdSummary, holdTarget } from "../../shared/providerHoldPresentation";
+import { HoldSentence } from "../../shared/ui/HoldSentence";
 import { decisionKindText, decisionLink, inboxTaskLink, useInboxReads, useRequirementText as requirementText } from "../workflow";
-import { latestReview, moreText, outcomeText, priorityLimit, priorityTitle, type StalledTask } from "./overviewFirstScreen";
+import { latestReview, moreText, type OrganisationParts, outcomeText, priorityLimit, priorityTitle, type StalledTask } from "./overviewFirstScreen";
 import type { ProjectOutcome } from "./contextPresentation";
 
 const muted = "text-caption text-muted-foreground";
@@ -55,13 +56,13 @@ export function PriorityBlock({ projectId, actorId, enabled, stalled, work }: { 
   const { acceptance, impacts, decisions, alerts, holds } = reads;
   const held = holdSummary(holds.data);
   const rows: ReactNode[] = [];
-  for (const hold of held?.holds ?? []) {
-    const single = { holds: [hold], sessionIds: hold.sessionIds, queuedMessages: hold.queuedMessages };
-    const opened = holds.data?.items.find(item => item.id === hold.id)?.openedAt;
-    const target = holdTarget(projectId, single);
-    // One affected agent opens that agent; several (or none) open the runtime-problem category of 待我处理, which lists exactly the agents the line counts.
-    rows.push(<Row key={`hold:${hold.id}`} to={target === `/p/${projectId}/inbox` ? `${target}#inbox-runtime` : target} tag={<StatusTag tone="blocked" label="受阻" />}
-      when={opened ? `自 ${date(opened)}` : undefined}>{holdLine(single, null)}</Row>);
+  if (held) {
+    // One row for the whole hold, in the very sentence of the bar above every page (same count, same name). One affected agent opens that agent; several (or none)
+    // open the runtime-problem category of 待我处理, which lists exactly the agents the sentence counts.
+    const opened = holds.data?.items.filter(item => item.state === "held").map(item => item.openedAt).sort()[0];
+    const target = holdTarget(projectId, held);
+    rows.push(<Row key="hold" to={target === `/p/${projectId}/inbox` ? `${target}#inbox-runtime` : target} tag={<StatusTag tone="blocked" label="受阻" />}
+      when={opened ? `自 ${date(opened)}` : undefined}><HoldSentence projectId={projectId} summary={held} /></Row>);
   }
   for (const item of decisions.data?.items ?? []) rows.push(<Row key={`decision:${item.kind}:${item.id}`} to={decisionLink(projectId, item, actorId, "overview") ?? `/p/${projectId}/inbox`}
     when={`${item.proposedBy} 提出 · ${date(item.at)}`}>{decisionKindText[item.kind]}：{item.title}</Row>);
@@ -122,10 +123,15 @@ export function OutcomeBlock({ projectId, outcomes, state }: { projectId: string
 }
 
 /** ⑤ One line about what the organisation handles itself; it opens to the 调度动态 (where it is stuck now, the latest events). Folded by default. */
-export function OrganisationLine({ text, children }: { text: string; children: ReactNode }) {
+export function OrganisationLine({ text, parts, projectId, children }: { text: string; parts?: OrganisationParts | null; projectId?: string; children: ReactNode }) {
   return <details className="group border-t border-border pt-2 text-small" data-overview-block="organisation">
     <summary className="flex cursor-pointer list-none items-center gap-1.5 text-text-secondary hover:text-foreground [&::-webkit-details-marker]:hidden">
-      <ChevronRight aria-hidden="true" className="size-3.5 shrink-0 transition-transform group-open:rotate-90" /><span>{text}</span></summary>
+      <ChevronRight aria-hidden="true" className="size-3.5 shrink-0 transition-transform group-open:rotate-90" />{parts && projectId
+        ? <span>组织自己在处理：{parts.parts.map((part, index) => <React.Fragment key={part.phase}>{index > 0 && " · "}
+          {part.count > 0
+            ? <a href={`/p/${projectId}/work?phase=${encodeURIComponent(part.phase)}`} data-organisation-phase={part.phase} className="text-primary hover:underline">{part.label} {part.count}</a>
+            : <span>{part.label} {part.count}</span>}</React.Fragment>)}{parts.tail}</span>
+        : <span>{text}</span>}</summary>
     <div className="mt-2">{children}</div>
   </details>;
 }
@@ -140,8 +146,7 @@ export function FoldLine({ label, summary, children, ...rest }: { label: string;
 }
 
 /**
- * 最新复盘 in the header: opens the newest 组织复盘 document itself. When none can be read it opens the list of 复盘 (never a guess). The 每日简报 entry waits
- * for the document list to take a search term from the address (and for the briefing to have a type): it is not here yet (pages/overview.md).
+ * 最新复盘 in the header: opens the newest 组织复盘 document itself. When none can be read it opens the list of 复盘 (never a guess).
  */
 export function LatestReviewLink({ projectId, active }: { projectId: string; active: boolean }) {
   const read = useProjectQuery(projectId, ["overview", "latest-review"], async signal => {
@@ -158,4 +163,18 @@ export function LatestReviewLink({ projectId, active }: { projectId: string; act
   const latest = read.data?.latest;
   const to = latest && read.data?.whole ? href(projectId, "document", latest.id) : `/p/${projectId}/documents?kind=organization_review`;
   return <a href={to} data-overview-latest-review="" className="text-small text-primary hover:underline">最新复盘</a>;
+}
+
+/**
+ * 每日简报 in the header, next to 最新复盘: opens the newest document of the type 简报 (by when its current revision was made). A project with no 简报, or one whose
+ * list could not be read, shows no entry: the link is never a guess at a document.
+ */
+export function LatestBriefLink({ projectId, active }: { projectId: string; active: boolean }) {
+  const read = useProjectQuery(projectId, ["overview", "latest-brief"], async signal => {
+    const result = await api().documents(projectId, undefined, "brief", undefined, signal);
+    if (result.items.some(item => item.projectId !== projectId || item.kind !== "brief")) throw new Error("简报列表返回了其他范围的文档");
+    return [...result.items].sort((a, b) => Date.parse(b.updatedAt ?? "1970-01-01") - Date.parse(a.updatedAt ?? "1970-01-01") || a.id.localeCompare(b.id))[0] ?? null;
+  }, { enabled: active, retry: false });
+  if (!read.data) return null;
+  return <a href={href(projectId, "document", read.data.id)} data-overview-latest-brief="" className="text-small text-primary hover:underline">每日简报</a>;
 }

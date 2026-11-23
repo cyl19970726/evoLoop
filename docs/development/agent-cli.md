@@ -161,6 +161,8 @@ npm run --silent cli -- operation "$OPERATION_ID" --project "$PROJECT_ID"
 
 产物只填一个位置。项目 Document 可填 `document:DOCUMENT_UUID@REVISION_UUID`，CLI 会规范化为 `#/p/PROJECT_UUID/documents/DOCUMENT_UUID?revision=REVISION_UUID`；也可直接填该固定工作台路由或本机工作台完整 URL。`artifactRevision` 单填同一个修订 UUID，`contentHash` 填回读该修订的 SHA-256。服务在普通与受管 worker 提交事务内核项目、确切修订与 hash，拒绝缺版本、错项目、错修订及错 hash。外部 PR／网页填单个 http(s) URL，修订单填 commit／标签等单个标识；不会联网证明外部内容。既有 `repo:`／`git:` 文件引用可追溯但工作台未必能直接打开，要求收件人点击时应改用固定网页链接。PR、Git 说明和其他位置写进 `technicalEvidence`，不要把多个位置拼进 `artifactRef` 或在 `artifactRevision` 拼说明。旧 Delivery 和已经签署、尚待封存的旧意图保留原值，不由新规则猜测或回写。
 
+**两条必写行由代码检查（Task 3797cbdd）。** `delivery.record`、`ordinary.submit` 与受管 worker 的 `worker.submit`（提交时检查，不等封存）按交付的 `contentHash` 找本项目里同 hash 的报告 Document 修订，正文没有“下次同类工作先要知道的事”一行、空着或写“待定”就拒绝（`REPORT_NEXT_TIME_LINE_REQUIRED`，信息指向 results.md，写“无”可以）。原文不是报告 Document、找不到同 hash 的修订、或只有 HTML 原件（没有可读正文）的交付不检查，只检查读到的内容。`task.create`、`schedule.create` 和启用状态的 `schedule.revise` 拒绝没有“关闭后下一步”一行、空着或写“待定”的正文（`TASK_AFTER_CLOSE_LINE_REQUIRED`，指向 DEC-052，写“无”可以）。检查在 `/api/commands` 入口、普通提交和 `worker.submit` 里，不在核心 `execute`（封存器直接写交付，所以 worker 的报告要在提交时拦）：日程到点按已有模板生成的 Task 和系统自己建的 Task 不受影响，已有 Task、交付和模板不改；只查这一行在不在，不评内容好坏。
+
 **交付要引用 CI 结果时，在本轮前台等完再提交。** Run 就是本轮对话：本轮结束，Run 也就结束了，放到后台的检查（后台命令、稍后再看的轮询）不会回到这个 Run，等不到的结果不能写进交付。用前台阻塞命令等到结果，例如 `gh pr checks PR号 --watch`，五项作业都出结果后再写报告、再 `ordinary.submit`；本机测试同理。
 
 **PR 与交付文字怎么写，合并门禁才能把它们对上。** PR 描述里写完整的 Task 编号（不写缩写）；交付的 `artifactRef` 写 PR 地址，`artifactRevision` 写 40 位头提交；交付文字（`technicalEvidence` 或 `reason`）里写“#PR 号 加头提交前 8 位”，例如 `#352 975b569d`，这个头必须是交付那一刻 PR 的头：推送之后原交付不再对得上，要按新头重新交付。合并脚本为兼容旧交付仍认 8 位的 Task 前缀和至少 7 位的头提交前缀，新写的一律写完整编号和 8 位。同样的规则在 `.agents/skills/evoloop-workflow/SKILL.md` 的“Delivering a repository PR”一条和 [标准](standards.md) 的“PR 与验收怎样对上”里，三处写法一致。
@@ -461,6 +463,8 @@ Leader 用 `evoloop command run` 提交 `line.append`（sessionId、taskId、exp
 ## 按编号跳到对象（只读）
 
 `evoloop get '/api/projects/P/jump?q=<文字>'`（CLI 暂无专门命令，通用 `get` 即可）按完整编号、8 位以上十六进制前缀或 PR 号（`#527` / `527`）在本项目内找任务、文档、智能体（owned 会话）、阶段、日程和交付，最多返回 10 条 `{kind, id, title, href}`，超出时 `truncated: true`。不足 8 位且不是 PR 号、没有匹配、含引号或 `%`、`_`、`;` 的文字都返回空 `matches`，不报错；需要项目成员身份，否则 403/401。前缀按主键范围查（`id BETWEEN 前缀补0 AND 前缀补f ORDER BY id LIMIT 11`，走主键索引）；PR 号按交付地址里的 `/pull/N` 在本项目的交付行里匹配，不走索引，落到所属任务的“交付与使用”。外部（非 owned）智能体不在范围内。
+
+`evoloop get '/api/projects/P/jump/refs?q=a,b,c'`（Task a910ee96）是同一个查找的批量读：`q` 是逗号分隔的 1–50 个候选（每个不超过 40 个字符，完整编号、8 位以上十六进制前缀或 `#PR号`），按候选逐个在本项目内找，返回 `{results: {<候选>: {matches, truncated}}}`，每个候选最多保留 2 条 `matches`（1 条直接成链接，2 条以上链到 `/go/` 选择页，0 条保持文字）。超过 50 个、空、过长返回 400；不是项目成员 403/401；别的项目的编号查不到。工作台一页的所有正文候选合并成一次这个请求，用来把正文里的编号做成链接。
 
 ## 调度板与调度事件流
 

@@ -2,7 +2,7 @@
 // (packages/adapter-postgres/src/object-jump.ts): one id prefix or PR number, at most 10 matches, kind order task, document,
 // session, stage, schedule, delivery. Two objects named only here (a task and a document that share their first 8 digits)
 // and one delivery whose artifact is a PR let the browser tests walk the choice list and the PR number.
-import { jumpPrefixRange, jumpResultLimit, parseJumpInput } from "@evoloop/contracts/object-jump";
+import { jumpBatchLimit, jumpPrefixRange, jumpResultLimit, parseJumpInput } from "@evoloop/contracts/object-jump";
 import { agents, id, projectId } from "./common.mjs";
 import * as work from "./work.mjs";
 import * as spaces from "./spaces.mjs";
@@ -33,4 +33,13 @@ export function jump(query) {
     found = objects().filter(o => o.id >= low && o.id <= high).sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind) || (a.id < b.id ? -1 : 1));
   }
   return { query: query.trim(), matches: found.slice(0, jumpResultLimit), truncated: found.length > jumpResultLimit };
+}
+
+/** GET /jump/refs?q=a,b,c: one answer per candidate (two matches at most), the way the real batch read answers; more than 50 is refused. */
+export function jumpRefs(q) {
+  const candidates = [...new Set(q.split(",").map(t => t.trim()).filter(Boolean))];
+  if (candidates.length === 0 || candidates.length > jumpBatchLimit) return { results: {}, refused: "1 to 50 candidates" };
+  const results = {};
+  for (const candidate of candidates) { const r = jump(candidate); results[candidate] = { matches: r.matches.slice(0, 2), truncated: r.matches.length > 2 }; }
+  return { results };
 }

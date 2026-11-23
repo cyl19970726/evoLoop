@@ -46,6 +46,15 @@ export function longestStall(rows: readonly LeaderWorkTask[], now: number): numb
   return days.length ? Math.max(...days) : null;
 }
 
+/** The four figures of 组织自己在处理 one by one, so each can be a link to the task list narrowed to that phase (the same phase keys as the task page's header). */
+export const organisationPhases = [["running", "运行中"], ["rework", "待返工"], ["awaiting_acceptance", "待验收"], ["blocked", "受阻"]] as const;
+export type OrganisationParts = { parts: Array<{ phase: string; label: string; count: number }>; tail: string };
+export function organisationParts(counts: Record<string, number> | undefined, longest: number | null): OrganisationParts | null {
+  if (!counts) return null;
+  const n = (key: string) => counts[key] ?? 0;
+  return { parts: organisationPhases.map(([phase, label]) => ({ phase, label, count: n(phase) })), tail: longest !== null && (n("blocked") + n("rework")) > 0 ? `（最久 ${longest} 天）` : "" };
+}
+
 /** 组织自己在处理：运行中 a · 待返工 b · 待验收 c · 受阻 d（最久 N 天）; the numbers are the work index's own `counts`, as on the task page. */
 export function organisationText(counts: Record<string, number> | undefined, longest: number | null): string {
   if (!counts) return "组织自己在处理：这一项读不到";

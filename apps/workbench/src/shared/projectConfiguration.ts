@@ -13,8 +13,8 @@ export const configurationKeys = {
 export const useProjectRepositories = (projectId: string, options: { enabled?: boolean } = {}) =>
   useProjectQuery(projectId, configurationKeys.repositories, () => api().projectRepositories(projectId), options);
 
-export const useProjectCapabilities = (projectId: string) =>
-  useProjectQuery(projectId, configurationKeys.capabilities, () => api().projectCapabilities(projectId));
+export const useProjectCapabilities = (projectId: string, options: { enabled?: boolean; retry?: false } = {}) =>
+  useProjectQuery(projectId, configurationKeys.capabilities, () => api().projectCapabilities(projectId), options);
 
 export const useProjectMembers = (projectId: string, options: { enabled?: boolean } = {}) =>
   useProjectQuery(projectId, configurationKeys.members, () => api().projectMembers(projectId), options);

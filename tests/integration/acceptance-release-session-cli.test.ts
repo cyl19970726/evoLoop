@@ -69,7 +69,7 @@ test("real CLI, session mode: a stuck arrangement whose message was replied is r
   await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at)
     VALUES($1,$2,$3,'/tmp/release-cli','project','danger-full-access','never','ready',1,$4,$4,$5,'acceptance-agent',now(),now())`, [projectId, sessionId, owner, randomUUID(), randomUUID()]);
   const taskId = randomUUID(), deliveryId = randomUUID();
-  await command("reviewer", { type: "task.create", taskId, title: "Stuck session arrangement", content: "# Stuck", acceptance: "Used", owner, consumer: "named-human", useRequired: true, acceptanceMode: "human_required", acceptanceTarget: "human" });
+  await command("reviewer", { type: "task.create", taskId, title: "Stuck session arrangement", content: "# Stuck\n关闭后下一步：无", acceptance: "Used", owner, consumer: "named-human", useRequired: true, acceptanceMode: "human_required", acceptanceTarget: "human" });
   await command("reviewer", { type: "task.start", taskId, expectedVersion: Number((await workflow.getTask(reviewer, projectId, taskId)).task.version), reason: "start" });
   const task = (await workflow.getTask(reviewer, projectId, taskId)).task;
   await pool.query(`INSERT INTO delivery(project_id,delivery_id,task_id,task_revision_id,artifact_ref,artifact_revision,content_hash,technical_result,technical_evidence,reason,actor_id,created_at)

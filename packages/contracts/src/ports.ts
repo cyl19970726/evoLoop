@@ -100,6 +100,8 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
   getProject(): Promise<Project | null>;
   getDocument(id: string): Promise<Document | null>;
   getDocumentRevision(documentId: string, revisionId: string): Promise<DocumentRevision | null>;
+  /** The newest saved revision of a report Document of this project whose content hash is `contentHash` (lower case); null when there is none (Task 3797cbdd). */
+  findReportRevisionByContentHash?(contentHash: string): Promise<{ documentId: string; revisionId: string; body: string | null } | null>;
   /** Whether this fixed revision was ever published by an immutable adoption decision. */
   hasDocumentAdoption(documentId: string, revisionId: string): Promise<boolean>;
   /** Newest current revision first; the cursor is opaque. `search` matches titles (case-insensitive substring) over every document. */

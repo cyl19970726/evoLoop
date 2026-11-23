@@ -157,7 +157,7 @@ test("scoped HTTP publishes original Issue, creates linked Tasks, and core start
   assert.equal(published.json().status, "applied");
   const childId = id();
   const created = await workerCommand({ type: "task.create", taskId: childId,
-    stageId, title: "Fix source", content: "Use fixed issue", acceptance: "Verify repair", owner: builderRoleId,
+    stageId, title: "Fix source", content: "Use fixed issue\n关闭后下一步：无", acceptance: "Verify repair", owner: builderRoleId,
     consumer: "owner", evidence: "Check result", stopCondition: "Done", documentIds: [issueId] });
   assert.equal(created.statusCode, 200, created.body);
   assert.equal(created.json().status, "applied");
@@ -169,7 +169,7 @@ test("scoped HTTP publishes original Issue, creates linked Tasks, and core start
     item.documentId === issueId)?.revisionId, issueRevisionId);
   const laterChildId = id();
   const laterChild = await workerCommand({ type: "task.create", taskId: laterChildId, stageId,
-    title: "Later follow-up", content: "Use original issue", acceptance: "Verify repair", owner: builderRoleId,
+    title: "Later follow-up", content: "Use original issue\n关闭后下一步：无", acceptance: "Verify repair", owner: builderRoleId,
     consumer: "owner", evidence: "Check result", stopCondition: "Done", documentIds: [issueId] });
   assert.equal(laterChild.statusCode, 200, laterChild.body);
   const revised = await workflow.execute(owner, { type: "document.revise", projectId, operationId: id(),

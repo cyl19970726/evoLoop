@@ -85,6 +85,8 @@ Task 承载工作承诺，Session 承载持续协作，Document 承载可核的�
 | `--logo` / `--on-logo` | Logo 蓝 | `#2a52a8` / `#ffffff` | `#90aef3` / `#0f1216` |
 | `--radius-card` / `--radius-control` | 容器 / 控件圆角 | 6px / 4px | 同左 |
 
+代码块（Task 5415aed3）：块头是一行小字（语言名、图标按钮“自动换行”“复制代码”），按钮用文字色加透明度，不另起颜色；`diff`、`patch` 围栏的增、删、片段头三类行只用 `--accent`、`--danger` 与 `--text-secondary`，不新增颜色。不引入通用语法高亮库。
+
 对比度：`palette.test.ts` 覆盖上表新变量，文字与底的最低值为 4.51:1（浅色 `--text-muted` 落在 `--selected-on-shell` 上），主按钮默认、悬停、按下三态都不低于 4.5:1。
 
 ## 界面用语

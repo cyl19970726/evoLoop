@@ -88,6 +88,8 @@ const nativeControlExceptions: ReadonlyArray<{ file: string; control: string; co
     reason: "The router's error page is in the first load and must render even when a page chunk failed; no design-system import." },
   { file: "app/PageBoundary.tsx", control: "<button", count: 4,
     reason: "The page error boundary wraps every page from the first load; same reason as the router's error page. Four buttons: 重试显示 and 复制错误信息 (a render error), and 刷新页面 and 重试 (a page chunk that cannot be fetched)." },
+  { file: "shared/ui/codeBlockHtml.ts", control: "<button", count: 2,
+    reason: "A fenced code block inside Markdown is an HTML string (dangerouslySetInnerHTML), so its head buttons (自动换行, 复制代码) are markup, not JSX; one delegated handler in codeBlock.tsx drives them and the classes follow the icon Button." },
 ];
 // JSX and createElement (h) alike; confirm() is the browser's (bare or on window), not a method of the same name.
 const nativeControls: ReadonlyArray<[string, RegExp]> = [
