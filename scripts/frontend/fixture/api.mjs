@@ -62,6 +62,7 @@ function projectRoutes(params) {
     "/schedules": spaces.schedules.list(),
     "/scheduling/status": spaces.schedules.status(),
     "/task-timings": page(spaces.timedTasks()),
+    "/routine-health": spaces.routineHealth(),
     "/evaluations": spaces.evaluations.list(),
     "/message-connectors/routes": spaces.connectors.routes(),
     "/discussions": team.discussionList(params.get("kind")),

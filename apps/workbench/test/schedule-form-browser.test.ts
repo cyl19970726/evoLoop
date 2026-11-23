@@ -35,6 +35,9 @@ test("创建日程 and 保存日程修订: role and grant by name, a local time 
         else if (url.pathname === base) value = { id: projectId, title: "日程表单项目", createdAt: stamp };
         else if (url.pathname === `${base}/impacts`) value = [];
         else if (url.pathname === `${base}/schedules`) value = schedules;
+        else if (url.pathname === `${base}/routine-health`) value = { projectId, observedAt: stamp, complete: true, items: (schedules as Array<Record<string, any>>).map(item => ({
+          kind: "schedule", id: item.id, title: item.revision.template.title, state: item.state, rule: item.revision.rule, timezone: item.revision.timezone, repeat: null,
+          rootTaskId: null, misfire: "latest", lastTrigger: null, consecutiveSkips: 0, skippedTotal: null, nextAtUtc: null, overdue: null, lastTaskOpen: false, watermarkUtc: null })) };
         else if (url.pathname === `${base}/scheduling/status`) value = { state: "idle", lastTickAt: stamp, lastError: null, lastCreated: 0,
           grants: [{ projectId, actorId: "reader", scopeId: "acceptance-schedules", roleId }] };
         else if (url.pathname === `${base}/roles`) value = { items: [role(roleId, "巡检职责"), role(otherRole, "发布职责")], nextCursor: null };
@@ -142,6 +145,8 @@ test("创建日程 and 保存日程修订: role and grant by name, a local time 
     assert.equal(created.template.acceptanceMode, "independent_agent");
 
     // The revision form opens on the schedule's own clock and names; pausing sends the same rule and grant.
+    // The first screen is the 例行健康 table: a row opens the schedule's detail.
+    await page.getByRole("region", { name: "例行健康" }).getByRole("button", { name: "季度巡检" }).click();
     const card = page.locator(".schedule-definition");
     await card.getByText("季度巡检", { exact: true }).first().waitFor();
     await card.locator("summary", { hasText: "修订规则、暂停或恢复" }).click();
@@ -213,7 +218,7 @@ test("保存日程修订 without touching the times sends them as stored: the la
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     const errors: string[] = [];
     page.on("pageerror", (error: Error) => errors.push(error.message));
-    await page.goto(`${origin}/p/${projectId}/schedules`);
+    await page.goto(`${origin}/p/${projectId}/schedules?schedule=${scheduleId}`);
     await page.getByLabel("访问令牌").fill("fixture-token");
     await page.getByRole("button", { name: "进入", exact: true }).click();
     const card = page.locator(".schedule-definition");

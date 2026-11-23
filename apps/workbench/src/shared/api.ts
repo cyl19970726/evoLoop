@@ -246,6 +246,13 @@ export function api(token = "", timeoutMs = 15000) {
         throw new ApiError(0, "定时任务响应与当前项目不符；请重新读取。");
       return page;
     },
+    /** 例行健康: every schedule and timed Task series of the project with its last trigger, skips in a row and next time, in one read. */
+    routineHealth: async (p: string, signal?: AbortSignal) => {
+      const health = await requestJson<import("@evoloop/contracts/routine-health").RoutineHealth>(token, `${projectPath(p)}/routine-health`, timeoutMs, { signal });
+      if (!health || health.projectId !== p || !Array.isArray(health.items) || health.items.some(item => typeof item.id !== "string" || typeof item.title !== "string" || !["active", "paused", "stopped"].includes(item.state)))
+        throw new ApiError(0, "例行健康响应与当前项目不符；请重新读取。");
+      return health;
+    },
     /** Drain mode: instance-wide state of the release gate (not project scoped). */
     /** Drain state. Behind the Hub (which forwards only a project's own API) it is read at the project's path; a local login reads the instance path as before. */
     instanceDrain: (signal?: AbortSignal, projectId?: string) => requestJson<import("@evoloop/contracts/instance-drain").InstanceDrainView>(token, isBehindHub() && projectId ? `${projectPath(projectId)}/instance-drain` : "/api/instance/drain", timeoutMs, { signal }),
