@@ -14,7 +14,7 @@ import { RoleName } from "../../shared/ui/RecordName";
 import { readOutcome, type ProjectOutcome } from "./contextPresentation";
 import { VersionFold } from "./MilestonesBlock";
 import { FoldLine, OrganisationLine, OutcomeBlock, PriorityBlock, UseBlock } from "./OverviewTop";
-import { feedbackCandidates, longestStall, organisationText, priorityLimit, stalledTasks } from "./overviewFirstScreen";
+import { feedbackCandidates, longestStall, organisationParts, organisationText, priorityLimit, stalledTasks } from "./overviewFirstScreen";
 import { dueCell, StagesBlock, stageName, useStageProjection } from "../stages";
 import { readOverviewParam, writeOverviewParam } from "./overviewAddress";
 
@@ -158,7 +158,7 @@ export function ProjectContext({ token, projectId, actorId, refresh, active, flo
     <OutcomeBlock projectId={projectId} outcomes={value?.outcomes ?? []} state={outcomeState} />
     {value?.retainedUse && <p className={problem}>结果是否有效显示的是上次核对的反馈，读于 {value.useObservedAt ? date(value.useObservedAt) : "上次读取"}；本次尚未确认它仍是当前交付。</p>}
     <div className="@container border-t border-border pt-3"><StagesBlock projectId={projectId} active={active} /></div>
-    <OrganisationLine text={value ? organisationText(value.counts, longestStall(value.rows, now)) : "组织自己在处理：正在读取"}>{flowGlance}</OrganisationLine>
+    <OrganisationLine projectId={projectId} parts={value ? organisationParts(value.counts, longestStall(value.rows, now)) : null} text={value ? organisationText(value.counts, longestStall(value.rows, now)) : "组织自己在处理：正在读取"}>{flowGlance}</OrganisationLine>
     <FoldLine label="当前目标" summary={`目标：${goalTitle}`} data-overview-goal="">
     <section className={cn(card, "overview-goal")} aria-label="当前目标">
       {title(<Target />, "当前目标", <a href={href(projectId, "journey")} className="ml-auto flex items-center gap-1 text-caption text-text-secondary hover:text-foreground">目标与阶段 <ArrowRight size={13} aria-hidden="true" /></a>)}

@@ -143,9 +143,9 @@ test("overview first screen: the rows, the counts and the links", { skip }, asyn
     assert.ok(await page.locator("[data-overview-goal]").innerText().then(text => text.includes("阶段交付") || text.includes("没有读到正在推进的阶段")), "the goal card keeps its content");
     // The right column is closed by default at every width.
     assert.equal(await page.getByRole("complementary", { name: "右栏" }).count() === 0 || !(await page.getByRole("complementary", { name: "右栏" }).isVisible()), true, "the information column starts closed");
-    // The header links to the latest 复盘; there is no 每日简报 entry yet.
+    // The header links to the latest 复盘 and, the fixture having a 简报, to the latest 每日简报 (overview-finish-ci-browser.test.ts covers the choice).
     assert.equal(await page.locator("[data-overview-latest-review]").count(), 1);
-    assert.equal(await page.getByRole("link", { name: "每日简报" }).count(), 0);
+    assert.equal(await page.getByRole("link", { name: "每日简报" }).count(), 1);
     // The blocks come in the same order at both widths, and no rule reorders them.
     const order = await page.evaluate(`[...document.querySelectorAll("[data-overview-block], [data-overview-stages], [data-overview-goal], [data-overview-version]")].map(node => node.getAttribute("data-overview-block") ?? (node.hasAttribute("data-overview-stages") ? "stages" : node.hasAttribute("data-overview-goal") ? "goal" : "version"))`) as string[];
     orders.push(order);

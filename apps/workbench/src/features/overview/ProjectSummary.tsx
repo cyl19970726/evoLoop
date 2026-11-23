@@ -20,7 +20,7 @@ import { visibleWorkGroups, type WorkTaskStatus } from "../../shared/workStatusP
 import { formatScheduled, nextTimingLabel, repeatLabel } from "../workflow";
 
 import { ProjectContext } from "./ProjectContext";
-import { LatestReviewLink } from "./OverviewTop";
+import { LatestBriefLink, LatestReviewLink } from "./OverviewTop";
 
 interface Snapshot {
   scope: string;
@@ -202,13 +202,13 @@ export function ProjectSummary({ token, projectId, actorId, refresh, active, flo
   const empty = (text: string) => <p className={muted}>{text}</p>;
   const card = "flex min-w-0 flex-col rounded-xl bg-raised px-4 py-3 border border-border compact:px-5";
   return <div data-ui="" className="project-overview mx-auto flex w-full max-w-[980px] flex-col gap-3 px-4 py-3 compact:gap-5 compact:px-8 compact:py-7">
-    <header className="flex items-start justify-between gap-3 compact:flex-wrap">
-      <div className="min-w-0">
+    <header className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+      <div className="min-w-0 flex-1 basis-60">
         <h1 className="text-title font-semibold text-foreground" tabIndex={-1}>项目总览</h1>
         <p className="mt-1 text-small text-text-secondary" data-page-role="">总览：差距与下一判断。阶段全文、任务与回看在<a className="text-primary hover:underline" href={href(projectId, "journey")}>目标与阶段</a>。</p>
         <p className={cn(muted, "mt-1")}>{read}</p>
       </div>
-      <div className="flex shrink-0 items-center gap-3"><LatestReviewLink projectId={projectId} active={active} />
+      <div className="flex shrink-0 flex-wrap items-center gap-3"><LatestBriefLink projectId={projectId} active={active} /><LatestReviewLink projectId={projectId} active={active} />
         <Button onClick={() => setReread(value => value + 1)} disabled={pending}><RefreshCw aria-hidden="true" className={pending ? "animate-spin" : undefined} />重新读取</Button></div>
     </header>
     {error && <Notice tone="error">摘要读取失败：{error}。{current ? "以下保留上次读回，不能视为当前状态。" : "请重试或进入原页面核对。"}</Notice>}
