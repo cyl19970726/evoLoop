@@ -60,9 +60,13 @@ test("ids and PR numbers in text become links to the objects they name", { skip 
     assert.equal((await hrefOf(scope, "PR #12"))?.href, `${base}/tasks/${t1}?tab=delivery`, "PR #12");
     assert.equal(await hrefOf(scope, ids.missing!), null, "a nonexistent 8-hex is text");
     assert.equal(await hrefOf(scope, ids.date!), null, "a date is text");
+    assert.equal(await hrefOf(scope, ids.foreign!), null, "an id that only another project has is text");
+    assert.equal(await scope.locator("a[href^='javascript:' i]").count(), 0, "javascript: link syntax gives no link");
     assert.equal((await hrefOf(scope, ids.clash!))?.href, `${base}/go/${ids.clash}`, "a shared prefix goes to the choice page");
     const url = await hrefOf(scope, "https://example.test/ref/1");
     if (url) assert.equal(url.href, "https://example.test/ref/1", "a URL stays an external link");
+    // the fence and the single backticks in plain text are code too
+    assert.equal(await scope.locator("a", { hasText: /^`|`$/ }).count(), 0);
     if (fenced) {
       const inline = scope.locator("a code", { hasText: ids.task!.slice(0, 8) });
       assert.equal(await inline.count(), 1, "inline code is linked, the fenced block is not");
@@ -95,6 +99,10 @@ test("ids and PR numbers in text become links to the objects they name", { skip 
   await delivery.page.waitForFunction(() => document.querySelectorAll("a[title^='任务：']").length > 0);
   assert.ok(delivery.reads.length >= 1 && delivery.reads.length <= 2, `delivery tab reads ${delivery.reads.length} times`);
   await expectFive(delivery.page.locator("main").first(), false);
+  // each plain text holds the id three times (a sentence, backticks, a fence): only the sentence is a link
+  const plainTexts = delivery.page.locator("main p.whitespace-pre-wrap", { hasText: "行内代码", hasNotText: /^验收：/ });
+  assert.ok(await plainTexts.count() >= 1, "the evidence text is there");
+  for (const text of await plainTexts.all()) assert.equal(await text.locator("a", { hasText: ids.task!.slice(0, 8) }).count(), 1, "backticks and a fence in plain text are not linked");
   await delivery.context.close();
 
   // ---- a document ----

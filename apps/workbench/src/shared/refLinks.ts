@@ -92,3 +92,10 @@ export function useRefAnswers(projectId: string | undefined, keys: readonly stri
   useEffect(() => { if (projectId && enabled && joined) askRefs(projectId, joined.split("\n")); }, [projectId, enabled, joined]);
   return key => projectId && enabled ? answers.get(slot(projectId, key)) : undefined;
 }
+
+/** Candidates of a plain text (no Markdown): those inside a ``` fence or between single backticks are code and are skipped. */
+export function plainRefHits(text: string): RefHit[] {
+  const code: Array<[number, number]> = [];
+  for (const match of text.matchAll(/```[\s\S]*?(?:```|$)|`[^`\n]*`/g)) code.push([match.index!, match.index! + match[0].length]);
+  return refHits(text).filter(hit => !code.some(([from, to]) => hit.index >= from && hit.index < to));
+}

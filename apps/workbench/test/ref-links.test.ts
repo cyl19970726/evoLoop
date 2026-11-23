@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { refHits, refTarget, type RefAnswer } from "../src/shared/refLinks.ts";
+import { plainRefHits, refHits, refTarget, type RefAnswer } from "../src/shared/refLinks.ts";
 import { markdownRefKeys, splitMarkdown } from "../src/shared/ui/markdownContent.ts";
 
 const project = "70000001-0000-4000-8000-000000000001";
@@ -35,4 +35,9 @@ test("Markdown: inline code is a candidate, a fenced block and an existing link 
   assert.doesNotMatch(html, /href="javascript:/i, "javascript: syntax gives no link");
   assert.doesNotMatch(html, /<a [^>]*>20261123/, "none stays text");
   assert.equal(splitMarkdown(source, { projectId: project }).map(part => part.value).join("").includes("/tasks/"), false, "without answers the text is as written");
+});
+
+test("plain text: a ``` fence and single backticks are code, so their ids are not candidates", () => {
+  const text = "任务 70000202 `70000203` 和\n```\n70000204\n```\n后面 70000205 ``` 没关的围栏 70000206";
+  assert.deepEqual(plainRefHits(text).map(hit => hit.key), ["70000202", "70000205"]);
 });
