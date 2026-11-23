@@ -474,6 +474,8 @@ Leader 收到的是“Leader 通知包”消息：先 `get /api/projects/PROJECT
 
 定时直派的三条写命令（`command schema` 取结构，都要项目管理权限和决定权）：`schedule.directList.set`（某个 Role 的直派名单）、`schedule.dispatch.set`（某个日程交 Leader 还是直接进队伍，含等待上限与每日预算）、`schedule.directEntry.withdraw`（撤下一个定时项，必须选 `cancel` 或 `to_leader`；普通 `line.remove` 拒绝定时项）。直派的 Task 不发待分诊，直派与跳过读 `get /api/projects/PROJECT/leader-records?kind=direct_dispatched`（或 `direct_dispatch_skipped`）。
 
+例行健康用一次只读请求读全部：`get /api/projects/PROJECT/routine-health`（项目成员读取）按“逾期、连续跳过两次及以上、上次任务还开着、其余按下次时间”的顺序返回每个日程和定时任务系列的上次触发（时间、创建或跳过及原因、任务及其状态）、连续跳过次数、下次时间和逾期标记；只读，不新增迁移，`complete:false` 表示定时任务读到上限被截断。
+
 直派事实的只读入口只要项目成员读取，不要项目管理权限：`read schedule SCHEDULE --project PROJECT --dispatch` 读当前策略（无策略时为 `null`）；`read role ROLE --project PROJECT --direct-list` 读该 Role 的名单；`read schedule SCHEDULE --project PROJECT --dispatches [--limit 1..100 --cursor CURSOR]` 从旧到新分页读每次触发，`plannedAtUtc` 与 `read schedule SCHEDULE --occurrences` 的同一时间对应。HTTP 路径分别是 `/api/projects/PROJECT/schedules/SCHEDULE/dispatch`、`/roles/ROLE/direct-list`、`/schedules/SCHEDULE/dispatches`；游标只属于原项目和日程，不能跨项目复用。
 
 ## 待我决定
