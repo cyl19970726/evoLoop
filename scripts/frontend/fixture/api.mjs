@@ -32,8 +32,10 @@ function projectRoutes(params) {
     "/documents": page(work.documentList().filter(d => !params.get("kind") || d.kind === params.get("kind"))),
     "/goals": page([work.goalRecord("g1"), work.goalRecord("g2")]),
     "/stages": ["s1", "s2", "s3"].map(work.stageRecord),
-    // The stage projection the 新建任务 select reads: s1 has a short name and a due date, s2 a legacy empty short name.
-    "/stages/milestones": { stages: [{ ...work.stageRecord("s1"), shortName: "首个可用版本", dueOn: "2026-12-01" }, { ...work.stageRecord("s2"), shortName: null, dueOn: null }, { ...work.stageRecord("s3"), shortName: "团队试用", dueOn: null }] },
+    // The stage projection (总览的阶段块、目标与阶段、新建任务的阶段选择): s1 is the current stage, s2 an old reviewed stage with no short name, s3 not yet accepted.
+    "/stages/milestones": work.stageProjection(),
+    // The verification ladder of the project's roadmap: M0.5 has no status in the roadmap table, so it says 未登记.
+    "/ladder": work.ladder(),
     "/session-work": agents.directory(params.get("search") ?? ""),
     "/session-work/changes": { items: [], nextCursor: "12", hasMore: false, resetRequired: false, metadata: agents.directory().metadata },
     "/resident-queues": agents.residentQueues(),

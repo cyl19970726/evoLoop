@@ -11,9 +11,7 @@ export const stageStatus: Record<Stage["state"], StatusPresentation> = {
   reviewed: { tone: "done", label: "已回看" },
 };
 
-export const nextChoiceLabel: Record<StageReview["nextChoice"], string> = {
-  continue: "继续当前工作", newTask: "提出后续任务", research: "补证再判断", stop: "停止并保留理由",
-};
+export { nextChoiceLabel } from "../stages";
 
 type StageTask = Pick<LeaderWorkTask, "phase" | "taskState">;
 const isOpen = (task: Pick<LeaderWorkTask, "taskState">) => task.taskState === "todo" || task.taskState === "in_progress";
