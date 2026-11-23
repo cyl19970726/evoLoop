@@ -29,6 +29,7 @@ import { PageActive } from "../shared/ui/pageActive";
 import { AuthGate } from "./entry/AuthGate";
 import { useInboxCount } from "../features/workflow/inboxReads";
 import { shellInboxCount } from "../features/workflow/inboxModel";
+import { shortAddress } from "../features/jump/jumpAddress";
 
 // Each page is its own chunk: the first load carries login, the shell and shared code only.
 // lazy() accepts any component; the props stay typed through M[K].
@@ -58,6 +59,8 @@ const ArrangementOperations = named(() => import("../features/team/ArrangementOp
 // The execution queue (features/workflow) shown in an agent's right column; passed in so the two features do not import each other.
 const ResidentQueuePanel = named(() => import("../features/workflow"), "ResidentQueuePanel");
 const ConnectorPage = named(() => import("../features/connectors/ConnectorPage"), "ConnectorPage");
+const ResolveAddress = named(() => import("../features/jump/ResolveAddress"), "ResolveAddress");
+const GoPage = named(() => import("../features/jump/ResolveAddress"), "GoPage");
 const NotFoundPage = named(() => import("./NotFoundPage"), "NotFoundPage");
 // The confirmation dialog (leaving a project or signing out with drafts) loads after login, with the design system.
 const loadConfirmHost = () => named(() => import("../shared/ui/ConfirmHost"), "ConfirmHost");
@@ -363,6 +366,10 @@ function WorkspacePages({ route, context, refresh, operations }: { route: Route;
   // 统筹安排 is the agents space's page while no agent is selected: the same content at `/sessions` and at its older address `/arrangement`.
   const arrangementPage = () => <ArrangementPage context={context} refresh={refresh} flow={({ leaderSessionId, active: shown }) => <FlowPage token={token} projectId={projectId} leaderSessionId={leaderSessionId} active={shown} />} operations={<ArrangementOperations context={context} refresh={refresh} />} />;
   function page(r: Route, active: boolean) {
+    // An id written short in the address (Task 5eb93990) is looked up before any page reads it; a page in the background looks nothing up.
+    const short = shortAddress(r, active ? currentPath() : "");
+    if (short) return <ResolveAddress token={token} projectId={projectId} short={short} active={active} />;
+    if (r.section === "go" && r.id) return <GoPage token={token} projectId={projectId} text={r.id} active={active} />;
     if (r.section === "not-found") return <NotFoundPage projectId={projectId} path={currentPath()} />;
     if (r.section === "documents") return <DocumentIndex context={context} />;
     if (r.section === "work") return <TaskWorkspace context={context} refresh={refresh} active={active} />;
