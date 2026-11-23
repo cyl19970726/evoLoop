@@ -20,6 +20,7 @@ import { visibleWorkGroups, type WorkTaskStatus } from "../../shared/workStatusP
 import { formatScheduled, nextTimingLabel, repeatLabel } from "../workflow";
 
 import { ProjectContext } from "./ProjectContext";
+import { LatestReviewLink } from "./OverviewTop";
 
 interface Snapshot {
   scope: string;
@@ -167,7 +168,7 @@ function PanelSection({ title, children }: { title: string; children: React.Reac
   </section>;
 }
 
-export function ProjectSummary({ token, projectId, refresh, active, flowGlance }: { token: string; projectId: string; refresh: number; active: boolean; flowGlance?: React.ReactNode }) {
+export function ProjectSummary({ token, projectId, actorId, refresh, active, flowGlance }: { token: string; projectId: string; actorId: string; refresh: number; active: boolean; flowGlance?: React.ReactNode }) {
   const scope = `${projectId}:${token}`;
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [pending, setPending] = useState(false);
@@ -207,13 +208,12 @@ export function ProjectSummary({ token, projectId, refresh, active, flowGlance }
         <p className="mt-1 text-small text-text-secondary" data-page-role="">总览：差距与下一判断。阶段全文、任务与回看在<a className="text-primary hover:underline" href={href(projectId, "journey")}>目标与阶段</a>。</p>
         <p className={cn(muted, "mt-1")}>{read}</p>
       </div>
-      <Button onClick={() => setReread(value => value + 1)} disabled={pending}><RefreshCw aria-hidden="true" className={pending ? "animate-spin" : undefined} />重新读取</Button>
+      <div className="flex shrink-0 items-center gap-3"><LatestReviewLink projectId={projectId} active={active} />
+        <Button onClick={() => setReread(value => value + 1)} disabled={pending}><RefreshCw aria-hidden="true" className={pending ? "animate-spin" : undefined} />重新读取</Button></div>
     </header>
     {error && <Notice tone="error">摘要读取失败：{error}。{current ? "以下保留上次读回，不能视为当前状态。" : "请重试或进入原页面核对。"}</Notice>}
     {current?.failedNames ? <Notice tone="waiting">有 {current.failedNames} 个名称未读回，显示为“名称暂不可读”；完整标识在各项的来源里，原任务与承载入口仍保留。</Notice> : null}
-    <ProjectContext token={token} projectId={projectId} refresh={refresh + reread} active={active} />
-
-    {flowGlance}
+    <ProjectContext token={token} projectId={projectId} actorId={actorId} refresh={refresh + reread} active={active} flowGlance={flowGlance} />
 
     <section className={cn(card, "overview-current-work")} aria-label="当前工作">
       <div className="flex items-center justify-between gap-2 pb-1"><h2 className="text-label font-semibold text-foreground">当前工作</h2><a href={href(projectId, "work")} className="flex items-center gap-1 text-caption text-text-secondary hover:text-foreground">全部工作 <ArrowRight size={13} aria-hidden="true" /></a></div>

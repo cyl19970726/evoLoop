@@ -10,9 +10,9 @@ import { DocumentFilters } from "./DocumentFilters";
 import { DocumentRail } from "./DocumentRail";
 import { ReadingSpaceSwitch } from "../../shared/ui/ReadingSpaceSwitch";
 import { DocumentTable } from "./DocumentTable";
-import { kindLabel, kindFilters } from "./documentPresentation";
-import { currentPath } from "../../shared/navigation";
-import { useDocumentListState } from "./documentListState";
+import { kindLabel, listConditionsFrom, listQuery } from "./documentPresentation";
+import { currentPath, navigate, onNavigate, replaceQuietly } from "../../shared/navigation";
+import { searchRestMs, useDocumentListState } from "./documentListState";
 import { useDocumentList } from "./useDocumentList";
 import { useRereadOnReturn } from "../../shared/ui/rereadOnReturn";
 import { UploadDocument } from "./UploadDocument";
@@ -21,12 +21,35 @@ export function DocumentIndex({ context }: { context: MutationContext }) {
   const { projectId } = context;
   const scope = `${context.principal.actorId}:${projectId}`;
   const [state, update] = useDocumentListState(scope);
-  // An address may name the type filter (`?kind=organization_review`, where 组织复盘 now opens); it is applied once when the page opens.
+  // The address carries the list conditions (`?kind=brief&status=draft&q=关键词`; 组织复盘 opens `?kind=organization_review`): an address
+  // that names any wins when the page opens, a bare one keeps what this tab had and writes it back. After that each change is a
+  // history entry, so a refresh, a shared link and back all give the same list.
+  const listPath = `/p/${projectId}/documents`;
+  const [synced, setSynced] = useState(false);
   useEffect(() => {
-    const kind = new URLSearchParams(currentPath().split("?")[1] ?? "").get("kind");
-    if (kind && kindFilters.some(([key]) => key === kind)) update({ kind: kind as typeof state.kind });
+    const named = listConditionsFrom(currentPath().split("?")[1] ?? "");
+    if (named.named) update({ kind: named.kind, status: named.status, query: named.query });
+    else { const wanted = listQuery(state); if (wanted) replaceQuietly(`${listPath}?${wanted}`); }
+    setSynced(true);
+    return onNavigate(() => {
+      const [path, query = ""] = currentPath().split("?");
+      if (path !== listPath) return;
+      const back = listConditionsFrom(query);
+      update({ kind: back.kind, status: back.status, query: back.query });
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  useEffect(() => {
+    if (!synced) return;
+    const [path, query = ""] = currentPath().split("?");
+    if (path !== listPath) return;
+    const wanted = listQuery(state), shown = listConditionsFrom(query);
+    if (wanted === listQuery(shown)) return;
+    // Typing rests before it becomes an address, so one word is one history entry rather than one per letter.
+    const timer = window.setTimeout(() => navigate(`${listPath}${wanted ? `?${wanted}` : ""}`), state.query.trim() === shown.query ? 0 : searchRestMs);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [synced, state.kind, state.status, state.query]);
   const list = useDocumentList(projectId, state, update);
   useRereadOnReturn(() => void list.reread());
   const railShown = useContextRailShown();

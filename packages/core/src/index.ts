@@ -9,7 +9,7 @@ import { taskTimingScopeId } from "@evoloop/contracts/task-timing";
 export { assessTaskAttention, trialAttentionThreshold, trialAttentionThresholdMs } from "./task-attention.js";
 import type {
   AppliedResult, BasisDecision, BasisSet, Command, CommandInput, CommandResult, Document, DocumentDecision,
-  DocumentDetail, DocumentRevision, DocumentRevisionPage, DocumentStatusFilter, DocumentTaskReference, Impact, Operation, OutboxEvent, Page, Principal, Project,
+  DocumentDetail, DocumentListKind, DocumentRevision, DocumentRevisionPage, DocumentStatusFilter, DocumentTaskReference, Impact, Operation, OutboxEvent, Page, Principal, Project,
   Task, TaskDetail, TaskDocumentLink, TaskRevision, RuntimeRunRecord,
 } from "@evoloop/contracts";
 import { parseQueueHandoff, type QueueHandoff } from "@evoloop/contracts/runtime-handoff";
@@ -33,6 +33,7 @@ import { applyDecisionRequest } from "./decision-requests/index.js";
 import type { SessionAssignmentCommand } from "@evoloop/contracts/session-assignments";
 import type { DomainRoute, HostLink } from "@evoloop/contracts/resident-hosts";
 import { applySchedule } from "./scheduling/commands.js";
+import { buildRoutineHealth } from "./scheduling/health.js";
 import { applyScheduleDispatch } from "./scheduling/dispatch.js";
 import { applyDiscussion } from "./discussions.js";
 import { applyTaskCollaboration, taskAnswerInputBlock } from "./task-collaboration.js";
@@ -334,7 +335,7 @@ export class WorkflowService {
       case "document.create": {
         if (await tx.getDocument(command.documentId)) throw new DomainError("ALREADY_EXISTS", "Document already exists");
         if (command.kind === "task") throw new DomainError("TASK_CONTENT_OWNED", "Task documents are created through task.create");
-        if (command.origin && command.kind !== "issue" && command.kind !== "report" && command.kind !== "organization_review")
+        if (command.origin && command.kind !== "issue" && command.kind !== "report" && command.kind !== "organization_review" && command.kind !== "brief")
           throw new DomainError("INVALID_ORIGIN", "Only issue and report documents may cite a Task or Run origin");
         requireBody(command.body);
         let origin: Document["origin"] = null;
@@ -1177,9 +1178,9 @@ export class WorkflowService {
   listTasks(principal: Principal, projectId: string, limit?: number, cursor?: string): Promise<Page<Task>> {
     return this.read(principal, projectId, (reader) => reader.listTasks(pageLimit(limit), cursor));
   }
-  listDocuments(principal: Principal, projectId: string, limit?: number, cursor?: string, kind?: Document["kind"],
-    status?: DocumentStatusFilter): Promise<Page<Document>> {
-    return this.read(principal, projectId, (reader) => reader.listDocuments(pageLimit(limit), cursor, kind, status));
+  listDocuments(principal: Principal, projectId: string, limit?: number, cursor?: string, kind?: DocumentListKind,
+    status?: DocumentStatusFilter, search?: string): Promise<Page<Document>> {
+    return this.read(principal, projectId, (reader) => reader.listDocuments(pageLimit(limit), cursor, kind, status, search));
   }
   listDocumentTaskReferences(principal: Principal, projectId: string, documentId: string, limit?: number, cursor?: string): Promise<Page<DocumentTaskReference>> {
     return this.read(principal, projectId, async reader => {
@@ -1420,6 +1421,24 @@ export class WorkflowService {
   listSchedules(principal: Principal, projectId: string) { return this.read(principal, projectId, reader => reader.listSchedules()); }
   listScheduleRevisions(principal: Principal, projectId: string, scheduleId: string) { return this.read(principal, projectId, async reader => { required(await reader.getSchedule(scheduleId), "Schedule"); return reader.listScheduleRevisions(scheduleId); }); }
   listScheduleOccurrences(principal: Principal, projectId: string, scheduleId: string) { return this.read(principal, projectId, async reader => { required(await reader.getSchedule(scheduleId), "Schedule"); return reader.listOccurrences(scheduleId); }); }
+  /** 例行健康: every schedule and timed series of the project in one read (no per-routine reads); read-only and derived. */
+  getRoutineHealth(principal: Principal, projectId: string): Promise<import("@evoloop/contracts/routine-health").RoutineHealth> {
+    return this.read(principal, projectId, async reader => {
+      if (!reader.scheduleHealth) throw new DomainError("CAPABILITY_UNAVAILABLE", "Routine health reads are not configured");
+      const [schedules, facts] = await Promise.all([reader.listSchedules(), reader.scheduleHealth.scheduleHealthFacts()]);
+      const series: import("@evoloop/contracts/task-timing").TaskTimingSeriesSummary[] = [];
+      let cursor: string | undefined, complete = true;
+      // At most 500 timed series in one answer; past that the answer says it is not whole.
+      for (let page = 0; reader.taskTiming; page++) {
+        const read = await reader.taskTiming.list(100, cursor);
+        series.push(...read.items);
+        if (!read.nextCursor) break;
+        if (page >= 4) { complete = false; break; }
+        cursor = read.nextCursor;
+      }
+      return buildRoutineHealth({ projectId, schedules, facts, series, now: new Date().toISOString(), complete });
+    });
+  }
   getScheduleDispatchPolicy(principal: Principal, projectId: string, scheduleId: string) {
     return this.read(principal, projectId, async reader => {
       required(await reader.getSchedule(scheduleId), "Schedule");

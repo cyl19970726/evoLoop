@@ -58,10 +58,13 @@ Role 的运行时与 skill 用 `role runtime show ROLE_UUID --project UUID` 实�
 npm run --silent cli -- help
 npm run --silent cli -- session
 npm run --silent cli -- list tasks --project "$PROJECT_ID" --limit 20
+npm run --silent cli -- list documents --project "$PROJECT_ID" --kind brief --search "每日简报" --limit 20
 npm run --silent cli -- task "$TASK_ID" --project "$PROJECT_ID"
 npm run --silent cli -- context "$TASK_ID" --project "$PROJECT_ID"
 npm run --silent cli -- command schema task.create
 ```
+
+`list documents` 按当前修订时间倒序返回（每行带 `updatedAt`），翻页用返回的不透明 `nextCursor`（不是文档编号，原样传回 `--cursor`）。`--kind` 取 `task`、`issue`、`spec`、`discussion`、`report`、`organization_review`、`brief`（简报），或两个关系筛选：`delivery_report`（被某项任务的交付当作产物）、`other_report`（类型为 report 且不是交付产物）；`--status` 取 `draft`、`published`、`archived`、`active`（未归档）；`--search` 是标题包含的文字，覆盖全部文档。用新类型保存：`document.create` 的 `kind` 填 `brief`；不存在的类型在本地和服务端都被拒绝。
 
 `task UUID --history` 展示已保存的真实修订及当时状态；`document UUID --revision UUID`、`original DOCUMENT_UUID --revision UUID [--out NEW_DIRECTORY]` 指向固定原件。`context` 应带回 Task 的封存依据及可读来源，并明确 `complete` 或逐项 `partial`；总读取预算为 16 MiB，超限时列出未读固定 ID，可按其修订逐项调用 `original`。来源失败时不可把最近版本猜作任务依据。HTML 与资源包导出只进入调用者指定的私有**新目录**，其父目录须已存在；可放在仓库外，或明确被 Git 忽略的本机目录，不公开原件。对于知识页、候选、运行、负责人讨论、日程等，按 `list`/`read` 的实际帮助读取；固定来源、未采纳候选和已发布认识不得混同。普通 `get /api/...` 保留为同源只读兼容入口。
 
@@ -470,6 +473,8 @@ Leader 收到的是“Leader 通知包”消息：先 `get /api/projects/PROJECT
 通知有级别（立即/汇总，见[接口合同](../architecture/contracts.md#leader-通知层)）：立即项在包里行首标“立即·”，不等 60 秒、排在前面，来源是验收安排受阻、提交受阻、Run 结束未提交、Task 提问与阻塞、验收观察失败；验收观察按结论拆成 `observation_used`（汇总）和 `observation_failed`（立即）。只记录事件（Run 已按请求停止、关注项已解决、通知撤回）不是通知，读 `get /api/projects/PROJECT/leader-records`（`taskId`、`kind`、`limit`、`cursor` 可选，从旧到新续页）。
 
 定时直派的三条写命令（`command schema` 取结构，都要项目管理权限和决定权）：`schedule.directList.set`（某个 Role 的直派名单）、`schedule.dispatch.set`（某个日程交 Leader 还是直接进队伍，含等待上限与每日预算）、`schedule.directEntry.withdraw`（撤下一个定时项，必须选 `cancel` 或 `to_leader`；普通 `line.remove` 拒绝定时项）。直派的 Task 不发待分诊，直派与跳过读 `get /api/projects/PROJECT/leader-records?kind=direct_dispatched`（或 `direct_dispatch_skipped`）。
+
+例行健康用一次只读请求读全部：`get /api/projects/PROJECT/routine-health`（项目成员读取）按“逾期、连续跳过两次及以上、上次任务还开着、其余按下次时间”的顺序返回每个日程和定时任务系列的上次触发（时间、创建或跳过及原因、任务及其状态）、连续跳过次数、下次时间和逾期标记；只读，不新增迁移，`complete:false` 表示定时任务读到上限被截断。
 
 直派事实的只读入口只要项目成员读取，不要项目管理权限：`read schedule SCHEDULE --project PROJECT --dispatch` 读当前策略（无策略时为 `null`）；`read role ROLE --project PROJECT --direct-list` 读该 Role 的名单；`read schedule SCHEDULE --project PROJECT --dispatches [--limit 1..100 --cursor CURSOR]` 从旧到新分页读每次触发，`plannedAtUtc` 与 `read schedule SCHEDULE --occurrences` 的同一时间对应。HTTP 路径分别是 `/api/projects/PROJECT/schedules/SCHEDULE/dispatch`、`/roles/ROLE/direct-list`、`/schedules/SCHEDULE/dispatches`；游标只属于原项目和日程，不能跨项目复用。
 

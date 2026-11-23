@@ -1129,9 +1129,23 @@ async function documentRows(db: Database, projectId: string, limit: number, offs
           UNION ALL
           SELECT t.task_id,'basis'::text AS relation FROM task t
             JOIN task_revision tr ON tr.project_id=t.project_id AND tr.task_id=t.task_id AND tr.revision_id=t.current_revision_id
-            JOIN basis_member bm ON bm.project_id=tr.project_id AND bm.task_id=tr.task_id
-              AND bm.task_revision_id=tr.revision_id AND bm.basis_set_id=tr.basis_set_id
+            JOIN basis_set bs ON bs.project_id=tr.project_id AND bs.task_id=tr.task_id
+              AND bs.task_revision_id=tr.revision_id AND bs.basis_set_id=tr.basis_set_id AND bs.sealed
+            JOIN basis_member bm ON bm.project_id=bs.project_id AND bm.task_id=bs.task_id
+              AND bm.task_revision_id=bs.task_revision_id AND bm.basis_set_id=bs.basis_set_id
             WHERE t.project_id=facts.project_id AND bm.document_id=facts.document_id
+          UNION ALL
+          -- The two relations the Document page also counts (listDocumentTaskReferences): a Task whose Delivery names this
+          -- Document as its artifact, and the Task a report or issue was produced under.
+          SELECT t.task_id,'delivery'::text AS relation FROM delivery dl
+            JOIN task t ON t.project_id=dl.project_id AND t.task_id=dl.task_id
+            WHERE dl.project_id=facts.project_id
+              AND (starts_with(dl.artifact_ref,'document:' || facts.document_id::text || '@')
+                OR starts_with(dl.artifact_ref,'#/p/' || facts.project_id::text || '/documents/' || facts.document_id::text || '?revision='))
+          UNION ALL
+          SELECT t.task_id,'origin'::text AS relation FROM process_document pd
+            JOIN task t ON t.project_id=pd.project_id AND t.task_id=pd.origin_task_id
+            WHERE pd.project_id=facts.project_id AND pd.document_id=facts.document_id
         ) relations
         JOIN task t ON t.project_id=facts.project_id AND t.task_id=relations.task_id
         GROUP BY t.task_id,t.title,t.state

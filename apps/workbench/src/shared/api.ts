@@ -1,5 +1,5 @@
 import type {
-  Command, CommandResult, Document, DocumentDetail, DocumentRevision, DocumentRevisionPage, DocumentStatusFilter,
+  Command, CommandResult, Document, DocumentDetail, DocumentListKind, DocumentRevision, DocumentRevisionPage, DocumentStatusFilter,
   Impact, Operation, Page, Principal, Project, Task, TaskDetail, TaskRevision, BasisSet, DocumentTaskReference, Goal, GoalRevision, Stage, StageRevision, StageReview,
   DiscussionRecord, DiscussionEvent,
   EvaluationRevision, EvaluationAttempt, EvaluationAssessment, EvaluationConclusion, EvaluationSourceSignature, EvaluationFixedRef,
@@ -189,8 +189,8 @@ export function api(token = "", timeoutMs = 15000) {
     discussions: (p: string, cursor?: string, kind?: DiscussionRecord["kind"]) => call<Page<DiscussionRecord>>(`${projectPath(p)}/discussions?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}${kind ? `&kind=${key(kind)}` : ""}`),
     discussion: (p: string, id: string) => call<DiscussionRecord>(`${projectPath(p)}/discussions/${key(id)}`),
     discussionEvents: (p: string, id: string) => call<DiscussionEvent[]>(`${projectPath(p)}/discussions/${key(id)}/events`),
-    documents: (p: string, cursor?: string, kind?: Document["kind"], status?: DocumentStatusFilter, signal?: AbortSignal) =>
-      call<Page<Document>>(`${projectPath(p)}/documents?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}${kind ? `&kind=${key(kind)}` : ""}${status ? `&status=${key(status)}` : ""}`, { signal }),
+    documents: (p: string, cursor?: string, kind?: DocumentListKind, status?: DocumentStatusFilter, signal?: AbortSignal, search?: string) =>
+      call<Page<Document>>(`${projectPath(p)}/documents?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}${kind ? `&kind=${key(kind)}` : ""}${status ? `&status=${key(status)}` : ""}${search ? `&search=${key(search)}` : ""}`, { signal }),
     document: (p: string, id: string) => call<DocumentDetail>(`${projectPath(p)}/documents/${key(id)}`),
     documentTasks: (p: string, id: string, cursor?: string, signal?: AbortSignal) => call<Page<DocumentTaskReference>>(
       `${projectPath(p)}/documents/${key(id)}/tasks?limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`, { signal }),
@@ -245,6 +245,13 @@ export function api(token = "", timeoutMs = 15000) {
       if (!page || !Array.isArray(page.items) || page.items.some(item => item.projectId !== p || typeof item.seriesId !== "string" || typeof item.rootTaskId !== "string" || !item.latestTask || typeof item.latestTask.taskId !== "string"))
         throw new ApiError(0, "定时任务响应与当前项目不符；请重新读取。");
       return page;
+    },
+    /** 例行健康: every schedule and timed Task series of the project with its last trigger, skips in a row and next time, in one read. */
+    routineHealth: async (p: string, signal?: AbortSignal) => {
+      const health = await requestJson<import("@evoloop/contracts/routine-health").RoutineHealth>(token, `${projectPath(p)}/routine-health`, timeoutMs, { signal });
+      if (!health || health.projectId !== p || !Array.isArray(health.items) || health.items.some(item => typeof item.id !== "string" || typeof item.title !== "string" || !["active", "paused", "stopped"].includes(item.state)))
+        throw new ApiError(0, "例行健康响应与当前项目不符；请重新读取。");
+      return health;
     },
     /** Drain mode: instance-wide state of the release gate (not project scoped). */
     /** Drain state. Behind the Hub (which forwards only a project's own API) it is read at the project's path; a local login reads the instance path as before. */

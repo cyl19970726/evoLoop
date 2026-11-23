@@ -5,11 +5,11 @@ import { useCallback, useSyncExternalStore } from "react";
 import type { KindFilter, StatusFilter } from "./documentPresentation";
 
 export const pageSize = 50;
-/** A search reads further pages by itself, up to these limits; past them the reader loads more by hand. */
-export const automaticPageLimit = 10;
-export const automaticItemLimit = 500;
+/** How long typing rests before a search is sent to the server (and written to the address). */
+export const searchRestMs = 350;
 
 export interface DocumentListState {
+  /** What is typed in the search box; the server searches titles of every document with it. */
   query: string;
   kind: KindFilter;
   status: StatusFilter;
@@ -27,10 +27,12 @@ export const isFiltered = (state: Pick<DocumentListState, "query" | "kind" | "st
 /** Pages a range read may take, so short pages never turn one request into an unbounded walk. */
 export const pagesFor = (state: Pick<DocumentListState, "target">): number => Math.max(1, Math.ceil(state.target / pageSize));
 
-/** Apply a change. A search widens the range to the automatic limit once; the range is kept after it is cleared. */
+/** Apply a change. Another type, status or search is another list: it starts from its first page again. */
 export function nextListState(current: DocumentListState, patch: Partial<DocumentListState>): DocumentListState {
   const next = { ...current, ...patch };
-  if (patch.query !== undefined && patch.query.trim() && !current.query.trim()) next.target = Math.max(next.target, automaticItemLimit);
+  const changed = (patch.kind !== undefined && patch.kind !== current.kind) || (patch.status !== undefined && patch.status !== current.status) ||
+    (patch.query !== undefined && patch.query.trim() !== current.query.trim());
+  if (changed && patch.target === undefined) next.target = pageSize;
   return next;
 }
 

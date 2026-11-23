@@ -51,6 +51,7 @@ export async function registerWorkManagementRoutes(app: FastifyInstance, service
     app.get(`/api/projects/:projectId/roles/:id/${path}`, request => { const p = params(request.params); return query(principal(request), p.projectId, p.id!); });
   }
   app.get("/api/projects/:projectId/schedules", request => service.listSchedules(principal(request), params(request.params).projectId));
+  app.get("/api/projects/:projectId/routine-health", request => service.getRoutineHealth(principal(request), params(request.params).projectId));
   app.get("/api/projects/:projectId/task-timings", request => {
     const q = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50), cursor: z.string().min(1).max(512).optional() }).parse(request.query);
     return service.listTaskTimings(principal(request), params(request.params).projectId, q.limit, q.cursor);

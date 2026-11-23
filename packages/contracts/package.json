@@ -17,6 +17,7 @@
     "./workflow": "./dist/workflow.js",
     "./acceptance-relay": "./dist/acceptance-relay.js",
     "./scheduling": "./dist/scheduling.js",
+    "./routine-health": "./dist/routine-health.js",
     "./task-timing": "./dist/task-timing.js",
     "./process-documents": "./dist/process-documents.js",
     "./roles": "./dist/roles.js",

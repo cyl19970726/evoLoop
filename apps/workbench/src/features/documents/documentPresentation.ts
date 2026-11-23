@@ -1,13 +1,13 @@
 // Words and small decisions for the document list and the reader (docs/frontend/pages/documents.md). Pure, so the
 // inner rail, the table, the reader and the right column say the same thing, and tests read them without a browser.
 // Interface words follow docs/frontend/principles.md (界面用语): no implementation words, raw IDs only in the source layer.
-import type { Document, DocumentDetail, DocumentKind, DocumentStatus, DocumentTaskReference, TaskState } from "@evoloop/contracts";
+import type { Document, DocumentDetail, DocumentKind, DocumentListKind, DocumentStatus, DocumentTaskReference, TaskState } from "@evoloop/contracts";
 import type { StatusTone } from "@evoloop/ui";
 import { returnPlaceOf, type ReturnPlace } from "../../shared/returnLink";
 import type { Original } from "../../shared/ui/OriginalDocumentReader";
 
 export const kindLabel: Record<DocumentKind, string> = {
-  issue: "问题", spec: "规范", discussion: "讨论", report: "报告", organization_review: "复盘", task: "任务正文",
+  issue: "问题", spec: "规范", discussion: "讨论", report: "报告", organization_review: "复盘", task: "任务正文", brief: "简报",
 };
 export const lifecycleLabel: Record<DocumentStatus, string> = { draft: "草稿", published: "已发布", archived: "已归档" };
 export const lifecycleTone: Record<DocumentStatus, StatusTone> = { draft: "idle", published: "done", archived: "history" };
@@ -29,13 +29,37 @@ export function originRunSummary(run: { createdAt: string; state: string } | nul
   return `由一次运行产生 · 开始于 ${time(run.createdAt)} · ${runStateLabel[run.state] ?? "状态未识别"}`;
 }
 
-export type KindFilter = "all" | DocumentKind;
+export type KindFilter = "all" | DocumentListKind;
 export type StatusFilter = "active" | DocumentStatus | "all";
 export const statusFilterLabel: Record<StatusFilter, string> = {
   active: "未归档", draft: "草稿", published: "已发布", archived: "已归档", all: "全部状态",
 };
-/** Kinds a reader can filter by; 任务正文 is listed too, since task bodies are documents as well. */
-export const kindFilters = Object.entries(kindLabel) as Array<[DocumentKind, string]>;
+/**
+ * What a reader can filter the list by, in this order after 全部类型. 交付报告 and 其他报告 are not stored kinds: the server reads
+ * them from the Deliveries (a document a Task's Delivery names as its artifact, and a report that is not one).
+ */
+export const kindFilters: Array<[Exclude<KindFilter, "all">, string]> = [
+  ["brief", "简报"], ["organization_review", "复盘"], ["delivery_report", "交付报告"], ["task", "任务正文"], ["spec", "规范"],
+  ["discussion", "讨论"], ["issue", "问题"], ["other_report", "其他报告"],
+];
+export const isKindFilter = (value: string | null | undefined): value is KindFilter => value === "all" || kindFilters.some(([key]) => key === value);
+export const isStatusFilter = (value: string | null | undefined): value is StatusFilter => !!value && value in statusFilterLabel;
+
+/** The list conditions as an address query (only what differs from the default), so a refresh, back and a shared link keep them. */
+export function listQuery(state: { query: string; kind: KindFilter; status: StatusFilter }): string {
+  const params = new URLSearchParams();
+  if (state.kind !== "all") params.set("kind", state.kind);
+  if (state.status !== "active") params.set("status", state.status);
+  if (state.query.trim()) params.set("q", state.query.trim());
+  return params.toString();
+}
+/** The conditions an address names; missing or unknown values are the defaults. `named` tells whether it named any at all. */
+export function listConditionsFrom(search: string): { kind: KindFilter; status: StatusFilter; query: string; named: boolean } {
+  const params = new URLSearchParams(search);
+  const kind = params.get("kind"), status = params.get("status"), query = params.get("q");
+  return { kind: isKindFilter(kind) ? kind : "all", status: isStatusFilter(status) ? status : "active", query: query?.slice(0, 200) ?? "",
+    named: params.has("kind") || params.has("status") || params.has("q") };
+}
 
 export const kindText = (kind: DocumentKind | null | undefined): string => kind ? kindLabel[kind] : "未分类";
 
@@ -104,10 +128,8 @@ export function documentReturnPlace(path: string, projectId: string): { href: st
 /** What the list covers, so a search or filter never reads as the whole project when pages are still unread. */
 export { coverageText } from "../../shared/listCoverage";
 
-/** The empty list, distinguished by why it is empty. */
-export function emptyListText({ filtered, more }: { filtered: boolean; more: boolean }): { title: string; reason: string } {
-  if (filtered) return { title: "已载入范围没有匹配的文档",
-    reason: more ? "还有后续页面没有读；载入更多才能确认全部结果，或清除筛选。" : "可以清除筛选或换个关键词。" };
-  if (more) return { title: "这一页没有未归档的文档", reason: "还有后续页面没有读；载入更多才能确认。" };
+/** The empty list, distinguished by why it is empty. The server filters and searches every document, so an empty answer is complete. */
+export function emptyListText({ filtered }: { filtered: boolean }): { title: string; reason: string } {
+  if (filtered) return { title: "没有符合条件的文档", reason: "已在全部文档里查过；可以清除筛选或换个关键词。" };
   return { title: "还没有过程文档", reason: "工作中产生的方案、报告和讨论保存后会出现在这里。可以与负责的智能体确认下一份文档。" };
 }
