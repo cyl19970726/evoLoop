@@ -107,3 +107,69 @@ test("a selected agent inside the history fold opens it, and the fold is absent 
   await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.locator(".session-status-badge[data-tone]").waitFor();
 });
+
+test("each row and the page header make one judgement; names of twelve characters are not cut; a selected row is in view after a reload", { skip }, async t => {
+  Object.assign(process.env, { FIXTURE_ROWS: "1", FIXTURE_HOLD: "1", FIXTURE_HOLD_PROVIDER: "claude" });
+  t.after(() => { for (const key of ["FIXTURE_ROWS", "FIXTURE_HOLD", "FIXTURE_HOLD_PROVIDER"]) delete process.env[key]; });
+  const { chromium } = (await import(pathToFileURL(modulePath!).href)).default;
+  const { startFixtureServer } = await import(pathToFileURL(`${fixtureDir}/server.mjs`).href);
+  const common = await import(pathToFileURL(`${fixtureDir}/common.mjs`).href);
+  const { rowAgentId } = await import(pathToFileURL(`${fixtureDir}/agents.mjs`).href);
+  const fixture = await startFixtureServer(dist); t.after(() => fixture.close());
+  const browser = await chromium.launch({ headless: true, ...(executablePath ? { executablePath } : {}) }); t.after(() => browser.close());
+  for (const [width, height] of [[1440, 900], [390, 844]] as const) {
+    const page = await (await browser.newContext({ viewport: { width, height }, locale: "zh-CN", reducedMotion: "reduce" })).newPage();
+    const open = async (n: number) => {
+      await page.goto(`${fixture.base}/p/${common.projectId}/sessions?session=${encodeURIComponent(`owned:${rowAgentId(n)}`)}`);
+      await page.getByLabel("访问令牌").fill(common.token);
+      await page.getByRole("button", { name: "进入", exact: true }).click();
+      await page.locator(".session-status-badge[data-tone]").waitFor({ timeout: 8000 });
+    };
+    // Per sample: the row's sentence and mark against the header's. The fixture has no native connection, so the header may only
+    // say "连接不可用 · 状态待核对" where the judgement needs it, and the row says the short form of the same state.
+    const samples: [number, string][] = [[1, "长标题执行者"], [2, "回复消息者"], [3, "空闲值守者"], [4, "等你处理者"], [5, "被暂停的智能体"], [6, "状态未读者"]];
+    const pairs: string[] = [];
+    for (const [n, name] of samples) {
+      await open(n);
+      const header = page.locator(".session-status-badge[data-tone]").first();
+      const headerText = (await header.innerText()).trim(), headerTone = await header.getAttribute("data-tone");
+      if (width === 390) await page.getByRole("button", { name: "打开项目导航" }).click();
+      else if (await page.locator("[data-shell=frame]").getAttribute("data-rail") !== "shown") await page.getByRole("button", { name: "展开项目导航" }).click();
+      const nav = page.locator(width === 390 ? ".mobile-navigation .session-navigation" : "aside[aria-label=项目导航] .session-navigation");
+      const row = nav.locator(".session-nav-item").filter({ has: page.locator(".session-nav-name", { hasText: name }) }).first();
+      const rowText = (await row.locator(".session-nav-signal").innerText()).trim(), rowTone = await row.locator("[data-tone]").getAttribute("data-tone");
+      pairs.push(`${name}｜行 ${rowText}｜页头 ${headerText}｜${rowTone}/${headerTone}`);
+      assert.equal(rowTone, headerTone, `${width}: ${name} — the row mark and the header mark are the same state (${pairs.at(-1)})`);
+      const consistent: Record<string, RegExp> = {
+        长标题执行者: /^(正在做 .*|状态待核对)$/, 回复消息者: /^(在回复消息|状态待核对)$/, 空闲值守者: /^(空闲|状态待核对)$/,
+        等你处理者: /^等你处理$/, 被暂停的智能体: /^已暂停（.+）$/, 状态未读者: /^状态未读到$/,
+      };
+      assert.match(rowText, consistent[name]!, `${width}: ${name}`);
+      if (rowText === "状态待核对") assert.equal(headerText, "连接不可用 · 状态待核对", `${width}: ${name} — where the header cannot verify, neither does the row`);
+      if (name === "等你处理者") assert.equal(headerText, "等你处理");
+      if (name === "被暂停的智能体") assert.equal(headerText, rowText);
+      if (name === "状态未读者") assert.equal(headerText, "外部 · 状态未知");
+    }
+    console.log(pairs.join("\n"));
+    // Names: twelve characters are whole, fifteen are cut and carry the full name as a tooltip.
+    await open(10);
+    if (width === 390) await page.getByRole("button", { name: "打开项目导航" }).click();
+    else if (await page.locator("[data-shell=frame]").getAttribute("data-rail") !== "shown") await page.getByRole("button", { name: "展开项目导航" }).click();
+    const nav = page.locator(width === 390 ? ".mobile-navigation .session-navigation" : "aside[aria-label=项目导航] .session-navigation");
+    const nameCell = (name: string) => nav.locator(".session-nav-item").filter({ has: page.locator(".session-nav-name", { hasText: name }) }).first().locator(".session-nav-name > span").first();
+    assert.equal(await nameCell("一二三四五六七八九十一二").evaluate((el: Element) => el.scrollWidth > el.clientWidth), false, `${width}: twelve characters are not cut`);
+    assert.equal(await nameCell("十六个字的显示名称用来测截断否").evaluate((el: Element) => el.scrollWidth > el.clientWidth), true, `${width}: a longer name is cut`);
+    assert.equal(await nameCell("十六个字的显示名称用来测截断否").getAttribute("title"), "十六个字的显示名称用来测截断否");
+    // A selected agent inside the history fold is in view after a reload.
+    await page.goto(`${fixture.base}/p/${common.projectId}/sessions?session=${encodeURIComponent(`owned:${rowAgentId(9)}`)}`);
+    await page.getByLabel("访问令牌").fill(common.token);
+    await page.getByRole("button", { name: "进入", exact: true }).click();
+    if (width === 390) await page.getByRole("button", { name: "打开项目导航" }).click();
+    else if (await page.locator("[data-shell=frame]").getAttribute("data-rail") !== "shown") await page.getByRole("button", { name: "展开项目导航" }).click();
+    const selected = nav.locator(".session-nav-item[aria-current=page]");
+    await selected.waitFor({ timeout: 8000 });
+    await page.waitForTimeout(300);
+    const box = await selected.boundingBox();
+    assert.ok(box && box.y >= 0 && box.y + box.height <= height, `${width}: the selected history row is inside the viewport (${JSON.stringify(box)})`);
+  }
+});

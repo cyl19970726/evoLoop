@@ -34,7 +34,7 @@ import { ActivityFeed, clearActivityDetails, type ActivityFilter } from "./Activ
 import { SessionRecoveryOverview, SessionRecoveryResources } from "./SessionRecoveryObservation";
 import { checkedRecoveryView, type RecoveryRead } from "./recoveryPresentation";
 import { dispatchLabel } from "./roundPresentation";
-import { currentNativeRunId, currentWorkRelationLabel, idleSessionResult, idleDuration, latestSessionResult, agentHeaderStatus, agentRowStatus, replyingPhrase, sessionResultUseLabel, type HeaderFacts } from "./sessionStatusPresentation";
+import { currentNativeRunId, currentWorkRelationLabel, idleSessionResult, idleDuration, latestSessionResult, agentHeaderStatus, agentStatus, replyingPhrase, sessionResultUseLabel, type HeaderFacts } from "./sessionStatusPresentation";
 import { shortClassLabel } from "./timelineRounds";
 import { NativeSessionPanel } from "./NativeSessionPanel";
 import { SessionClosePanel } from "./SessionClosePanel";
@@ -557,7 +557,7 @@ export function SessionWorkspace({ context, sessionKey, active, refresh, queue }
         <div className="flex min-w-0 items-center gap-2 py-1 pl-1.5 pr-3.5">
           <AgentAvatar seed={session.key} roleSeed={session.roles[0]?.id ?? session.title} size={26} />
           <h1 className="min-w-0 truncate text-body font-semibold">{name}</h1>
-          <StatusTag tone={agentRowStatus(session, headerFacts.holdReason ?? null).tone} label={statusLabel} className="session-status-badge min-w-0 font-normal text-muted-foreground" />
+          <StatusTag tone={agentStatus(session, { holdReason: headerFacts.holdReason ?? null, runtimeAvailable }).tone} label={statusLabel} className="session-status-badge min-w-0 font-normal text-muted-foreground" />
         </div>
       </div>
       <div className="session-workspace-actions flex shrink-0 items-center gap-0.5">

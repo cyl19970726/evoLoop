@@ -148,6 +148,7 @@ export function answer(path, params) {
     if (!name) return missing("没有这个智能体");
     const sub = match[2];
     if (!sub) return ok(agents.snapshot(name));
+    if (name.startsWith("row:")) return sub === "/messages" ? ok({ items: [], nextCursor: null, metadata: agents.directory().metadata }) : sub === "/timeline" ? ok(agents.timeline("dev")) : undefined;
     if (sub === "/timeline") return ok(agents.timeline(name));
     const itemRead = /^\/timeline\/items\/([^/]+)$/.exec(sub ?? "");
     if (itemRead) { const found = agents.timelineItem(name, params.get("turnId"), decodeURIComponent(itemRead[1])); return found ? ok(found) : missing("没有这条内容"); }
@@ -162,7 +163,7 @@ export function answer(path, params) {
   }
   if ((match = /^\/runtime\/sessions\/([^/]+)\/recovery$/.exec(rest))) {
     const name = agents.sessionNameOf(`owned:${match[1]}`);
-    return name ? ok(agents.recovery(name)) : missing("没有恢复记录");
+    return name && !name.startsWith("row:") ? ok(agents.recovery(name)) : missing("没有恢复记录");
   }
   if ((match = /^\/roles\/([^/]+)(\/[a-z]+)?$/.exec(rest))) {
     const key = team.roleKeyOf(match[1]);

@@ -52,7 +52,7 @@ export function observedSession(name) {
 const order = ["lead", "dev", "verify", "design", "docs"];
 // FIXTURE_ROWS=1: eight more agents for the directory rows, one per status the row can say (Task f1e8829a): a long task title, replying to
 // a message, idle, waiting for the reader, paused by a provider (with FIXTURE_HOLD=1 on claude), status unread (external), one in 历史, and two same-named.
-export const rowAgentId = n => `${n}1f${n}a00${n}-0000-4000-8000-00000000${1100 + n}`;
+export const rowAgentId = n => { const h = n.toString(16); return `${h}1f${h}a00${h}-0000-4000-8000-00000000${1100 + n}`; };
 const rowAgent = (n, over) => {
   const base = observedSession("dev");
   const sessionId = rowAgentId(n);
@@ -73,6 +73,9 @@ const rowAgents = () => [
   rowAgent(7, { title: "同名智能体", fields: {} }),
   rowAgent(8, { title: "同名智能体", fields: { busy: true } }),
   rowAgent(9, { title: "早先的智能体", membership: "historical", fields: {} }),
+  // A name of exactly twelve Chinese characters (not cut) and one of fifteen (cut, full name on hover).
+  rowAgent(10, { title: "一二三四五六七八九十一二", fields: {} }),
+  rowAgent(11, { title: "十六个字的显示名称用来测截断否", fields: {} }),
 ];
 export const directory = (search = "", membership = "current") => {
   const all = [...order.map(observedSession), ...(process.env.FIXTURE_ROWS ? rowAgents() : [])]
@@ -82,7 +85,9 @@ export const directory = (search = "", membership = "current") => {
     totals: { current: count("current"), historical: count("historical"), unclassified: 0 },
     attention: { unansweredQuestions: 1, pendingMessages: 2, pendingAcceptance: 1, unclassifiedSessions: 0 } };
 };
-export const sessionNameOf = key => order.find(name => agentKey(name) === key) ?? null;
+export const sessionNameOf = key => order.find(name => agentKey(name) === key)
+  ?? (process.env.FIXTURE_ROWS && rowAgents().some(item => item.key === key) ? `row:${key}` : null);
+const rowSession = name => rowAgents().find(item => `row:${item.key}` === name);
 
 const resource = (value, unit, unavailableReason = null) => ({ value, unit, source: value === null ? null : "runtime", scope: "session",
   observedAt: value === null ? null : ago(3), interval: null, unavailableReason });
@@ -91,6 +96,8 @@ const assignmentOf = (name, t) => ({ assignment: { projectId, taskId: t.id, vers
   ack: { method: "direct", actorId: `agent-${name}`, observerActorId: `agent-${name}`, evidence: "读过固定输入后接手", sourceRef: null, at: ago(60 * 26) },
   actorId: "leader-actor", reason: "按职责安排", updatedAt: ago(60 * 26) }, task: observedTask(t), stale: false });
 export function snapshot(name) {
+  // A FIXTURE_ROWS agent has the same snapshot as 开发 with its own session, no assignments and no native observation.
+  if (name.startsWith("row:")) return { ...snapshot("dev"), session: rowSession(name), currentWork: rowSession(name).currentTask, assignments: [], queue: [], results: [], nativeObservation: null };
   const session = observedSession(name);
   const t = currentTaskOf[name];
   return {

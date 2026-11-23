@@ -154,7 +154,7 @@ test("the agent page header speaks plainly and only claims live work it has obse
   assert.equal(agentHeaderStatus(session(true, { id: "r0", state: "completed" }), live({ kind: "run", id: "r1" }), true, true), "正在执行 · 任务记录待核对");
   assert.equal(agentHeaderStatus(session(false), live({ kind: "message" }), true, true), "运行记录不一致，待核对");
   assert.equal(agentHeaderStatus(session(false), live(null, "idle", "completed"), true, true), "空闲");
-  assert.equal(agentHeaderStatus(session(true), live({ kind: "message" }), false, true), "有在途工作", "a stale read falls back to the record");
+  assert.equal(agentHeaderStatus(session(true), live({ kind: "message" }), false, true), "正在回复消息", "a stale read falls back to the directory facts, the same judgement the row makes");
   assert.equal(agentHeaderStatus(session(true), null, true, false), "连接不可用 · 状态待核对");
   for (const value of [agentHeaderStatus(session(null), null, true, null), agentHeaderStatus(session(true), live({ kind: "x" }), true, true)])
     assert.doesNotMatch(value, /PG|原生|Turn|writer/);
@@ -178,4 +178,29 @@ test("the header says for whom and for which task, how long it has been idle, an
   assert.equal(idleDuration(3 * 3_600_000), "3 小时");
   assert.equal(idleDuration(2 * 86_400_000), "2 天");
   assert.equal(idleDuration(Number.NaN), "刚刚");
+});
+
+test("the directory row and the page header make one judgement and write its short and long forms (Task f1e8829a)", async () => {
+  const { agentStatus, agentRowStatus, agentHeaderStatus } = await import("../src/features/sessions/sessionStatusPresentation.ts");
+  type S = Parameters<typeof agentRowStatus>[0];
+  const owned = (extra: Record<string, unknown>) => ({ kind: "owned", runtimeState: "ready", busy: false, currentTask: null, latestBusinessRun: null, ...extra }) as unknown as S;
+  const rows: { label: string; session: S; facts?: { holdReason?: string | null; runtimeAvailable?: boolean | null }; row: string; header: string; kind: string; tone: string }[] = [
+    { label: "task", session: owned({ busy: true, currentTask: { title: "做表格" } }), row: "正在做 做表格", header: "正在做任务「做表格」（来源待核对）", kind: "working", tone: "progress" },
+    { label: "reply", session: owned({ busy: true }), row: "在回复消息", header: "正在回复消息", kind: "replying", tone: "progress" },
+    { label: "idle", session: owned({}), row: "空闲", header: "空闲", kind: "idle", tone: "idle" },
+    { label: "waiting", session: owned({ awaitingReader: true }), row: "等你处理", header: "等你处理", kind: "waiting", tone: "waiting" },
+    { label: "held", session: owned({ busy: true }), facts: { holdReason: "Claude 额度用完" }, row: "已暂停（Claude 额度用完）", header: "已暂停（Claude 额度用完）", kind: "held", tone: "blocked" },
+    { label: "external", session: { kind: "external", runtimeState: null, busy: null } as unknown as S, row: "状态未读到", header: "外部 · 状态未知", kind: "unread", tone: "unknown" },
+    { label: "unverified", session: owned({}), facts: { runtimeAvailable: false }, row: "状态待核对", header: "连接不可用 · 状态待核对", kind: "unverified", tone: "unknown" },
+    { label: "unverified-busy", session: owned({ busy: true, currentTask: { title: "长任务" } }), facts: { runtimeAvailable: false }, row: "状态待核对", header: "连接不可用 · 状态待核对", kind: "unverified", tone: "unknown" },
+  ];
+  for (const sample of rows) {
+    const facts = sample.facts ?? {};
+    const status = agentStatus(sample.session, facts), row = agentRowStatus(sample.session, facts);
+    assert.equal(status.kind, sample.kind, sample.label);
+    assert.equal(row.text, sample.row, sample.label);
+    assert.equal(row.tone, status.tone, `${sample.label}: row and header share the tone`);
+    assert.equal(status.tone, sample.tone, sample.label);
+    assert.equal(agentHeaderStatus(sample.session, null, true, facts.runtimeAvailable ?? null, { holdReason: facts.holdReason }), sample.header, sample.label);
+  }
 });

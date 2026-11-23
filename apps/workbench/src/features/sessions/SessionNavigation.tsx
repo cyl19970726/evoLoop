@@ -7,6 +7,8 @@ import { withReturn, type ReturnFrom } from "../../shared/returnLink";
 import { agentDisplayName, agentNameCollisions } from "../../shared/agentNamePresentation";
 import { useProviderHolds } from "../../shared/providerHolds";
 import { holdCauseLabel } from "../../shared/providerHoldPresentation";
+import { useProjectQuery } from "../../shared/query";
+import { runtimeClient } from "../../shared/runtimeClient";
 import { useSessionDirectoryGroup, type DirectoryMembership } from "./useSessionDirectoryGroup";
 import { agentRowStatus } from "./sessionStatusPresentation";
 import { groupSessionsByClass, sessionClassLabel, type SessionClass } from "./sessionDirectoryPresentation";
@@ -71,13 +73,25 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
     host.scrollTop = state.scrollTop;
     scrollRestored.current = true;
   }, [current.page, state.scrollTop]);
+  // After a reload the selected agent may sit below the fold or inside the folded 历史与待归类 group: bring its row into view once per selection.
+  const scrolledTo = useRef<string | null>(null);
+  useEffect(() => {
+    if (!selectedId || scrolledTo.current === selectedId) return;
+    const row = root.current?.querySelector<HTMLElement>('a[aria-current="page"]');
+    if (!row) return;
+    scrolledTo.current = selectedId;
+    row.scrollIntoView({ block: "center" });
+  });
   const totals = current.page?.totals;
   const grouped = groupSessionsByClass(current.items);
   const historicalCount = (totals?.historical ?? 0) + (totals?.unclassified ?? 0);
   // Agents that would show the same name are told apart by their short identifier, first on the second line.
   const collisions = agentNameCollisions([...current.items, ...historical.items, ...unclassified.items]);
   const heldReasons = new Map((holds.data?.items ?? []).filter(hold => hold.state === "held").map(hold => [hold.provider, holdCauseLabel(hold)] as const));
-  const statusOf = (session: ObservedSession) => agentRowStatus(session, session.runtime ? heldReasons.get(session.runtime.provider) ?? null : null);
+  // Whether the native connection is available is read once for the project (the page header reads the same query), so a row never says 空闲 where the header says 状态待核对.
+  const runtimeStatus = useProjectQuery(projectId, ["runtime", "status"], () => runtimeClient("", projectId).status(), { retry: false });
+  const runtimeAvailable = runtimeStatus.isError || typeof runtimeStatus.data?.available !== "boolean" ? null : runtimeStatus.data.available;
+  const statusOf = (session: ObservedSession) => agentRowStatus(session, { holdReason: session.runtime ? heldReasons.get(session.runtime.provider) ?? null : null, runtimeAvailable });
   const waitingCount = [...current.items, ...historical.items, ...unclassified.items].filter(session => statusOf(session).waitingOnMe).length;
   const show = (session: ObservedSession) => !onlyWaiting || statusOf(session).waitingOnMe;
   // Row: line 1 the display name (the first four characters of the identifier after it only where two agents share the name),
@@ -88,7 +102,7 @@ export function SessionNavigation({ token, projectId, selectedId, onNavigate, st
     const status = statusOf(session);
     const selected = selectedId === session.key;
     return <a key={session.key} href={sessionHref(projectId, session.key)} aria-current={selected ? "page" : undefined} onClick={onNavigate}
-      className={cn("selected-mark session-nav-item flex h-[52px] items-center gap-2.5 rounded-lg py-1.5 pl-2 pr-3 text-text-secondary hover:bg-selected focus-visible:shadow-[var(--focus-ring)] outline-none",
+      className={cn("selected-mark session-nav-item flex h-[52px] items-center gap-2 rounded-lg py-1.5 pl-2 pr-2 text-text-secondary hover:bg-selected focus-visible:shadow-[var(--focus-ring)] outline-none",
         selected && "bg-accent font-semibold text-foreground hover:bg-accent")}>
       <AgentAvatar seed={session.key} roleSeed={session.roles[0]?.id ?? session.title} size={30} />
       <span className="flex min-w-0 flex-1 flex-col">

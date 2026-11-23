@@ -224,7 +224,10 @@ export class PgSessionObservation implements SessionObservationReader {
       runtime: row.kind === "owned" && row.runtime ? { provider: row.runtime.runtime_provider === "claude" ? "claude" : "codex",
         model: (row.runtime.model ?? row.runtime.observed_model ?? null) as string | null } : null,
       runtimeState: row.runtime?.state ?? null, busy: row.kind === "owned" ? !!inFlight.rows[0]?.busy : null,
-      ...(prepared && row.kind === "owned" ? { awaitingReader: prepared.asking.has(row.identity) } : {}),
+      // The directory's batch read and one Session's own read both say whether a native question waits for its reader (Task f1e8829a),
+      // so the row and the page header make the same judgement.
+      ...(row.kind === "owned" ? { awaitingReader: prepared ? prepared.asking.has(row.identity)
+        : !!(await this.client.query(`SELECT 1 FROM session_native_input_request WHERE project_id=$1 AND session_id=$2 AND state='pending' LIMIT 1`, [this.projectId, row.identity])).rows.length } : {}),
       currentTask: current ? this.task(current, current.relation) : null,
       latestBusinessRun: run ? { id: run.run_id, taskId: run.task_id, state: run.state, updatedAt: iso(run.updated_at)!, source: this.source("run", run.run_id),
         // One Session's own read looks the dispatch up; the directory's batch read leaves it out (no per-row query).
