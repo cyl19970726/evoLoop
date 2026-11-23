@@ -1,4 +1,3 @@
-import { acceptancePoints } from "./acceptancePresentation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { TaskDetail } from "@evoloop/contracts";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
@@ -16,14 +15,13 @@ import { ReturnLink } from "../../shared/ui/ReturnLink";
 import { taskOrigin } from "./taskOrigin";
 import { legacyDecisionLabel } from "./taskListPresentation";
 import { navigateTaskTab, scrollToTaskSection, taskRunFromHash, taskSectionFromHash, taskSessionReturn, type TaskSection } from "../../shared/taskNavigation";
-import { timingDuration, timingStageLabel } from "../../shared/taskTiming";
-import { currentStageText, leaderProjectionMatchesTask } from "../../shared/leaderWorkLoad";
+import { leaderProjectionMatchesTask } from "../../shared/leaderWorkLoad";
 import { phaseStatus, taskStateStatus } from "../../shared/taskStatus";
 import { ResponsibleName } from "../../shared/ui/RecordName";
 import type { ReadState } from "./taskFactsPresentation";
 import { PeekBoundary, TaskDocumentPeek } from "./TaskDocumentPeek";
 import { TaskFacts } from "./TaskFacts";
-import { progressEventName, taskGoal, taskType } from "./taskWorkspacePresentation";
+import { taskGoal, taskType } from "./taskWorkspacePresentation";
 import { appLocation, currentPath, onNavigate } from "../../shared/navigation";
 import { taskStateLabel } from "./taskCommands";
 import { useTaskDocuments } from "./taskDocuments";
@@ -34,6 +32,7 @@ import { TaskDeliveryTab } from "./TaskDeliveryTab";
 import { TaskRuntimeTab } from "./TaskRuntimeTab";
 import { TaskHistoryTab } from "./TaskHistoryTab";
 import { TaskActionsTab } from "./TaskActionsTab";
+import { TaskNowLine, TaskRelationBar } from "./TaskNow";
 import { TaskArrangementFacts, TaskAttentionSection } from "./TaskArrangement";
 import { timingSummary, useTaskTiming } from "./TaskScheduleSection";
 import { actorText } from "../../shared/actorPresentation";
@@ -194,7 +193,6 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
   const writeBlock = selectedRevision ? "正在查看历史修订；回到当前任务后再提交。" : error ? "当前任务回读失败，不能按旧版本提交；请先重新读取。"
     : reading ? "正在核对当前任务，读回后再提交。" : "";
   const openSchedule = () => { selectTab("actions"); window.requestAnimationFrame(() => document.getElementById("task-schedule")?.scrollIntoView({ block: "start" })); };
-  const acceptance = acceptancePoints(detail.task.acceptance);
   const instanceId = selectedRevision ?? "current";
   const tabId = (value: TaskTab) => `task-tab-${projectId}-${id}-${instanceId}-${value}`;
   const tabsId = `task-tabs-${projectId}-${id}-${instanceId}`;
@@ -243,13 +241,10 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
           ? <StatusTag tone={phaseStatus[projection.phase].tone} label={phaseStatus[projection.phase].label} />
           : <StatusTag tone={state.tone} label={state.label} />}
         <span className="text-label text-text-secondary">{responsibilityLabel}</span>
-        {leaderTask?.stageOwnership && <span className="text-label text-text-secondary" data-task-stage={leaderTask.stageOwnership.state}
-          title={leaderTask.stageOwnership.state === "none" ? leaderTask.stageOwnership.reason ?? undefined : undefined}>
-          {leaderTask.stageOwnership.state === "stage" && leaderTask.stage
-            ? <>阶段 <a className="text-primary hover:underline" href={`${href(projectId, "journey")}?stage=${encodeURIComponent(leaderTask.stage.stageId)}`}>{leaderTask.stage.shortName}</a></>
-            : leaderTask.stageOwnership.state === "none" ? "不属于阶段" : "未归属"}
-        </span>}
       </div>
+      <TaskNowLine detail={detail} leader={leaderTask} leaderState={leaderState} linkForTab={linkForTab} openTab={selectTab} />
+      <TaskRelationBar projectId={projectId} token={token} detail={detail} leader={leaderTask} leaderState={leaderState}
+        actorId={context.principal.actorId} linkForTab={linkForTab} openTab={selectTab} />
     </header>
     {(leaderState === "loading" || leaderState === "checking") && <p className="text-caption text-muted-foreground" role="status">{leaderState === "checking" ? "任务或工作安排已在读取期间变化，正在重新核对…" : "正在核对本任务当前的进展与具体责任…"}</p>}
     {leaderTaskError && <Notice tone="error">{leaderTaskError}</Notice>}
@@ -269,8 +264,7 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
         </section>}
         <section aria-labelledby={`${panelId("overview")}-acceptance`} className="flex flex-col gap-2" data-task-acceptance="">
           <h2 id={`${panelId("overview")}-acceptance`} className={heading}>完成条件</h2>
-          {acceptance ? <ol className="flex list-decimal flex-col gap-1.5 pl-5 text-body leading-(--leading-body) text-foreground marker:text-muted-foreground">{acceptance.map((point, index) => <li key={index}>{point}</li>)}</ol>
-            : <p className="whitespace-pre-wrap text-body leading-(--leading-body) text-foreground">{detail.task.acceptance}</p>}
+          <MarkdownBody source={detail.task.acceptance} identity={`task-acceptance-${detail.revision.id}`} projectId={projectId} topHeading={3} />
           <p className="text-caption text-muted-foreground">{acceptanceNote}</p>
         </section>
         <section aria-labelledby={`${panelId("overview")}-body`} className="flex flex-col gap-2">
@@ -284,7 +278,6 @@ export function TaskPage({ context, token, projectId, id, selectedRevision, refr
         </section>
         <section aria-labelledby={`${panelId("overview")}-progress`} className="flex flex-col gap-3" data-task-progress="">
           <h2 id={`${panelId("overview")}-progress`} className={heading}>进展与讨论</h2>
-          {projection?.timing && <p className="text-label text-text-secondary">现在：{currentStageText(projection.timing.current.stage, projection.phase, timingStageLabel[projection.timing.current.stage] ?? "阶段未知")} · 本阶段已历时 {timingDuration(projection.timing.current.elapsedMs)}{projection.latestProgress ? ` · 最近进展 ${progressEventName(projection.latestProgress)}（${date(projection.latestProgress.changedAt)}）` : " · 最近进展未记录"}</p>}
           <TimingLine projectId={projectId} taskId={id} onOpen={openSchedule} />
           <TaskCollaborationThread projectId={projectId} taskId={id} refresh={refresh + readVersion} from={taskOrigin(projectId, detail.task, context.principal.actorId)} />
           {leaderTask && <TaskAttentionSection key={`${projectId}:${id}:${detail.task.currentRevisionId}`} context={taskContext} detail={detail} leader={leaderTask} />}

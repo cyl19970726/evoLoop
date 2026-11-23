@@ -161,7 +161,8 @@ test("ordinary Task row, right-column facts and the full task use current QA res
   const fold = page.locator(`[data-task-page="${taskId}"] details#task-timing`);
   await fold.locator(":scope > summary").click();
   await fold.getByText("智能体 · 当前验收负责人").waitFor();
-  assert.match(await fold.locator("[data-task-next]").innerText(), /等验收者核对交付与实际使用/);
+  assert.match(await page.locator(`[data-task-page="${taskId}"] [data-task-now-text]`).innerText(), /等验收者核对交付与实际使用/);
+  assert.equal(await fold.locator("[data-task-next]").count(), 0);
   assert.doesNotMatch(await fold.innerText(), new RegExp(`${nextAction}|QA Session`));
   assert.equal(pageErrors.length, 0, pageErrors.join(" | "));
 });

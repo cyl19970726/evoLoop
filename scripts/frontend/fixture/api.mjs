@@ -97,7 +97,8 @@ export function answer(path, params) {
     if (!sub) return ok(work.taskDetail(t));
     if (sub === "assignment") return ok(work.assignmentOf(t));
     if (sub === "revisions") return ok(work.taskRevisions(t));
-    if (sub === "timing") return ok(null);
+    if (sub === "timing") return ok(work.timingRecordOf(t));
+    if (sub === "origin") return ok(work.originOf(t));
     if (sub === "acceptance-relay") return ok({ items: work.acceptanceRelays(t) });
     if (sub === "attention") return ok({ followUp: null, followUpHistory: [], items: [], itemsNextCursor: null });
     return undefined;

@@ -126,7 +126,29 @@ export const tasks = {
   t8: task(8, "整理旧文档", "todo", "docs", { phase: "ready", agent: "docs", ack: "accepted", priority: 3, noStage: true }),
 };
 const taskList = Object.values(tasks);
-export const findTask = taskId => taskList.find(t => t.id === taskId) ?? null;
+// Seven samples of the task page's "现在" line and relation bar. They are reachable by address only (not in the lists),
+// so the lists the other pages count stay as they are. a rework, 2 days on an agent, last acceptance failed;
+// b awaiting acceptance by the declared consumer for 3 hours; c acceptance used, waiting to be closed; d nothing registered;
+// e made by a schedule; f a daily-repeat series member whose previous task is a; g closed.
+export const nowTasks = {
+  a: task(11, "返工：选中行字重", "in_progress", "dev", { phase: "rework", agent: "dev", ack: "accepted", run: "completed", delivery: true, obs: "failed", stage: "s1", basis: true, elapsedMin: 2 * 24 * 60 }),
+  b: task(12, "待验收：右栏抽屉", "in_progress", "dev", { phase: "awaiting_acceptance", agent: "dev", ack: "accepted", delivery: true, stage: "s1", basis: true, elapsedMin: 180 }),
+  c: task(13, "已使用：三宽度回归", "in_progress", "dev", { phase: "awaiting_close", agent: "dev", ack: "accepted", delivery: true, obs: "used", stage: "s1", basis: true, elapsedMin: 40,
+    acceptance: "1. **右栏**随选中项切换，见 `data-task-facts`。\n2. 三个宽度都不出现横向滚动，详见 [设计语言](https://example.test/design)。\n3. <script>window.__ran = true</script> 只作为文字显示。" }),
+  d: task(14, "什么都没登记的任务", "todo", "docs", { phase: "unassigned", elapsedMin: 20 }),
+  e: task(15, "每日验收巡检（今日）", "in_progress", "verify", { phase: "running", agent: "verify", ack: "accepted", run: "running", noStage: true, scheduleOrigin: true, elapsedMin: 25 }),
+  f: task(16, "每日整理草稿（第二天）", "todo", "docs", { phase: "ready", agent: "docs", ack: "accepted", noStage: true, dailyOf: "a", elapsedMin: 50 }),
+  g: task(17, "已收尾的试用汇总", "done", "design", { phase: "closed", agent: "design", ack: "accepted", delivery: true, obs: "used", stage: "s2" }),
+};
+export const findTask = taskId => taskList.find(t => t.id === taskId) ?? Object.values(nowTasks).find(t => t.id === taskId) ?? null;
+/** The schedule occurrence that made a task (null when none), as GET …/tasks/{id}/origin answers. */
+export const originOf = t => t.scheduleOrigin ? { scheduleId: id(1400), scheduleName: "每日验收巡检", scheduleRevisionId: id(1400),
+  plannedAtUtc: ago(60 * 2), observedAtUtc: ago(60 * 2) } : null;
+/** The timing of a task: only the daily-repeat sample has one. */
+export const timingRecordOf = t => t.dailyOf ? { projectId, taskId: t.id, seriesId: id(950), rootTaskId: nowTasks[t.dailyOf].id, version: 2,
+  seriesState: "active", previousTaskId: nowTasks[t.dailyOf].id, nextTaskId: null, nextAtUtc: later(1), waitingReason: null,
+  executeAtUtc: ago(50), timezone: "Asia/Shanghai", repeat: "daily", futureTemplate: { title: t.title, content: "整理草稿", acceptance: "草稿已整理" },
+  occurrences: [{ taskId: nowTasks[t.dailyOf].id, executeAtUtc: ago(60 * 24), state: "in_progress" }, { taskId: t.id, executeAtUtc: ago(50), state: "todo" }] } : null;
 const revisionId = t => id(300 + t.n);
 const runId = t => id(400 + t.n);
 const deliveryId = t => id(500 + t.n);
@@ -135,7 +157,7 @@ export function taskRecord(t) {
   return { projectId, id: t.id, version: 2, currentRevisionId: revisionId(t), title: t.title,
     content: t === tasks.t1 ? docs.taskBody.body : `# ${t.title}\n\n${t.title}的正文：说明要做什么、为什么做。`,
     contentDocumentId: t === tasks.t1 ? docs.taskBody.id : id(600 + t.n), contentRevisionId: t === tasks.t1 ? docs.taskBody.rev : id(650 + t.n),
-    kind: t.kind, acceptance: "1. 选中哪一项，右栏就换成这一项。\n2. 1024 以下右栏是抽屉，不会自己弹出。\n3. 读取失败写“无法判断”。",
+    kind: t.kind, acceptance: t.acceptance ?? "1. 选中哪一项，右栏就换成这一项。\n2. 1024 以下右栏是抽屉，不会自己弹出。\n3. 读取失败写“无法判断”。",
     owner: roles[t.owner].id, state: t.state };
 }
 
@@ -178,14 +200,15 @@ export function projection(t) {
     timing: timingOf(t), actionKey: `task:${t.id}:v2:${t.phase}`,
   };
 }
-const timingStage = { awaiting_acceptance: "awaiting_acceptance", running: "running", rework: "rework", blocked: "blocked", unassigned: "unassigned",
+const timingStage = { awaiting_close: "awaiting_acceptance", awaiting_acceptance: "awaiting_acceptance", running: "running", rework: "rework", blocked: "blocked", unassigned: "unassigned",
   awaiting_delivery: "awaiting_delivery", closed: "closed", ready: "awaiting_run" };
-const waitingFor = { awaiting_acceptance: "consumer", running: "session", rework: "session", blocked: "task", unassigned: "leader",
+const waitingFor = { awaiting_close: "leader", awaiting_acceptance: "consumer", running: "session", rework: "session", blocked: "task", unassigned: "leader",
   awaiting_delivery: "session", closed: "unknown", ready: "session" };
 function timingOf(t) {
-  const started = ago(15 * t.n + 30);
+  const minutes = t.elapsedMin ?? 15 * t.n + 30;
+  const started = ago(minutes);
   const current = { stage: timingStage[t.phase], startedAt: started, endedAt: null, source: { kind: "task", id: t.id },
-    waitingFor: { kind: waitingFor[t.phase], id: null }, elapsedMs: (15 * t.n + 30) * 60000 };
+    waitingFor: { kind: waitingFor[t.phase], id: null }, elapsedMs: minutes * 60000 };
   return { createdAt: ago(60 * 24 * (9 - t.n)), publication: { at: null, source: "unknown" }, current,
     rounds: [{ number: 1, startedAt: ago(60 * 24 * (9 - t.n)), endedAt: null, elapsedMs: null, intervals: [current] }],
     latestEffectiveProgress: { kind: "task.revised", sourceId: t.id, at: ago(15 * t.n) }, executionActivity: null, observedAt: ago(1) };
@@ -199,7 +222,7 @@ export const workIndex = (includeClosed = true) => {
 
 export function taskDetail(t) {
   const record = taskRecord(t);
-  const featured = t === tasks.t1;
+  const featured = t === tasks.t1 || !!t.basis;
   return {
     task: record,
     revision: { ...record, taskId: t.id, id: revisionId(t), basisSetId: featured ? id(800) : null, actorId: "leader-actor",
@@ -215,7 +238,9 @@ export function taskDetail(t) {
       technicalResult: "passed", technicalEvidence: "类型检查、单元测试和三个宽度的浏览器回归通过", reason: "交付右栏信息核对",
       actorId: "agent-dev", createdAt: ago(45) }] : [],
     // FIXTURE_REWORK_OBS: the return opinion a rework round's link points to (?observation=ID), id(881) like agents.mjs's rework dispatch.
-    observations: t.delivery && process.env.FIXTURE_REWORK_OBS === "1" ? [{ projectId, id: id(881), taskId: t.id, deliveryId: deliveryId(t), observer: "acceptance-claude-agent",
+    observations: t.obs ? [{ projectId, id: id(880 + t.n), taskId: t.id, deliveryId: deliveryId(t), observer: "acceptance-claude-agent",
+      observerKind: "agent", result: t.obs, evidence: "按完成条件逐条使用", reason: "验收结论", actorId: "acceptance-claude-agent", createdAt: ago(40) }]
+    : t.delivery && process.env.FIXTURE_REWORK_OBS === "1" ? [{ projectId, id: id(881), taskId: t.id, deliveryId: deliveryId(t), observer: "acceptance-claude-agent",
       observerKind: "agent", result: "failed", evidence: "退回：任务列表页默认视图的选中行标题仍是中等字重，不满足“选中字重不低于 600”。", reason: "验收未通过，退回返工",
       actorId: "acceptance-claude-agent", createdAt: ago(40) }] : [], closures: [],
   };

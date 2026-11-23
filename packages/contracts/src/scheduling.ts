@@ -116,6 +116,16 @@ export interface Occurrence {
   reason: string;
 }
 
+/** Which schedule and which occurrence created a Task; read from `schedule_occurrence.task_id`, never guessed from text. */
+export interface TaskScheduleOrigin {
+  scheduleId: string;
+  /** The Task template title of the revision that fired this occurrence. */
+  scheduleName: string;
+  scheduleRevisionId: string;
+  plannedAtUtc: string;
+  observedAtUtc: string;
+}
+
 export interface DueSelection {
   plannedAtUtc: string[];
   skippedCount: number;

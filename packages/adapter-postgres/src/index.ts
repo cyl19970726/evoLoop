@@ -248,6 +248,7 @@ class PgReader implements Reader {
   getSchedule(id: string) { return this.scheduling.getSchedule(id); }
   getManagedScheduleLoop(id: string) { return this.scheduling.getManagedScheduleLoop(id); }
   listSchedules() { return this.scheduling.listSchedules(); }
+  getTaskScheduleOrigin(taskId: string) { return this.scheduling.getTaskScheduleOrigin(taskId); }
   listScheduleRevisions(id: string) { return this.scheduling.listScheduleRevisions(id); }
   listOccurrences(id: string) { return this.scheduling.listOccurrences(id); }
   getDocumentPayloadRevision(documentId: string, revisionId: string) { return this.payloads.getDocumentPayloadRevision(documentId, revisionId); }

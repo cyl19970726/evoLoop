@@ -14,19 +14,30 @@
 | 位置 | 放什么（目标） |
 | --- | --- |
 | 左栏 | 紧凑任务列表，每行一个标题和状态；上方是范围（全部工作 / 我的承接）、搜索、状态与类型筛选，以及排序（优先级、截止时间、最近进展、创建时间、对账阶段） |
-| 中间 | 选中任务的正文：目标（只在有明确的阶段目标时显示，不再摘正文第一段重复一遍，行内代码按代码样式）→ 完成条件 → 正文 → 进展与讨论时间线。可切换到“表格视图”，用六列表格给 Leader 对账、批量扫读。手机上 `/work` 默认是紧凑列表（每行是标题、进展、类型、承接和最近进展），“任务视图”里选“表格”后，这个浏览器记住选择 |
+| 中间 | 标题下先是一条“现在”和一条关系条（见下表“标题下的两行”），再是选中任务的正文：目标（只在有明确的阶段目标时显示，不再摘正文第一段重复一遍，行内代码按代码样式）→ 完成条件（按 Markdown 显示：加粗、列表、行内代码、链接，编号保持编号，`<script>` 之类只当文字，不执行）→ 正文 → 进展与讨论时间线。可切换到“表格视图”，用六列表格给 Leader 对账、批量扫读。手机上 `/work` 默认是紧凑列表（每行是标题、进展、类型、承接和最近进展），“任务视图”里选“表格”后，这个浏览器记住选择 |
 | 右栏 | 状态与对账阶段；承接 Session（显示并可设置绑定）；关联文档（主正文、需求总图、Leader 编排总览、固定依据、交付物）；交付与使用；版本；可收起 |
 
 现状（#229 PR7、PR7b）：三处和五个页签已按新设计实现。`/work` 是表格视图，`/tasks/{ID}` 读一项任务；筛选与排序写在地址里。需求总图和 Leader 总览没有单独标记，作为关联文档列出。1440px 以下右栏默认收起，窄屏用“任务信息”打开。
 
 | 页签 | 放什么 |
 | --- | --- |
-| 当前工作 | 目标、完成条件、正文、进展与讨论（定时任务、协作、当前关注、阶段区间与计划、负责职责） |
+| 当前工作 | 目标、完成条件、正文、进展与讨论（定时任务、协作、当前关注、阶段区间与计划、负责职责）；旧的“现在：”一句已移到标题下 |
 | 依据与影响 | 开始时固定的依据和各文档现状；每项依据变化单独读两版、决定采用或保留 |
 | 交付与使用 | 每次交付的固定成果、技术检查、来源运行和这次的使用观察；验收接力；验收与关闭 |
 | 运行与关联 | 分派与确认（含分派记录）、执行队列、运行记录（可按链接定位）；被叫停的运行显示“已请求停止”和理由、自动循环、协作入口、Git 与外部来源登记（三种登记都是共同的提交表单；“复核此依据”直接展开采用表单并在表单里说明载入了什么；采用决定按打开表单时的任务版本和修订提交；记录正式关系时按标题选过程文档、按时间和作者选修订，Git 字段当场校验，见[仓库规范](repository.md)） |
 | 历史 | 状态变化、修订时间线、依据复核决定、验收约定；固定修订只读，只给“返回当前任务” |
 | 任务操作 | 当前身份在当前状态下能做的写入；定时任务（与新建任务相同，按任务时区填当地日期和时间；约定时间后的时区写名称，如“（上海）”，与日程页相同）；做不了的只计数。指定验收身份按本项目成员名称选：必须本人验收和独立智能体验收只列此刻能写入、类型符合的成员（必须本人验收不能不指定）；保留旧约定时人的使用由复核者代登记，人列出全部成员，智能体仍要能写入。身份文件改过时写明重启后的变化；成员读取中、列不出或要填服务身份时按完整标识填写 |
+
+## 标题下的两行（Task 0b60a377）
+
+| 位置 | 写法与来源 |
+| --- | --- |
+| “现在”（正文字号，无底色，1440 宽不超过 2 行） | `现在：〈阶段〉 · 等〈谁〉 · 已 〈多久〉 · 〈为什么或下一步〉 · 最新验收：〈已使用 / 使用失败 / 未使用〉 · 〈谁〉 · 〈时间〉`。阶段、等待对象、历时、下一步沿用已有判断（`currentStageText`、`waitingParty`、`timingDuration`、`workItemNextStep`），不另立一套；点“最新验收”落到“交付与使用”；没有验收结论写“还没有验收结论”。已关闭写“已关闭 · 时间”，已取消写“已取消 · 时间”，不再写“现在” |
+| 关系条（小字一行，项目之间用“·”，不做卡片或胶囊，390 宽折行不横向滚动） | 固定五项、固定顺序，每项“名称 + 链接”，没有就写“未登记”，不省略：阶段（短名链到“目标与阶段”那一行；“不属于阶段”带原因；“未归属”）、来源（“日程 〈名称〉”链到该日程；每日重复系列写“系列的上一份”链到上一份任务；其余“未登记”）、承接（承接的智能体名称链到它的页面）、交付（“第 N 份交付 · 时间 · 待验收 / 已使用 / 使用失败 / 未使用”链到“交付与使用”；没有写“还没有交付”）、依据（“固定依据 N 份”链到“依据与影响”）。原来单独一行的阶段并入这里 |
+| 来源的读取 | `GET /api/projects/{id}/tasks/{taskId}/origin` 从 `schedule_occurrence.task_id` 读出生成它的日程和那一次触发（`scheduleId`、`scheduleName`、`scheduleRevisionId`、`plannedAtUtc`），没有则为 `null`；不再靠修订里的文字猜。不新增迁移。每日重复的上一份来自 `…/tasks/{id}/timing` 的 `previousTaskId`。不做“上级任务”“来自消息”，这两种写“未登记” |
+| “阶段区间、计划与来源”里去掉的重复项 | 去掉：“下一步”框、阶段名与已历时（都在“现在”）、“当前交付”（在关系条的交付）、“来源”里的“阶段：”一句；“来源”改名“创建依据”。保留：本阶段起点、计划、时间、责任、创建依据、验收与使用者、完成边界、当前执行、Leader 决定、结果回程、前置任务；右栏不变 |
+
+截图（流程为返工、等智能体两天、最新验收使用失败）：[1440 浅色](../../assets/frontend-pages/task-now-1440-light.png)、[1440 深色](../../assets/frontend-pages/task-now-1440-dark.png)、[390 浅色](../../assets/frontend-pages/task-now-390-light.png)、[390 深色](../../assets/frontend-pages/task-now-390-dark.png)。
 
 ## 完成边界（Task b5993311）
 
@@ -166,7 +177,7 @@
 | 表格视图与对账 | `TaskTable.tsx`、`TaskReconciliation.tsx`、`taskWorkspacePresentation.ts`、`apps/workbench/src/shared/workStatusPresentation.ts`、`apps/workbench/src/shared/leaderWorkLoad.ts` | `task-workspace-presentation.test.ts`、`work-status.test.ts`、`leader-work-load.test.ts`、`leader-work-overview-browser.test.ts`、`task-list-owner-browser.test.ts` |
 | 右栏 | `TaskFacts.tsx`、`TaskAgentBlock.tsx`、`taskFactsPresentation.ts`、`apps/workbench/src/shared/revisionPresentation.ts`、`apps/workbench/src/shared/useRevisionOrigin.ts`（版本行的作者与理由）、`TaskDocumentPeek.tsx`、`apps/workbench/src/shared/workPresentation.ts`（下一步、责任、验收接力用语）、`apps/workbench/src/shared/ui/RecordName.tsx`（智能体名称读 `apps/workbench/src/shared/agentRead.ts`，叫法同 `apps/workbench/src/shared/agentNamePresentation.ts`） | `agent-name-task-side-browser.test.ts`（外部智能体在任务侧和智能体侧同名、正文没有短标识）、`revision-presentation.test.ts`、`task-wording-browser.test.ts`（`EVOLOOP_TASK_WORDING_SCREENSHOT_DIR`）、`task-list-model.test.ts`、`task-work-wording.test.ts`、`task-workspace-browser.test.ts`、`task-preview-current-responsibility-browser.test.ts` |
 | 跨空间返回 | `taskOrigin.ts`（链接从哪个页签或表格行出发）、`apps/workbench/src/shared/returnLink.ts`（哪些页面可返回、怎样称呼）、`apps/workbench/src/shared/ui/ReturnLink.tsx`、`apps/workbench/src/shared/taskNavigation.ts` | `return-link.test.ts`、`cross-space-return-browser.test.ts`（`EVOLOOP_RETURNS_SCREENSHOT_DIR` 存三个宽度的截图）、`task-session-return-browser.test.ts` |
-| 任务正文与进展 | `TaskPage.tsx`、`TaskArrangement.tsx`（当前关注、阶段区间与计划）、`TaskOwner.tsx`、`taskOwnerPresentation.ts`、`apps/workbench/src/features/discussions/TaskCollaborationThread.tsx`、`apps/workbench/src/shared/ui/MarkdownBody.tsx`（标题层级在 `apps/workbench/src/shared/ui/markdownContent.ts`） | `markdown-content.test.ts`、`task-workspace-presentation.test.ts`、`legacy-bits-browser.test.ts`、`task-edit-role-recovery.test.ts`、`task-owner-browser.test.ts`、`task-list-owner-browser.test.ts`、`task-session-return-browser.test.ts`、`discovery-browser.test.ts` |
+| 任务正文与进展 | `TaskPage.tsx`、`TaskNow.tsx`（现在与关系条）、`TaskArrangement.tsx`（当前关注、阶段区间与计划）、`TaskOwner.tsx`、`taskOwnerPresentation.ts`、`apps/workbench/src/features/discussions/TaskCollaborationThread.tsx`、`apps/workbench/src/shared/ui/MarkdownBody.tsx`（标题层级在 `apps/workbench/src/shared/ui/markdownContent.ts`） | `markdown-content.test.ts`、`task-workspace-presentation.test.ts`、`legacy-bits-browser.test.ts`、`task-edit-role-recovery.test.ts`、`task-owner-browser.test.ts`、`task-list-owner-browser.test.ts`、`task-session-return-browser.test.ts`、`discovery-browser.test.ts` |
 | 五个页签 | 记录者的叫法统一用 `apps/workbench/src/shared/actorPresentation.ts`（账号名照写，只有 UUID 的写“未登记名称的身份”，`worker-` 凭据写“自动执行方”，完整值在“完整标识”）；`TaskBasisTab.tsx`（两版对照里的非 Markdown 原件用 `apps/workbench/src/shared/ui/OriginalDocumentReader.tsx`）、`TaskDeliveryTab.tsx`、`TaskRuntimeTab.tsx`、`ResidentQueuePanel.tsx`（团队的运行与接入也用）、`apps/workbench/src/features/orchestration/`（自动循环）、`apps/workbench/src/features/references/`（Git 与外部来源登记，仓库规范也用；写入在 `referenceCommands.ts`）、`TaskHistoryTab.tsx`、`TaskActionsTab.tsx`、`EvidenceText.tsx` | `actor-presentation.test.ts`、`task-tabs-browser.test.ts`、`task-evidence-reading.test.ts`、`reference-commands.test.ts`、`legacy-bits-browser.test.ts`、`task-owner-presentation.test.ts`、`task-loop-browser.test.ts`（审计事件与交付页签的记录者不显示标识）、`schedule-run-session-path-browser.test.ts`、`document-original-reading-browser.test.ts` |
 | 写入 | `apps/workbench/src/shared/command/`（唯一的提交表单：基线、回执与表单）、`TaskForms.tsx`（页签部件与读取状态）、`taskCommands.ts`（各命令） | `use-command.test.ts`、`task-commands.test.ts`、`task-list-model.test.ts` |
 | 收件页与计数 | `InboxIndex.tsx`、`inboxModel.ts`（等我使用的判断、计数、带返回参数的链接）、`inboxReads.ts`（各项读取，外壳计数共用；含运行受阻的读取）、`inboxDeliveries.ts`（逐页读工作索引） | `inbox-model.test.ts`、`inbox-browser.test.ts`、`provider-hold-bar-browser.test.ts`（运行受阻一行与“只有你能办的运行问题”，`EVOLOOP_HOLD_SCREENSHOT_DIR` 存截图）、`provider-hold-notice.test.ts`、`decision-return-browser.test.ts`（`EVOLOOP_DECISION_RETURN_SCREENSHOT_DIR` 存两种宽度的截图）、`leader-work-overview-browser.test.ts`、`legacy-bits-browser.test.ts` |

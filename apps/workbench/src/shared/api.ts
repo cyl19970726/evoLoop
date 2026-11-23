@@ -230,6 +230,8 @@ export function api(token = "", timeoutMs = 15000) {
     leaderNotices: (p: string, taskId: string, cursor?: string) => call<import("@evoloop/contracts/leader-notices").LeaderNoticePage>(
       `${projectPath(p)}/work-management/notices?taskId=${key(taskId)}&limit=50${cursor ? `&cursor=${key(cursor)}` : ""}`),
     task: (p: string, id: string) => call<TaskDetail>(`${projectPath(p)}/tasks/${key(id)}`),
+    /** Which schedule occurrence created the Task (null when none): the "来源" of the task page. */
+    taskOrigin: (p: string, id: string) => requestNullable<import("@evoloop/contracts/scheduling").TaskScheduleOrigin>(token, `${projectPath(p)}/tasks/${key(id)}/origin`, timeoutMs),
     taskTiming: async (p: string, id: string) => {
       const timing = await requestNullable<TaskTimingView>(token, `${projectPath(p)}/tasks/${key(id)}/timing`, timeoutMs);
       if (timing && (timing.projectId !== p || timing.taskId !== id || typeof timing.rootTaskId !== "string" || !timing.rootTaskId
