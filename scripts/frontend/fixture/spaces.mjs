@@ -77,6 +77,21 @@ export const timedTasks = () => [
   timedItem(3, tasks.t7, tasks.t7, { repeat: "daily", seriesState: "stopped", executeAtUtc: ago(60 * 24 * 6), occurrenceCount: 4, skippedCount: 1,
     latestTask: { taskId: tasks.t7.id, title: tasks.t7.title, state: "done", plannedAtUtc: ago(60 * 24 * 3) } }),
 ];
+// 例行健康: the schedules and timed series above as one table, in the order the server gives it.
+export const routineHealth = () => {
+  const item = over => ({ kind: "schedule", rule: null, timezone: "Asia/Shanghai", repeat: null, rootTaskId: null, misfire: "latest", lastTrigger: null,
+    consecutiveSkips: 0, skippedTotal: null, nextAtUtc: null, overdue: null, lastTaskOpen: false, watermarkUtc: null, ...over });
+  const [daily, weekly] = schedules.list();
+  return { projectId, observedAt: ago(1), complete: true, items: [
+    item({ id: daily.id, title: daily.revision.template.title, state: "active", rule: daily.revision.rule, watermarkUtc: daily.watermarkUtc, nextAtUtc: later(0.9), lastTaskOpen: true,
+      lastTrigger: { plannedAtUtc: ago(60 * 2), observedAtUtc: ago(60 * 2 - 1), outcome: "created", reason: "scheduled", task: { taskId: tasks.t6.id, title: tasks.t6.title, state: "in_progress" } } }),
+    ...timedTasks().map(series => item({ kind: "timed_series", id: series.seriesId, title: series.title, state: series.seriesState, repeat: series.repeat, rootTaskId: series.rootTaskId,
+      misfire: null, skippedTotal: series.skippedCount, nextAtUtc: series.seriesState === "stopped" ? null : series.nextAtUtc ?? series.executeAtUtc,
+      lastTaskOpen: series.latestTask.state !== "done", lastTrigger: { plannedAtUtc: series.latestTask.plannedAtUtc, observedAtUtc: null, outcome: "created", reason: "scheduled",
+        task: { taskId: series.latestTask.taskId, title: series.latestTask.title, state: series.latestTask.state } } })),
+    item({ id: weekly.id, title: weekly.revision.template.title, state: "stopped", rule: weekly.revision.rule, watermarkUtc: weekly.watermarkUtc }),
+  ] };
+};
 export const timedFocus = tasks.t2.id;
 
 // ---------- evaluations (评价与后果) ----------

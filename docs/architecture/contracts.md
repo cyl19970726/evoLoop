@@ -498,6 +498,7 @@ Task 协作通道把 question/answer/progress/blocker/handoff/result 固定到�
 
 **定时直派（DEC-045 S1，迁移 108）。** 日程到点生成的 Task 默认交 Leader（进汇总的“待分诊”）。给日程设**分发策略**后可以直接进某个常驻 Session 的队伍，不经 Leader 排期：
 
+- 例行健康读取：`GET /api/projects/:projectId/routine-health`（项目成员只读，契约 `@evoloop/contracts/routine-health`）一次返回全部日程与定时任务系列的上次触发、连续跳过、下次时间、逾期标记，由 `PgRoutineHealth` 的一条查询和 `buildRoutineHealth` 推算，不落库、不新增迁移；逾期是核对水位落后一个周期加 30 分钟且没有触发记录。
 - 命令（都要 `management` 类别）：`schedule.dispatch.set`（日程、`mode`=`leader`/`direct`、`state`=`active`/`paused`/`revoked`、等待上限分钟数默认 120、每日运行预算可空；设为 `direct` 时记下此刻日程的 Task 模板和 Role 的当前修订）、`schedule.directList.set`（某个 Role 的直派名单：最多 20 个该 Role 的 Session，按偏好顺序整体替换）、`schedule.directEntry.withdraw`（把一个定时项从队伍撤下，必须选 `cancel` 取消 Task 或 `to_leader` 交 Leader；这时才补上它没发过的“待分诊”）。普通的 `line.remove` 对定时项一律拒绝（`SCHEDULE_CHOICE_REQUIRED`）。
 - 到点：同一事务里生成 occurrence、Task 和一行**派发意图**（`schedule_dispatch_log`，状态 `pending`，记模板哈希、Role 修订和等待上限），并关掉这一个 Task 的待分诊通知（`schedule_direct_intent`）。之后服务进程内的派发主体（`ScheduleDirectDispatcher`，随日程泵运行；重启后也会做完所有 `pending`）选 Session：**先空闲的，再队伍最短的，一样长按名单顺序**；只选“可用”的——就绪、恢复门打开、执行配置没有被拒或未知、队首没有挂起的项（另可由 `sessionAuthorized` 再核私有配置里的执行授权）。选定后用 `line.append`（来源 `schedule`）追加到队尾；没有可用 Session 或追加被拒，Task 回到 Leader：补发待分诊，并发立即级的 `direct_dispatch_blocked`。
 - **退回交 Leader**：日程模板改了（修订时触发器立刻把策略改成 `leader`，原因 `TEMPLATE_CHANGED`）、Role 的修订变了（下一次到点时 `ROLE_BINDING_CHANGED`）、策略被设为暂停或撤权，到点的 Task 都走 Leader 的待分诊。

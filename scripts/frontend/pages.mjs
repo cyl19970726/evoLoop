@@ -4,7 +4,7 @@
 // `prepare` after it is ready. Names are the file names under docs/assets/frontend-pages/ and stay fixed.
 import { actorId, agentKey, ago, id, projectId, roles } from "./fixture/common.mjs";
 import { docs, tasks, workIndex } from "./fixture/work.mjs";
-import { evaluations, knowledge, timedFocus } from "./fixture/spaces.mjs";
+import { evaluations, knowledge, schedules, timedFocus } from "./fixture/spaces.mjs";
 
 const p = path => `/p/${projectId}/${path}`;
 const heading = (name, level) => page => page.getByRole("heading", { name, exact: true, ...(level ? { level } : {}) }).filter({ visible: true }).first().waitFor();
@@ -88,7 +88,9 @@ export const scenes = [
       body: JSON.stringify({ message: "原件存储暂时不可达" }) })) },
   { name: "knowledge", path: p(`knowledge?knowledgeId=${knowledge.firstPage}`), drawer: true, ready: heading("右栏只在要时打开", 1) },
 
-  { name: "schedules", path: p("schedules"), drawer: true, ready: both(heading("日程"), text("每日验收巡检")) },
+  // 例行健康 is the first screen; a row opens the schedule's detail (`?schedule=`) with 返回例行健康.
+  { name: "schedules", path: p("schedules"), drawer: true, ready: both(heading("日程"), text("例行健康"), text("每日验收巡检")) },
+  { name: "schedules-detail", path: p(`schedules?schedule=${schedules.list()[0].id}`), drawer: true, ready: both(heading("日程"), text("返回例行健康")) },
   // 定时任务 beside the definitions; the link back from a timed Task lands on its item (`?timing=`).
   { name: "schedules-timed", path: p(`schedules?timing=${timedFocus}`), ready: both(heading("日程"), text("定时任务"), text("已停止，不再复制后续时点")) },
 

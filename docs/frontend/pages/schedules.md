@@ -27,6 +27,29 @@
 
 现状（#229 PR9c）：日程列表在内层栏（窄屏另有下拉）；中间是所选日程的检查目的与任务材料、发生记录和修订表单，其下是“定时任务”一栏；右栏是触发条件、下次时间（按规则推算的预览）、产生的任务、授权与协调器。创建日程是中间的单独视图。创建、修订和停用表单是共同的[提交表单](../components.md#提交表单)，修订还核对授权是否变化（#229 F3）：职责和日程授权按名称选择，时间按日程时区填写；完整标识在“来源与完整标识”里。
 
+## 例行健康：首屏的健康表（Task acfaa4f0）
+
+| 项 | 写什么 |
+| --- | --- |
+| 首屏 | 一张表：日程定义和 Task 定时系列各占一行，不用卡片。点一行进入日程详情，地址带 `?schedule=`，刷新仍在该日程，返回回到表 |
+| 列 | 名称与一句话规则、上次触发、连续跳过、下次时间、状态（在跑 / 已暂停；已停止的折在“已停止 · N”里，默认收起；测试与样本折叠照旧） |
+| 上次触发 | 时间加结果：创建了任务就写任务名和它现在的状态并链到任务；跳过写中文原因（原始代码留在详情里）；从未触发写“还没有触发过”，不写成跳过 |
+| 连续跳过 | 从最近一次往前数连续跳过的次数，0 不显示数字；两次及以上带警示标记 |
+| 逾期 | 在跑的例行，核对水位落后超过一个周期加 30 分钟且没有新触发记录，写“应在〈时间〉触发，没有记录”，与连续跳过共用同一个警示标记，不加行底色；因缺授权而没有记录的也只显示为逾期，不推断原因 |
+| 顺序 | 逾期、连续跳过两次及以上、上次任务还开着、其余按下次时间；服务端排好，页面不重排 |
+| 读取 | 一次只读请求 `GET /api/projects/:projectId/routine-health` 返回全部行，不新增迁移；读不到时表头写“健康表读不到”并给重试，左栏日程列表和详情照常可用 |
+| 窄屏 | 390 宽每行两行（名称与状态、上次结果与下次时间），不横向滚动；浅色与深色都按[设计语言](../principles.md)用状态标签，不用底色块 |
+
+![例行健康，1440，浅色](../../assets/frontend-pages/schedules-health-1440-light.png)
+
+![例行健康，1440，深色](../../assets/frontend-pages/schedules-health-1440-dark.png)
+
+![例行健康，390，浅色](../../assets/frontend-pages/schedules-health-390-light.png)
+
+![例行健康，390，深色](../../assets/frontend-pages/schedules-health-390-dark.png)
+
+![健康表读不到，1440](../../assets/frontend-pages/schedules-health-failed-1440-light.png)
+
 ## 日程定义、Task 定时与每次触发（Task 9e45cd20）
 
 | 部分 | 写什么 |
@@ -69,11 +92,17 @@
 
 由 `npm run docs:screenshots` 用合成夹具生成，怎样重新生成见[页面截图](../architecture.md#页面截图)。
 
-![日程，1440：右栏内嵌](../../assets/frontend-pages/schedules-1440.png)
+![日程首屏（例行健康），1440：右栏内嵌](../../assets/frontend-pages/schedules-1440.png)
 
-![日程，1024：右栏以抽屉打开](../../assets/frontend-pages/schedules-1024.png)
+![日程首屏（例行健康），1024：右栏以抽屉打开](../../assets/frontend-pages/schedules-1024.png)
 
-![日程，390](../../assets/frontend-pages/schedules-390.png)
+![日程首屏（例行健康），390](../../assets/frontend-pages/schedules-390.png)
+
+![日程详情（点开一行后），1440](../../assets/frontend-pages/schedules-detail-1440.png)
+
+![日程详情（点开一行后），1024](../../assets/frontend-pages/schedules-detail-1024.png)
+
+![日程详情（点开一行后），390](../../assets/frontend-pages/schedules-detail-390.png)
 
 ![定时任务一栏，1440](../../assets/frontend-pages/schedules-timed-1440.png)
 

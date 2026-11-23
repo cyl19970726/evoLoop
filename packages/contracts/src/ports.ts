@@ -28,6 +28,8 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
   taskTiming?: Pick<TaskTimingQueries, "get" | "list">;
   /** Read-only scheduled direct-dispatch facts; absent in adapters that do not store them. */
   scheduleDispatch?: import("./schedule-dispatch.js").ScheduleDispatchReader;
+  /** The facts behind the schedule page's health table; absent in adapters that do not store schedules. */
+  scheduleHealth?: import("./routine-health.js").ScheduleHealthReader;
   recovery?: import('./session-recovery.js').SessionRecoveryReader;
   /** Queue capability is optional for legacy in-memory adapters; commands reject its absence. */
   queue?: QueueReader;
