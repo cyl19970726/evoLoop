@@ -7,7 +7,10 @@
 //                    a process has its working directory there (a Run or a message turn) -> unsynced, never switched while in use
 //                    idle and clean, on the base branch  -> fast-forwarded to the release commit
 //                    idle and clean, on a detached commit -> detached checkout of the release commit
-//                    idle and clean, on any other branch  -> unsynced: a business branch is not switched or moved
+//                    idle and clean, on a business branch already merged into the release (0 commits ahead of it), whole work tree clean
+//                                         -> detached checkout of the release commit, the record says "从已合并分支 X 切到发布提交" (the branch itself is kept)
+//                    a business branch with commits not in the release, or a changed work tree, or a Session with a Run in progress (read from the coordinator),
+//                    or no way to read that -> unsynced, the reason says which
 //   afterwards every updated workspace is read back and compared file by file with the release; one that still differs is unsynced.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -79,14 +82,46 @@ export function checkSkillSync(skillSync) {
   if (typeof skillSync !== "object" || !Array.isArray(skillSync.workspaces) || skillSync.workspaces.some(path => typeof path !== "string" || !isAbsolute(path))) throw new Error("config.skillSync.workspaces must be a list of absolute paths");
   if (skillSync.baseBranch !== undefined && (typeof skillSync.baseBranch !== "string" || !skillSync.baseBranch)) throw new Error("config.skillSync.baseBranch must be a branch name");
   if (skillSync.remote !== undefined && (typeof skillSync.remote !== "string" || !skillSync.remote)) throw new Error("config.skillSync.remote must be a remote name");
+  const sessions = skillSync.sessions;
+  if (sessions !== undefined && (typeof sessions !== "object" || sessions === null || typeof sessions.cli !== "string" || !isAbsolute(sessions.cli) || typeof sessions.project !== "string" || !sessions.project)) throw new Error("config.skillSync.sessions must be { cli: absolute path of the evoloop CLI, project: project id }");
   return skillSync;
 }
 
 /**
- * Sync one workspace to the release commit `sha`, whose skills are `want` (the hashes of the release's .agents/skills).
- * Returns { path, result: "consistent" | "updated" | "unsynced", reason?, from?, mode? }; never throws.
+ * The real "does the Session working here have a Run in progress" source for a release: the coordinator's own read-only state through the agent CLI.
+ * `list sessions` gives every Session's working directory, `work board` what each is doing now (a Run or a message Turn; null when idle). A process in the directory
+ * is not that signal: a Codex app-server stays resident in another directory, and a Claude Turn is a process only while it runs.
+ * Returns async (workspace) => a reason string when a Session whose working directory is the workspace is busy (or being closed), false when all are idle.
+ * Throws when either read fails or the answer is not understood: the caller then treats it as "cannot confirm".
  */
-export async function syncWorkspace({ path, sha, want, baseBranch = "main", remote = "origin", git = (cwd, ...args) => run(["git", "-C", cwd, ...args]), lister }) {
+export function sessionRunCheck({ cli, project, exec = (...argv) => run(argv) }) {
+  const read = async (...args) => JSON.parse(await exec(cli, ...args, "--project", project));
+  const real = async path => { try { return await realpath(path); } catch { return path; } };
+  return async workspace => {
+    const [sessions, board] = await Promise.all([read("list", "sessions"), read("work", "board")]);
+    if (!Array.isArray(sessions) || !Array.isArray(board?.sessions)) throw new Error("unexpected session list or work board");
+    const want = new Set([workspace, await real(workspace)]);
+    const here = [];
+    for (const item of sessions) if (typeof item.cwd === "string" && item.state !== "closed" && (want.has(item.cwd) || want.has(await real(item.cwd)))) here.push(item);
+    const busy = [];
+    for (const item of here) {
+      const entry = board.sessions.find(row => row.sessionId === item.id);
+      if (!entry) throw new Error(`Session ${String(item.id).slice(0, 8)} is not on the work board`);
+      if (entry.current) busy.push(`${entry.current.kind === "run" ? "Run" : "消息轮次"} ${String(entry.current.id).slice(0, 8)}${entry.current.taskTitle ? ` · ${String(entry.current.taskTitle).slice(0, 30)}` : ""}`);
+      else if (entry.state && entry.state !== "ready") busy.push(`Session ${String(item.id).slice(0, 8)} 状态 ${entry.state}`);
+    }
+    return busy.length ? busy.slice(0, 3).join("；") : false;
+  };
+}
+
+/**
+ * Sync one workspace to the release commit `sha`, whose skills are `want` (the hashes of the release's .agents/skills).
+ * `runActive(path)` answers whether a Session working there has a Run (or message Turn) in progress: a reason string when it has, falsy when not; it throwing counts as "cannot confirm".
+ * A release gets it from the coordinator (`sessionRunCheck`, config `skillSync.sessions`), not from processes: a resident Codex app-server is not in the workspace and a Claude Turn is a process only while it runs.
+ * Moving a business branch needs this source; without one it stays untouched. The process check below stays as a second guard.
+ * Returns { path, result: "consistent" | "updated" | "unsynced", reason?, from?, mode?, fromBranch? }; never throws.
+ */
+export async function syncWorkspace({ path, sha, want, baseBranch = "main", remote = "origin", git = (cwd, ...args) => run(["git", "-C", cwd, ...args]), lister, runActive }) {
   const skills = join(path, SKILLS_DIR);
   try {
     if (!(await stat(path).then(item => item.isDirectory(), () => false))) return { path, result: "unsynced", reason: "目录不存在" };
@@ -99,32 +134,45 @@ export async function syncWorkspace({ path, sha, want, baseBranch = "main", remo
     const using = await processesIn(path, { lister });
     if (using === null) return { path, result: "unsynced", reason: "无法列出进程工作目录，不能确认没有在使用，未动", differing: diffBefore.length };
     if (using.length) return { path, result: "unsynced", reason: `正被使用（${using.slice(0, 3).map(item => `${item.command}[${item.pid}]`).join("、")} 的工作目录在这里），未切换`, differing: diffBefore.length };
+    if (runActive) {
+      let active; try { active = await runActive(path); } catch (error) { return { path, result: "unsynced", reason: `无法确认它的 Session 有没有进行中的 Run（${String(error.message).slice(0, 100)}），未动`, differing: diffBefore.length }; }
+      if (active) return { path, result: "unsynced", reason: `它的 Session 有进行中的 Run（${String(active).slice(0, 100)}），未切换`, differing: diffBefore.length };
+    }
     const branch = (await git(path, "branch", "--show-current")).trim();
     const head = (await git(path, "rev-parse", "HEAD")).trim();
     try { await git(path, "cat-file", "-e", `${sha}^{commit}`); } catch {
       try { await git(path, "fetch", "--quiet", remote, sha); } catch (error) { return { path, result: "unsynced", reason: `取不到发布提交 ${sha.slice(0, 8)}（${error.message.slice(0, 120)}）`, differing: diffBefore.length }; }
     }
-    let mode;
+    let mode, fromBranch;
     if (branch === "") { await git(path, "checkout", "--quiet", "--detach", sha); mode = "游离提交，改到发布提交"; }
     else if (branch === baseBranch) {
       try { await git(path, "merge", "--ff-only", "--quiet", sha); } catch (error) { return { path, result: "unsynced", reason: `${baseBranch} 不能快进到发布提交（${error.message.slice(0, 120)}）`, differing: diffBefore.length }; }
       mode = `${baseBranch} 快进到发布提交`;
-    } else return { path, result: "unsynced", reason: `在业务分支 ${branch} 上，不切换分支也不移动它`, differing: diffBefore.length };
+    } else {
+      // only one already merged into the release (nothing ahead of it) with a clean work tree is left; the branch stays as it is
+      const ahead = Number((await git(path, "rev-list", "--count", `${sha}..HEAD`)).trim());
+      if (ahead > 0) return { path, result: "unsynced", reason: `在业务分支 ${branch} 上，有 ${ahead} 个提交不在发布提交里（未合并），不切换分支也不移动它`, differing: diffBefore.length };
+      const changes = (await git(path, "status", "--porcelain", "--untracked-files=all")).split("\n").filter(Boolean);
+      if (changes.length) return { path, result: "unsynced", reason: `分支 ${branch} 已合并，但工作树有改动（${changes.length} 项，如 ${changes[0].trim()}），未动`, differing: diffBefore.length };
+      // a business branch: a switch moves HEAD under whoever works here, so it needs a real answer to "is a Run in progress": without a source, nothing moves
+      if (!runActive) return { path, result: "unsynced", reason: `在业务分支 ${branch} 上，没有配置能读出 Session 进行中 Run 的来源（skillSync.sessions），不能确认没有在使用，未切换`, differing: diffBefore.length };
+      await git(path, "checkout", "--quiet", "--detach", sha); mode = `从已合并分支 ${branch} 切到发布提交（游离，分支保留）`; fromBranch = branch;
+    }
     const diffAfter = differences(want, await hashTree(skills));
     if (diffAfter.length) return { path, result: "unsynced", reason: `更新后仍有 ${diffAfter.length} 个文件不一致（如 ${diffAfter[0]}）`, from: head.slice(0, 8), differing: diffAfter.length };
-    return { path, result: "updated", mode, from: head.slice(0, 8), changed: diffBefore.length };
+    return { path, result: "updated", mode, from: head.slice(0, 8), changed: diffBefore.length, ...(fromBranch ? { fromBranch } : {}) };
   } catch (error) { return { path, result: "unsynced", reason: `核对时出错：${error.message.slice(0, 160)}` }; }
 }
 
 /** Sync every workspace in the list against the release source tree; returns the facts for the release record, with the one-line summary. */
-export async function syncSkills({ workspaces, sourceDir, sha, baseBranch, remote, git, lister }) {
+export async function syncSkills({ workspaces, sourceDir, sha, baseBranch, remote, git, lister, runActive }) {
   const want = await hashTree(join(sourceDir, SKILLS_DIR));
   if (!want || !want.size) return { checkedAt: new Date().toISOString(), commit: sha, error: `发布的源码目录里没有 ${SKILLS_DIR}，没有核对`, consistent: 0, updated: 0, unsynced: [], summary: `技能同步：没有核对（发布里没有 ${SKILLS_DIR}）` };
   const results = [];
-  for (const path of workspaces) results.push(await syncWorkspace({ path, sha, want, baseBranch, remote, git, lister }));
+  for (const path of workspaces) results.push(await syncWorkspace({ path, sha, want, baseBranch, remote, git, lister, runActive }));
   const consistent = results.filter(item => item.result === "consistent").length, updated = results.filter(item => item.result === "updated");
   const unsynced = results.filter(item => item.result === "unsynced").map(({ path, reason, differing }) => ({ path, reason, ...(differing ? { differingFiles: differing } : {}) }));
   const total = consistent + updated.length;
-  return { checkedAt: new Date().toISOString(), commit: sha, files: want.size, consistent: total, updated: updated.map(({ path, mode, from, changed }) => ({ path, mode, from, changedFiles: changed })), unsynced,
+  return { checkedAt: new Date().toISOString(), commit: sha, files: want.size, consistent: total, updated: updated.map(({ path, mode, from, changed, fromBranch }) => ({ path, mode, from, changedFiles: changed, ...(fromBranch ? { fromBranch } : {}) })), unsynced,
     summary: `技能同步：${workspaces.length} 个工作区，${total} 个一致（其中本次更新 ${updated.length} 个），${unsynced.length} 个未同步${unsynced.length ? "，下次发布再试" : ""}` };
 }
