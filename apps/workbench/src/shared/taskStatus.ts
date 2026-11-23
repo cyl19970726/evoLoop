@@ -42,9 +42,13 @@ export const phaseStatus: Record<LeaderWorkPhase, StatusPresentation> = withUnre
   cancelled: { tone: "history", label: "已取消" },
 }, "阶段");
 
-/** The order the reconciliation summary counts phases in: what needs a decision first. */
+/**
+ * How urgent a phase is, most urgent first: the order of the phase counts and of the task list's default order
+ * (the only place it is written; docs/frontend/pages/tasks.md lists it). 结果未知, 待返工, 受阻, 待验收, 等关闭, 等发布,
+ * 等前置, 待交付, 待接手, 可开始, 运行中, 未分派.
+ */
 export const phaseOrder: readonly LeaderWorkPhase[] = [
-  "unknown", "rework", "blocked", "awaiting_delivery", "awaiting_acceptance", "awaiting_prerequisite", "awaiting_release", "awaiting_close", "awaiting_assignment", "ready", "running", "unassigned",
+  "unknown", "rework", "blocked", "awaiting_acceptance", "awaiting_close", "awaiting_release", "awaiting_prerequisite", "awaiting_delivery", "awaiting_assignment", "ready", "running", "unassigned",
 ];
 
 /**

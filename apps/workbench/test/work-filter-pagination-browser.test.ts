@@ -16,14 +16,14 @@ const task = (index: number, state: string, title: string) => ({ projectId,
   title, content: "正文", kind: "implementation", acceptance: "核对", owner: "reader", state, createdAt: stamp });
 
 for (const scenario of ["visible", "failure", "closed", "mine"] as const) test({
-  visible: "unfinished work behind a closed first page appears without a manual load",
-  failure: "filtered continuation reports a failed page and can resume without claiming an empty project",
-  closed: "exhausted closed pages report no matching tasks rather than an empty project",
+  visible: "unfinished work behind a closed first page is listed from the open-work index without reading further Task pages",
+  failure: "with the open-work index unreadable, filtered continuation reports a failed page and can resume without claiming an empty project",
+  closed: "an index with no open tasks reports none rather than an empty project, and the all-tasks range still pages",
   mine: "my work waits for assignment projections before deciding to continue past the current page",
 }[scenario], {
   skip: !modulePath && "Set EVOLOOP_BROWSER_TEST_PLAYWRIGHT_MODULE",
 }, async t => {
-  const failingPage = scenario === "failure", mine = scenario === "mine", onlyClosed = scenario === "closed";
+  const failingPage = scenario === "failure", visibleScenario = scenario === "visible", mine = scenario === "mine", onlyClosed = scenario === "closed";
   // Assignment projections are held until restore; the shell's 待我处理 count reads the same index, so restore answers
   // every index read from then on instead of holding the next one.
   const heldProjections: (() => void)[] = [];
@@ -58,6 +58,15 @@ for (const scenario of ["visible", "failure", "closed", "mine"] as const) test({
       else if (url.pathname === `${root}/impacts`) value = [];
       else if (url.pathname === `${root}/work-management/index`) {
         if (holdProjections) await new Promise<void>(resolve => heldProjections.push(resolve));
+        if (failingPage) { res.writeHead(503, { "content-type": "application/json" }); res.end(JSON.stringify({ message: "索引暂不可读" })); return; }
+        const row = (item: typeof current, phase: string) => ({ kind: "task", taskId: item.id, version: 1, currentRevisionId: item.currentRevisionId,
+          title: item.title, taskState: item.state, taskKind: item.kind, phase, nextAction: "继续", workChangeSequence: 0, owner: "reader",
+          responsible: { kind: "actor", id: "reader", label: "reader" }, assignment: null,
+          latestRun: null, delivery: null, pendingImpactCount: 0, queueHold: null, goal: null, stage: null,
+          plan: { plannedStartAt: null, dueAt: null, priority: null }, dependencies: [], dependencyVersion: 0, review: null,
+          dates: { createdAt: stamp, businessChangedAt: stamp, startedAt: null, completedAt: null, observedAt: stamp }, actionKey: item.id });
+        if (visibleScenario) { value = { items: [row(current, "running"), row(future, "ready")], nextCursor: null, total: 2, counts: { running: 1, ready: 1 },
+          changeSequence: 0, observedAt: stamp, partial: false }; res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(value)); return; }
         value = { items: mine ? [{ kind: "task", taskId: current.id, version: 1, currentRevisionId: current.currentRevisionId,
           title: current.title, taskState: current.state, taskKind: current.kind, phase: "ready", nextAction: "继续当前工作", workChangeSequence: 0,
           responsible: { kind: "actor", id: "reader", label: "reader" }, assignment: { state: "accepted", targetKind: "external", targetId: projectId, recipientActorId: "reader" },
@@ -103,8 +112,8 @@ for (const scenario of ["visible", "failure", "closed", "mine"] as const) test({
     assert.deepEqual(errors, []); return;
   }
   if (onlyClosed) {
-    await main.getByText("没有匹配项", { exact: true }).waitFor({ timeout: 5000 });
-    assert.deepEqual(cursors, ["first", "second"]);
+    await main.getByText("没有未完成的任务", { exact: true }).waitFor({ timeout: 5000 });
+    assert.deepEqual(cursors, ["first"], "the open list is read from the index, not by paging closed Tasks");
     assert.equal(await main.getByText("还没有任务", { exact: true }).count(), 0);
     await filterState("all");
     await main.getByRole("row").filter({ hasText: "历史任务 1" }).first().waitFor();
@@ -118,6 +127,22 @@ for (const scenario of ["visible", "failure", "closed", "mine"] as const) test({
   }
   await main.getByRole("row").filter({ hasText: current.title }).waitFor({ timeout: 5000 });
   await page.waitForTimeout(300);
+  if (visibleScenario) {
+    // The old assertion (“stop automatic continuation once a match is visible”) guarded a list that had to page through
+    // closed Tasks to find open ones. The 未完成 list is now read whole from the open-work index, so it never continues
+    // through Task pages at all: the replacement asserts exactly that, and that the footer says the list is complete.
+    assert.deepEqual(cursors, ["first"], "the open list needs no Task page beyond the first");
+    await main.getByRole("row").filter({ hasText: future.title }).waitFor();
+    await main.getByText("未完成 2 项，已全部列出", { exact: true }).waitFor();
+    assert.equal(await main.getByRole("button", { name: "加载更多", exact: true }).count(), 0);
+    await filterState("todo");
+    assert.match(page.url(), /[?&]state=todo/, "the filter is written into the address");
+    await filterState("all");
+    await main.getByRole("row").filter({ hasText: "历史任务 1" }).first().waitFor();
+    await main.getByText(/已载入 \d+ 项，后面还有，按编号顺序/).waitFor();
+    assert.equal(await page.locator("body").evaluate(element => element.scrollWidth <= window.innerWidth), true);
+    assert.deepEqual(errors, []); return;
+  }
   assert.equal(cursors.filter(cursor => cursor === "second").length, failingPage ? 2 : 1);
   assert.equal(cursors.includes("third"), false, "stop automatic continuation once matching work is visible");
   await filterState("todo");

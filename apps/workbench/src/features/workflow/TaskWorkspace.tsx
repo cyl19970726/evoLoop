@@ -7,7 +7,7 @@ import { Plus } from "lucide-react";
 import { hasDecisionAuthority } from "@evoloop/contracts";
 import { Button, cn } from "@evoloop/ui";
 import type { MutationContext } from "../../shared/ActionForm";
-import { currentPath, onNavigate, replaceQuietly } from "../../shared/navigation";
+import { currentPath, onNavigate, pushQuietly, replaceQuietly } from "../../shared/navigation";
 import { taskListKeys, taskTabHref, type TaskSection } from "../../shared/taskNavigation";
 import { ContextPanelContent, useContextPanel } from "../../shared/ui/ContextPanel";
 import { ContextRailContent } from "../../shared/ui/ContextRail";
@@ -84,13 +84,14 @@ export function TaskWorkspace({ context, refresh, active, taskId, selectedRevisi
   const layout = React.useSyncExternalStore(subscribeLayout, currentLayout, () => "list" as const);
   const stacked = table && narrow && layout === "list";
   const list = useTaskList(projectId, view, principal.actorId, active, { projectionsFor: table ? "filtered" : "none", extraIds: view.selected ? [view.selected] : [] });
-  const setView = (patch: Partial<TaskListView>) => {
+  /** `push`: the change adds a history entry, so Back returns to the list as it was (a phase chosen from the header). */
+  const setView = (patch: Partial<TaskListView>, options: { push?: boolean } = {}) => {
     const next = { ...view, ...patch };
     setViewState(next);
     if (!active) return;
     if (table) {
       const route = taskListRoute(projectId, next);
-      replaceQuietly(route);
+      (options.push ? pushQuietly : replaceQuietly)(route);
       try { sessionStorage.setItem(`evoloop:list:${projectId}`, route); } catch { /* optional return state */ }
     } else replaceQuietly(detailAddress(currentPath(), next));
   };
@@ -141,7 +142,7 @@ export function TaskWorkspace({ context, refresh, active, taskId, selectedRevisi
         <Button asChild variant="primary" size="compact"><a href={href(projectId, "create-task")}><Plus size={15} aria-hidden="true" />新建任务</a></Button>
       </header>
       <p className="text-label text-text-secondary">批量核对任务的进展、承接与成果。选中一行，右栏显示它的状态、承接、文档与交付；需要推进或调整时，先与相关智能体沟通，再回到这里读回。</p>
-      <TaskTable projectId={projectId} list={list} view={view} selectedId={selected || null} onSelect={id => setView({ selected: id })} linkFor={linkFor} stacked={stacked} actorId={principal.actorId} />
+      <TaskTable projectId={projectId} list={list} view={view} selectedId={selected || null} onSelect={id => setView({ selected: id })} onPhase={phase => setView({ phase, ...phase ? { filter: "open" } : {} }, { push: true })} linkFor={linkFor} stacked={stacked} actorId={principal.actorId} />
     </div>
     {selected && <ContextPanelContent><TaskFacts key={selected} context={context} taskId={selected} heading linkForTab={tabLink(selected)}
       outsideFilter={!list.loading && !list.visible.some(task => task.id === selected)}
