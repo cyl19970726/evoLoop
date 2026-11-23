@@ -78,6 +78,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   });
   let orchestrationClock: string | null=null;
   const orchestration=new OrchestrationService({store,now:()=>orchestrationClock ?? new Date().toISOString(),nextId:randomUUID,hash,
+    checkDeliveryReport:(project,contentHash)=>workflow.checkRequiredLines({type:"delivery.record",projectId:project,contentHash}),
     getWorkerScope:async actor=>(await broker.identityForActor(actor))?.scope ?? null,
     canReadDivisionMaterial:async(actor,documentId,revisionId)=>{
       const identity=await broker.identityForActor(actor);
@@ -226,6 +227,13 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   const paused=(await orchestration.getLoop(owner,projectId,loopId))!;
   await orchestrate({type:"loop.state",loopId,expectedVersion:paused.version,state:"paused",reason:"No new dispatch; existing Run may finish"});
   const submissionId=randomUUID(),deliveryOperationId=randomUUID();
+  // Task 3797cbdd: the sealer writes the delivery without the command entry, so a managed worker's report original is checked at submit time.
+  const lineless=await workerCommand(wrapper,{type:"worker.submit",submissionId:randomUUID(),dispatchId:dispatch.entityId,runId,
+    taskRevisionId:run.revisionId,runInputHash:hash(input),deliveryOperationId:randomUUID(),
+    deliveryIntent:{artifactRef:"fixture:review-report",artifactRevision:"v1",contentHash:hash("# Worker evidence"),
+      technicalResult:"failed",technicalEvidence:"Report original has no next-time line",reason:"Must be refused"},
+    agentObservation:"Report without the required line",evidenceRefs:[]},1);
+  assert.equal(lineless.error?.code,"REPORT_NEXT_TIME_LINE_REQUIRED");
   const submitted=await workerCommand(wrapper,{type:"worker.submit",submissionId,dispatchId:dispatch.entityId,runId,
     taskRevisionId:run.revisionId,runInputHash:hash(input),deliveryOperationId,
     deliveryIntent:{artifactRef:"fixture:review-report",artifactRevision:"v1",contentHash:hash("review-report"),
@@ -282,7 +290,7 @@ test("real wrapper, HTTP guard and PG facts admit fixed context and bounded cogn
   assert.equal((await cli(businessWrapper,["task",cognitiveTaskId],1)).error?.code,"FORBIDDEN");
   assert.equal((await workerCommand(businessWrapper,{type:"task.create",taskId:randomUUID(),stageId,title:"Forbidden",
     content:"# No\n关闭后下一步：无",acceptance:"No",owner:businessRole},1)).error?.code,"FORBIDDEN");
-  const businessReportId=randomUUID(),businessReportBody="# Business delivery report\nFixed facts.";
+  const businessReportId=randomUUID(),businessReportBody="# Business delivery report\nFixed facts.\n\n**下次同类工作先要知道的事**：无";
   const businessReportCreated=await workerCommand(businessWrapper,{type:"document.create",documentId:businessReportId,kind:"report",
     title:"Business delivery report",body:businessReportBody,origin:{taskId:childTaskId,runId:businessRunId}});
   const businessReportRevisionId=businessReportCreated.revisionId as string;
