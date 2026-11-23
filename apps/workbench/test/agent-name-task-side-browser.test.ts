@@ -127,7 +127,9 @@ test("an external agent is named the same on the task side and the agent side, w
   // The task's header and its right column, at 1440.
   const taskPage = await open(`/p/${projectId}/tasks/${first.taskId}`, 1440);
   const header = taskPage.locator(`[data-task-page="${first.taskId}"] [data-task-header]`);
-  await header.getByText(shownName, { exact: true }).waitFor({ timeout: 10000 });
+  // The header names it twice: as the responsible agent and as 承接 in the relation bar.
+  await header.getByText(shownName, { exact: true }).first().waitFor({ timeout: 10000 });
+  await header.locator('[data-relation="agent"]').getByText(shownName, { exact: true }).waitFor({ timeout: 10000 });
   const facts = taskPage.getByRole("complementary", { name: "右栏" }).locator(`[data-task-facts="${first.taskId}"]`);
   await facts.locator("[data-task-agent]").getByText(shownName, { exact: true }).waitFor({ timeout: 10000 });
   await facts.getByText(shownName, { exact: true }).first().waitFor();

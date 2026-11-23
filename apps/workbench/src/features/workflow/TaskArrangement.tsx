@@ -3,7 +3,7 @@
 // acceptance, execution, delivery, the Leader's decision, the result notices and the prerequisites). Server text
 // written for agents and raw identifiers stay in the full-identifier layer.
 import { completionBoundaryFact } from "./acceptanceConventionPresentation";
-import { currentStageText, usedWaitResponsibility } from "../../shared/leaderWorkLoad";
+import { usedWaitResponsibility } from "../../shared/leaderWorkLoad";
 import React from "react";
 import { hasPermission, type TaskAttentionFollowUp, type TaskAttentionItem, type TaskDetail } from "@evoloop/contracts";
 import type { LeaderNotice } from "@evoloop/contracts/leader-notices";
@@ -13,7 +13,7 @@ import { api, errorText, request } from "../../shared/api";
 import type { MutationContext } from "../../shared/ActionForm";
 import { useProjectPages, useProjectQuery } from "../../shared/query";
 import { timingDuration, timingStageLabel, waitingKindLabel, waitingParty } from "../../shared/taskTiming";
-import { responsibleText, waitingText, workItemNextStep } from "../../shared/workPresentation";
+import { responsibleText } from "../../shared/workPresentation";
 import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { ResponsibleName } from "../../shared/ui/RecordName";
 import { date, href } from "../../shared/ui/shared";
@@ -239,9 +239,8 @@ export function TaskArrangementFacts({ projectId, detail, leader, responsibleNam
     ? responsibleText(leader.responsible, leader.assignment, { state: "named", name: responsibleName.trim() })
     : <ResponsibleName projectId={projectId} item={leader} />;
   return <div className="flex flex-col gap-4" data-task-arrangement="">
-    <p data-task-next="" className="rounded-lg bg-accent px-4 py-2.5 text-label text-foreground"><strong>下一步：</strong>{workItemNextStep(leader)}</p>
     {timing ? <div className="flex flex-col gap-1">
-      <p className="text-label text-foreground">{currentStageText(timing.current.stage, leader.phase, timingStageLabel[timing.current.stage] ?? "阶段未知")} · 本阶段 {date(timing.current.startedAt ?? undefined)} 起 · 已历时 {timingDuration(timing.current.elapsedMs)} · {usedWaitResponsibility(leader) ?? waitingText(timing.current.waitingFor, leader.assignment)}</p>
+      <p className="text-label text-foreground">本阶段 {date(timing.current.startedAt ?? undefined)} 起{usedWaitResponsibility(leader) ? ` · ${usedWaitResponsibility(leader)}` : ""}</p>
       <Fine>任务创建 {timing.createdAt ? date(timing.createdAt) : "未知"} · 发布证据 {timing.publication.source === "explicit" && timing.publication.at ? `已发布 ${date(timing.publication.at)}` : "未知；具备发布条件不代表已发布"} ·
         最近有效进展 {timing.latestEffectiveProgress ? date(timing.latestEffectiveProgress.at) : "未知"} · 执行活动 {timing.executionActivity
           ? `${date(timing.executionActivity.at)} · ${timing.executionActivity.freshness === "live" ? "新近观察" : timing.executionActivity.freshness === "stale" ? "观察已过期" : "新鲜度未知"}` : "未知"}</Fine>
@@ -260,7 +259,7 @@ export function TaskArrangementFacts({ projectId, detail, leader, responsibleNam
         : "还没有设置计划时间、截止或优先级。"}</Fact>
       <Fact label="时间">创建 {date(leader.dates.createdAt)} · 业务变化 {date(leader.dates.businessChangedAt)}<span className="block text-caption text-muted-foreground">
         实际开始 {leader.dates.startedAt ? date(leader.dates.startedAt) : "未发生"} · 完成 {leader.dates.completedAt ? date(leader.dates.completedAt) : "未关闭"}</span></Fact>
-      <Fact label="来源">{leader.goal ? `目标：${leader.goal.outcome}` : "没有关联目标"}{leader.stage && <span className="block">阶段：{leader.stage.deliverable}</span>}
+      <Fact label="创建依据">{leader.goal ? `目标：${leader.goal.outcome}` : "没有关联目标"}
         <span className="block text-caption text-muted-foreground">{detail.proposal?.evidence?.trim() || (detail.proposal ? "这项任务没有另写创建依据。" : "历史任务没有新的验收约定。")}</span></Fact>
       <Fact label="当前验收与使用者">{detail.proposal?.acceptanceMode === "independent_agent" ? "独立的智能体使用当前交付" : detail.proposal?.acceptanceMode === "human_required" ? "指定的人本人使用当前交付" : "历史约定"}
         {consumer ? ` · ${actorText(consumer)}` : " · 验收身份待签收"}<span className="block text-caption text-muted-foreground">{detail.proposal?.useRequired ? "关闭前要有当前交付的实际使用证据。" : "按既有约定核对使用证据。"}
@@ -269,10 +268,6 @@ export function TaskArrangementFacts({ projectId, detail, leader, responsibleNam
         <span className="block text-caption text-muted-foreground">{fact.note}</span></Fact>)(completionBoundaryFact(detail.proposal?.completionBoundary, detail.completion))}
       <Fact label="当前执行">{leader.latestRun ? `最近一次运行：${runStateName[leader.latestRun.state] ?? "状态未识别"}` : "当前修订没有可见的运行"}
         <span className="block text-caption text-muted-foreground">队列：{leader.queueHold ? "暂不派发" : "没有登记暂停"}{leader.pendingImpactCount > 0 ? ` · ${leader.pendingImpactCount} 项依据待复核` : ""}</span></Fact>
-      <Fact label="当前交付">{leader.delivery ? `技术检查${leader.delivery.technicalResult === "passed" ? "通过" : "未通过"}` : "当前修订还没有交付。"}
-        {leader.delivery && <span className="block text-caption text-muted-foreground">{leader.delivery.observationResult
-          ? `使用：${leader.delivery.observationKind === "human" ? "本人" : "智能体"} ${actorText(leader.delivery.observationActorId)} · ${leader.delivery.observationResult === "used" ? "已使用" : leader.delivery.observationResult === "failed" ? "使用失败" : "未使用"}`
-          : "还没有这次交付的使用观察"}</span>}</Fact>
       <Fact label="Leader 决定">{leader.review ? `${leader.review.decision === "acknowledged" ? "已核对" : "暂缓"} · ${leader.review.reason}` : "当前工作位置还没有 Leader 决定。"}
         {leader.review && <span className="block text-caption text-muted-foreground">{actorText(leader.review.actorId)} · {date(leader.review.at)}</span>}</Fact>
     </div>

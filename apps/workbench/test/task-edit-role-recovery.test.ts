@@ -8,6 +8,7 @@ import type { TaskDetail } from "@evoloop/contracts";
 import type { LeaderWorkTask } from "@evoloop/contracts/work-index";
 import type { MutationContext } from "../src/shared/ActionForm.tsx";
 import { TaskArrangementFacts } from "../src/features/workflow/TaskArrangement.tsx";
+import { TaskNowLine } from "../src/features/workflow/TaskNow.tsx";
 import { TaskTiming } from "../src/shared/taskTiming.tsx";
 import { TaskActionsTab, ownerOptions } from "../src/features/workflow/TaskActionsTab.tsx";
 
@@ -112,7 +113,13 @@ test("Task detail exposes current plan, responsibility, consumer, source and nex
   }));
   // The next step names what holds the task (the unaccepted prerequisite), in the workbench's words; the
   // projection's nextAction is text for agents and is not shown.
-  assert.match(html, /下一步：<\/strong>等待前置任务「前置结果」通过验收；处理后再安排承接/);
+  // The next step moved to the "现在" line under the title; the fold no longer repeats it.
+  assert.doesNotMatch(html, /下一步：/);
+  const nowHtml = render(createElement(TaskNowLine, { detail: withAcceptance, leaderState: "ready", linkForTab: () => "#", openTab: () => {},
+    leader: { ...leader, timing: { current: { stage: "unassigned", startedAt: "2026-10-29T00:00:00Z", endedAt: null, elapsedMs: 7200000,
+      waitingFor: { kind: "leader", id: null }, source: null } } } as never }));
+  assert.match(nowHtml, /现在：[^<]*等Leader[^<]*已 2 小时[^<]*等待前置任务「前置结果」通过验收；处理后再安排承接/);
+  assert.match(nowHtml, /最新验收：还没有验收结论/);
   assert.doesNotMatch(html, /等待前置结果验收/);
   assert.match(html, /P2 · 计划开始/);
   assert.match(html, /责任<\/p><div[^>]*>职责 · 验收与流程负责人/);

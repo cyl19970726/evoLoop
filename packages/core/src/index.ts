@@ -1128,6 +1128,13 @@ export class WorkflowService {
       return { task, revision, basis, links: await reader.listLinks(taskId), impacts: await reader.listImpacts(taskId), decisions: await reader.listBasisDecisions(taskId), proposal: await reader.getTaskProposal(taskId), judgements: await reader.listTaskJudgements(taskId), deliveries: await reader.listDeliveries(taskId), observations: await reader.listObservations(taskId), closures: await reader.listTaskClosures(taskId) };
     });
   }
+  /** Which schedule occurrence created the Task (null when none); read from the occurrence row, not from revision text. */
+  getTaskOrigin(principal: Principal, projectId: string, taskId: string): Promise<import("@evoloop/contracts/scheduling").TaskScheduleOrigin | null> {
+    return this.read(principal, projectId, async reader => {
+      required(await reader.getTask(taskId), "Task");
+      return await reader.getTaskScheduleOrigin?.(taskId) ?? null;
+    });
+  }
   getTaskTiming(principal: Principal, projectId: string, taskId: string): Promise<import("@evoloop/contracts/task-timing").TaskTimingView | null> {
     return this.read(principal, projectId, async reader => {
       required(await reader.getTask(taskId), "Task");
