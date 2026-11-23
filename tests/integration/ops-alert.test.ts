@@ -422,3 +422,47 @@ test("Task 70da6d67: an outlet that fails costs a recorded error for the schedul
   assert.equal(h.state.errors, 0, "a failed send is not an exception of the pump");
   assert.equal(JSON.stringify(h.scheduler), before, "the scheduler's status is untouched");
 });
+
+test("Task 70da6d67 rework: a failing tick that runs longer than the poll interval (running and error alternating) is one stall with one alert and one recovery; recovery needs a successful tick", async t => {
+  const h = await harness(t);
+  h.state.outlet = { kind: "webhook", url: await h.receiver(), headers: {}, timeoutMs: 2000 };
+  const pump = h.pump();
+  const at = (minutes: number) => new Date(Date.now() + minutes * 60_000).toISOString();
+  h.scheduler.state = "idle"; h.scheduler.lastTickAt = at(0); await pump.tick();
+  // Each tick fails after a while: the status shows error, then `running` with the error cleared (the next tick began), then error again.
+  for (let i = 1; i <= 4; i++) {
+    h.state.offsetMs = i * 20_000;
+    h.scheduler.state = "error"; h.scheduler.lastError = "Query read timeout"; h.scheduler.lastTickAt = at(i / 3); await pump.tick();
+    h.scheduler.state = "running"; h.scheduler.lastError = null; await pump.tick();
+  }
+  assert.deepEqual(h.received.map(m => `${m.kind}:${m.event}`), ["scheduling_stall:opened"], "one stall, one alert, no false recovery while ticks keep failing");
+  // A tick succeeds: the recovery goes out once.
+  h.scheduler.state = "idle"; h.scheduler.lastError = null; h.scheduler.lastTickAt = at(2); h.state.offsetMs = 2 * 60_000; await pump.tick();
+  assert.deepEqual(h.received.map(m => `${m.kind}:${m.event}`), ["scheduling_stall:opened", "scheduling_stall:resolved"]);
+  // A restarted alert pump that first sees `running` with an alert open does not take it for a recovery.
+  h.scheduler.state = "error"; h.scheduler.lastError = "boom"; h.scheduler.lastTickAt = at(2.1); await pump.tick();
+  assert.equal(h.received.length, 3);
+  const restarted = h.pump(); h.scheduler.state = "running"; h.scheduler.lastError = null; await restarted.tick();
+  assert.equal(h.received.length, 3, "running with nothing known is not healthy");
+  h.scheduler.state = "idle"; h.scheduler.lastTickAt = at(2.2); await restarted.tick();
+  assert.equal(h.received.length, 4);
+});
+
+test("Task 70da6d67 rework: a provider pause that opens while a stall alert is open does not end it; the stall ends when a Run starts or nothing waits at all", async t => {
+  const h = await harness(t);
+  h.state.outlet = { kind: "webhook", url: await h.receiver(), headers: {}, timeoutMs: 2000 };
+  await h.run("completed");
+  const other = fixtureRoleId("ops-alert-claude-role-2");
+  await seedFixtureRole(h.pool, h.projectId, other);
+  await h.pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at,runtime_provider)
+    VALUES($1,$2,$3,'/tmp/ops-alert','project','danger-full-access','never','ready',1,'n2','n2',$4,'worker',now(),now(),'claude')`, [h.projectId, randomUUID(), other, randomUUID()]);
+  await h.readyTask("Codex work");
+  const pump = h.pump();
+  h.state.offsetMs = 2 * 3600_000; await pump.tick();
+  assert.deepEqual(h.received.map(m => `${m.kind}:${m.event}`), ["stall:opened"], "no pause yet: the work waiting is a stall");
+  // The provider is paused now: the only waiting work is the paused Sessions' own. The open stall stays open.
+  const failing = await h.run("running");
+  await h.runtime.recordTurn(h.projectId, failing.runId, `turn-${failing.runId}`, "failed", "Native failure; category=quota_exhausted", { completedAtUtc: new Date().toISOString(), failureCategory: "quota_exhausted" });
+  await pump.tick(); await pump.tick();
+  assert.deepEqual(h.received.map(m => `${m.kind}:${m.event}`), ["stall:opened", "provider_hold:opened"], "no false 'stall resolved' when a pause opens");
+});

@@ -35,6 +35,8 @@ export class OpsAlertPump {
   private busy: Promise<void> | null = null;
   private stopped = true;
   private readonly createdAt = new Date();
+  /** The scheduler's last status that was not `running` (a tick in flight shows `running` with its error cleared): what a running tick is judged by. */
+  private settled: { state: string; lastError: string | null } | null = null;
   constructor(private readonly deps: { pool: Pool; scheduling?: SchedulingProbe; startedAt?: Date; settings: () => Promise<AlertSettings | null>; projects: () => Promise<string[]>; canWrite: () => boolean;
     now?: () => Date; send?: (outlet: AlertOutletConfig, message: AlertMessage) => Promise<OutletResult>; onError?: (error: unknown) => void; onGiveUp?: (line: string) => void }) {}
   start(): void { if (!this.stopped) return; this.stopped = false; this.schedule(1000); }
@@ -158,7 +160,8 @@ export class OpsAlertPump {
     // Over when a Run was created after the stall began, or when nothing waits any more. A pause that opens meanwhile does not end it.
     const newRun = facts.last_run && new Date(facts.last_run).getTime() > new Date(open.opened_at).getTime();
     if (!newRun) {
-      const pending = await this.pending(projectId, true);
+      // Everything that waits counts here, the paused Sessions' work too: a pause that opens meanwhile explains the stillness, it does not end it.
+      const pending = await this.pending(projectId);
       if (pending.ready + pending.queued + pending.awaitingAcceptance > 0) return;
     }
     await pool.query("UPDATE ops_alert SET state='resolved',resolved_at=$3,updated_at=now() WHERE project_id=$1 AND alert_key=$2 AND state='open'", [projectId, open.alert_key, this.now().toISOString()]);
@@ -173,7 +176,12 @@ export class OpsAlertPump {
     const probe = this.deps.scheduling;
     if (!probe) return;
     const { pool } = this.deps;
-    const status = probe.status();
+    const raw = probe.status();
+    // A tick in flight reads `running` with its last error cleared, so a slow or stuck failing tick would flip between error and running. While `running`, the
+    // last settled result decides (an error stays an error); only a settled idle or no-authority without an error is healthy again.
+    if (raw.state !== "running") this.settled = { state: raw.state, lastError: raw.lastError };
+    const status = raw.state === "running" && this.settled ? { ...raw, state: this.settled.state, lastError: this.settled.lastError ?? raw.lastError } : raw;
+    const unknownRunning = raw.state === "running" && !this.settled; // just started here: nothing known about the last tick yet
     const now = this.now();
     const thresholdMs = settings.schedulingStallMinutes !== undefined ? settings.schedulingStallMinutes * 60_000
       : Math.max(2 * probe.intervalMs, DEFAULT_SCHEDULING_STALL_MINUTES * 60_000);
@@ -185,7 +193,7 @@ export class OpsAlertPump {
       const details: AlertDetails = { schedulingState: status.state, lastError: status.lastError ? redact(status.lastError).slice(0, 200) : null, lastTickAt: status.lastTickAt, thresholdMinutes: Math.round(thresholdMs / 60_000) };
       await pool.query(`INSERT INTO ops_alert(project_id,alert_key,kind,state,opened_at,details) VALUES($1,$2,'scheduling_stall','open',$3,$4::jsonb) ON CONFLICT DO NOTHING`,
         [projectId, `scheduling:${now.toISOString()}`, now.toISOString(), JSON.stringify(details)]);
-    } else if (!stalled && open) {
+    } else if (!stalled && open && !unknownRunning) {
       await pool.query("UPDATE ops_alert SET state='resolved',resolved_at=$3,updated_at=now() WHERE project_id=$1 AND alert_key=$2 AND state='open'", [projectId, open.alert_key, now.toISOString()]);
     }
   }
