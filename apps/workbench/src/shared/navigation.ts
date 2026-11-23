@@ -40,6 +40,15 @@ export function replaceQuietly(href: string): void {
   finally { quiet -= 1; }
 }
 
+/** Like replaceQuietly, but adds a history entry: for a view-state change the reader should be able to step Back out of (a chosen phase). */
+export function pushQuietly(href: string): void {
+  const path = appPath(href) ?? href;
+  if (path === currentPath()) return;
+  quiet += 1;
+  try { appHistory().push(path, appHistory().location.state, { ignoreBlocker: true }); }
+  finally { quiet -= 1; }
+}
+
 /** Called after every navigation a page did not make quietly (links, back/forward, redirects). */
 export function onNavigate(listener: () => void): () => void {
   return appHistory().subscribe(() => { if (!quiet) listener(); });

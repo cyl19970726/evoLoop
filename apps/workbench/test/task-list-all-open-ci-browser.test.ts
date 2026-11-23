@@ -120,10 +120,17 @@ test("every open task is listed, the header numbers add up to the rows, and each
     await page.waitForFunction(() => document.querySelectorAll("main tr[data-task-row]").length === 32);
     assert.doesNotMatch(page.url(), /[?&]phase=/);
   }
-  // The keyboard works as a click does; Back and a refresh keep it.
+  // The keyboard works as a click does. Choosing a phase adds a history entry: Back returns to the unfiltered list, Forward to the
+  // phase again; opening a task from the filtered list and going Back returns to the same filter.
   await phaseLabel(page, "rework").focus(); await page.keyboard.press("Enter");
   await page.waitForFunction(() => document.querySelectorAll("main tr[data-task-row]").length === 3);
-  // Like the list's other filters the choice is written with replace, so Back from an opened task returns to the same filtered list.
+  await page.goBack();
+  await page.waitForFunction(() => document.querySelectorAll("main tr[data-task-row]").length === 32);
+  assert.equal(await phaseLabel(page, "rework").getAttribute("aria-pressed"), "false");
+  assert.doesNotMatch(page.url(), /[?&]phase=/);
+  await page.goForward();
+  await page.waitForFunction(() => document.querySelectorAll("main tr[data-task-row]").length === 3);
+  assert.equal(await phaseLabel(page, "rework").getAttribute("aria-pressed"), "true");
   await main.locator("tr[data-task-row]").first().getByRole("link", { name: /打开任务/ }).click();
   await page.waitForURL(/\/tasks\//);
   await page.goBack();
