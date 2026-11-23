@@ -46,6 +46,7 @@ import type { ScheduleCommand } from "@evoloop/contracts/scheduling";
 export { RuntimeWorkflowService, describeTurnEffort, mergeRunActual } from "./runtime/service.js";
 export { applyProviderHoldRelease } from "./provider-hold.js";
 import type { Clock, ContentHasher, IdFactory, Reader, Transaction, UnitOfWork } from "@evoloop/contracts/ports";
+import { assertRequiredLines } from "./required-lines.js";
 import { applyProviderHoldRelease } from "./provider-hold.js";
 import type { ProviderHoldListing, ProviderHoldView } from "@evoloop/contracts/provider-hold";
 import { applySessionRecovery, type RecoveryAuthority } from './session-recovery.js';
@@ -187,6 +188,12 @@ const STAGE_CHOICE_MESSAGE = "Choose one: (a) stageId, the id of an active stage
 const STAGE_SET_MESSAGE = "Choose one: stageId (an active stage), or stageId: null plus noStageReason.";
 export class WorkflowService {
   constructor(private readonly deps: WorkflowDependencies) {}
+
+  /** Task 3797cbdd: refuse a written Task / schedule template without “关闭后下一步” and a report delivery without “下次同类工作先要知道的事”. Called by the command entry, not by `execute`, so system-made Tasks and fire-time occurrences are untouched. */
+  async checkRequiredLines(command: { type: string; projectId?: string; [key: string]: unknown }): Promise<void> {
+    if (!["task.create", "schedule.create", "schedule.revise", "delivery.record"].includes(command.type) || typeof command.projectId !== "string") return;
+    await this.deps.uow.read(command.projectId, reader => assertRequiredLines(() => reader, command));
+  }
 
   async execute(principal: Principal, input: CommandInput): Promise<CommandResult> {
     const parsed = commandSchema.safeParse(input);
