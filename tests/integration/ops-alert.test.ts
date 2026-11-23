@@ -10,7 +10,7 @@ import test from "node:test";
 import pg from "pg";
 import { migrate, PostgresUnitOfWork } from "@evoloop/adapter-postgres";
 import { RuntimeWorkflowService, WorkflowService } from "@evoloop/core";
-import { OpsAlertPump, type AlertSettings } from "../../apps/coordinator/src/ops-alerts/pump.js";
+import { OpsAlertPump, type AlertSettings, type SchedulingProbe } from "../../apps/coordinator/src/ops-alerts/pump.js";
 import type { AlertOutletConfig } from "../../apps/coordinator/src/ops-alerts/outlet.js";
 import { fixtureRoleId, seedFixtureRole } from "./role-fixture.test.js";
 
@@ -44,9 +44,11 @@ async function harness(t: { after: (fn: () => Promise<void>) => void }) {
   await pool.query("INSERT INTO project(project_id,title,created_at) VALUES($1,'Ops alert',now())", [projectId]);
   await seedFixtureRole(pool, projectId, role);
   const reviewer = { actorId: "lead", projectIds: [projectId], permissions: ["task", "document", "session", "management"] as const, decisions: true };
-  const state = { outlet: { kind: "webhook", url: "http://127.0.0.1:1/unused", headers: {}, timeoutMs: 1500 } as AlertOutletConfig, stallMinutes: 30, offsetMs: 0, canWrite: true, gaveUp: [] as string[], errors: 0 };
-  const pump = () => new OpsAlertPump({ pool, projects: async () => [projectId], canWrite: () => state.canWrite, now: () => new Date(Date.now() + state.offsetMs),
-    settings: async (): Promise<AlertSettings> => ({ enabled: true, pollIntervalMs: 15000, stallMinutes: state.stallMinutes, outlet: state.outlet }),
+  const scheduler = { state: "disabled", lastTickAt: null as string | null, lastError: null as string | null };
+  const probe: SchedulingProbe = { status: () => ({ ...scheduler }), intervalMs: 30_000 };
+  const state = { outlet: { kind: "webhook", url: "http://127.0.0.1:1/unused", headers: {}, timeoutMs: 1500 } as AlertOutletConfig, stallMinutes: 30, schedulingStallMinutes: undefined as number | undefined, offsetMs: 0, canWrite: true, gaveUp: [] as string[], errors: 0 };
+  const pump = () => new OpsAlertPump({ pool, scheduling: probe, projects: async () => [projectId], canWrite: () => state.canWrite, now: () => new Date(Date.now() + state.offsetMs),
+    settings: async (): Promise<AlertSettings> => ({ enabled: true, pollIntervalMs: 15000, stallMinutes: state.stallMinutes, schedulingStallMinutes: state.schedulingStallMinutes, outlet: state.outlet }),
     onGiveUp: line => state.gaveUp.push(line), onError: () => { state.errors++; } });
   /** A Session (provider codex) with a Task and a Run in the given state; returns what is needed to fail it. */
   async function run(runState: "requested" | "dispatching" | "unknown" | "running" | "completed" | "failed_preflight", createdAt = new Date().toISOString()) {
@@ -73,8 +75,8 @@ async function harness(t: { after: (fn: () => Promise<void>) => void }) {
     return { sessionId, runId, taskId };
   }
   /** A Task that is ready and in nobody's line: work waiting. */
-  const readyTask = async (title = "Ready work") => { const taskId = randomUUID();
-    const result = await workflow.execute(reviewer, { type: "task.create", projectId, operationId: randomUUID(), taskId, title, content: "# Work", acceptance: "Used", owner: role, consumer: "named-human",
+  const readyTask = async (title = "Ready work", owner = role) => { const taskId = randomUUID();
+    const result = await workflow.execute(reviewer, { type: "task.create", projectId, operationId: randomUUID(), taskId, title, content: "# Work", acceptance: "Used", owner, consumer: "named-human",
       useRequired: true, acceptanceMode: "human_required", acceptanceTarget: "human" } as never);
     assert.equal(result.status, "applied", JSON.stringify(result)); return taskId; };
   /** An ordinary message Turn on a Session (not a Run): the message, and the processing record of the Turn it started at `startedAt`. */
@@ -104,7 +106,7 @@ async function harness(t: { after: (fn: () => Promise<void>) => void }) {
   };
   const holds = async () => (await pool.query("SELECT hold_id,version,state FROM runtime_provider_hold WHERE project_id=$1 ORDER BY opened_at", [projectId])).rows;
   const alerts = async () => (await pool.query("SELECT alert_key,kind,state,open_attempts,open_delivered_at,resolved_attempts,resolved_delivered_at,last_error FROM ops_alert WHERE project_id=$1 ORDER BY opened_at", [projectId])).rows;
-  return { pool, projectId, role, workflow, runtime, reviewer, state, pump, run, readyTask, messageTurn, delivered, holds, alerts, receiver, received, directory };
+  return { scheduler, pool, projectId, role, workflow, runtime, reviewer, state, pump, run, readyTask, messageTurn, delivered, holds, alerts, receiver, received, directory };
 }
 
 test("a provider pause and its release each send one message with the reason, the start, the affected Sessions and the work waiting; restarts and repeats send nothing more", async t => {
@@ -350,4 +352,73 @@ test("defect rework 4 (7376b8e9): a Run stuck in requested, dispatching or unkno
     h.state.offsetMs = 106 * 60_000; await pump.tick(); await pump.tick(); await h.pump().tick();
     assert.deepEqual(h.received.map(m => `${m.kind}:${m.event}`), ["stall:opened", "stall:resolved"], `${kind}: exactly one recovery once a Run really runs`);
   }
+});
+
+test("Task 70da6d67: one provider paused, another provider's Session has ready work and nothing starts: the stall is announced with the paused Sessions named; work only the paused Sessions could do is not", async t => {
+  const h = await harness(t);
+  h.state.outlet = { kind: "webhook", url: await h.receiver(), headers: {}, timeoutMs: 2000 };
+  const failing = await h.run("running");
+  await h.runtime.recordTurn(h.projectId, failing.runId, `turn-${failing.runId}`, "failed", "Native failure; category=quota_exhausted", { completedAtUtc: new Date().toISOString(), failureCategory: "quota_exhausted" });
+  const pump = h.pump();
+  // Only the paused provider's Role has work waiting: the pause explains it, no stall.
+  await h.readyTask("Codex work");
+  h.state.offsetMs = 2 * 3600_000; await pump.tick();
+  assert.deepEqual(h.received.map(m => m.kind), ["provider_hold"], "work that only a paused Session can do is explained by the pause");
+  // A Role whose only Session is on another provider has ready work, and still nothing starts.
+  const other = fixtureRoleId("ops-alert-claude-role");
+  await seedFixtureRole(h.pool, h.projectId, other);
+  await h.pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,created_at,updated_at,runtime_provider)
+    VALUES($1,$2,$3,'/tmp/ops-alert','project','danger-full-access','never','ready',1,'n1','n1',$4,'worker',now(),now(),'claude')`, [h.projectId, randomUUID(), other, randomUUID()]);
+  await h.readyTask("Claude work", other);
+  await pump.tick();
+  assert.deepEqual(h.received.map(m => `${m.kind}:${m.event}`), ["provider_hold:opened", "stall:opened"]);
+  const stall = h.received[1]!;
+  assert.match(stall.text, /另有 1 个 Session 因 Codex 暂停/);
+  assert.match(stall.text, /压着 1 件活（就绪未派 1/, "only the other provider's work is counted");
+  await pump.tick(); assert.equal(h.received.length, 2, "the same stall is not repeated");
+});
+
+test("Task 70da6d67: a scheduling stall (state=error, or a stale last tick) is announced once with the project, state, the start of lastError and lastTickAt; a healthy scheduler with nothing due is not a stall; recovery is announced once", async t => {
+  const h = await harness(t);
+  h.state.outlet = { kind: "webhook", url: await h.receiver(), headers: {}, timeoutMs: 2000 };
+  const pump = h.pump();
+  const at = (minutes: number) => new Date(Date.now() + minutes * 60_000).toISOString();
+  // Healthy, ticking, nothing due: an hour passes and the scheduler keeps ticking: no alert.
+  for (const minute of [0, 20, 40, 60]) { h.state.offsetMs = minute * 60_000; h.scheduler.state = "idle"; h.scheduler.lastTickAt = at(minute); await pump.tick(); }
+  assert.equal(h.received.length, 0, "no schedule due is not a stall");
+  // The first round failed (as in f508a86e): error with a reason.
+  h.scheduler.state = "error"; h.scheduler.lastError = "relation \"schedule\" does not exist " + "x".repeat(400); h.scheduler.lastTickAt = at(60);
+  await pump.tick();
+  assert.equal(h.received.length, 1);
+  const opened = h.received[0]!;
+  assert.deepEqual([opened.kind, opened.event, opened.projectId], ["scheduling_stall", "opened", h.projectId]);
+  assert.match(opened.text, /排程停摆/); assert.match(opened.text, new RegExp(h.projectId)); assert.match(opened.text, /error/); assert.match(opened.text, /relation "schedule" does not exist/); assert.ok(opened.text.includes(h.scheduler.lastTickAt!));
+  assert.ok(opened.text.length < 600, "the error is cut");
+  await pump.tick(); await h.pump().tick(); assert.equal(h.received.length, 1, "a lasting stall is not repeated");
+  // Healthy again: one recovery.
+  h.scheduler.state = "idle"; h.scheduler.lastError = null; h.scheduler.lastTickAt = at(61); await pump.tick();
+  assert.deepEqual(h.received.map(m => `${m.kind}:${m.event}`), ["scheduling_stall:opened", "scheduling_stall:resolved"]);
+  assert.match(h.received[1]!.text, /排程已恢复/);
+  await pump.tick(); assert.equal(h.received.length, 2);
+  // The ticks stop advancing while the state still reads idle: after the threshold (5 minutes by default) an alert opens, and not before.
+  h.state.offsetMs = 64 * 60_000; await pump.tick(); assert.equal(h.received.length, 2, "3 minutes of silence is within the threshold");
+  h.state.offsetMs = 67 * 60_000; await pump.tick();
+  assert.deepEqual(h.received.map(m => `${m.kind}:${m.event}`).slice(2), ["scheduling_stall:opened"]);
+  // A configured threshold replaces the default; a disabled scheduler is not watched.
+  h.scheduler.state = "disabled"; await pump.tick();
+  assert.equal(h.received.length, 4, "disabled counts as healthy: the open alert resolves");
+  h.state.schedulingStallMinutes = 60; h.scheduler.state = "idle"; await pump.tick();
+  assert.equal(h.received.length, 4, "60 minutes configured: 6 minutes of silence is fine");
+});
+
+test("Task 70da6d67: an outlet that fails costs a recorded error for the scheduling alert and nothing else; the scheduler's own status is only read", async t => {
+  const h = await harness(t);
+  h.state.outlet = { kind: "webhook", url: "http://127.0.0.1:1/unused", headers: {}, timeoutMs: 800 };
+  h.scheduler.state = "error"; h.scheduler.lastError = "boom"; h.scheduler.lastTickAt = new Date().toISOString();
+  const before = JSON.stringify(h.scheduler);
+  await h.pump().tick();
+  const [alert] = await h.alerts();
+  assert.equal(alert!.kind, "scheduling_stall"); assert.equal(alert!.open_delivered_at, null); assert.ok(alert!.last_error, "the failure is recorded");
+  assert.equal(h.state.errors, 0, "a failed send is not an exception of the pump");
+  assert.equal(JSON.stringify(h.scheduler), before, "the scheduler's status is untouched");
 });

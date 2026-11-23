@@ -1,8 +1,13 @@
 import type { Pool } from "pg";
 import { buildAlert, type AlertDetails, type PendingWork } from "./message.js";
+import { redact } from "../session-messages/error-line.js";
 import { sendAlert, type AlertOutletConfig, type AlertMessage, type OutletResult } from "./outlet.js";
 
-export interface AlertSettings { enabled: boolean; pollIntervalMs: number; stallMinutes: number; outlet: AlertOutletConfig }
+export interface AlertSettings { enabled: boolean; pollIntervalMs: number; stallMinutes: number; schedulingStallMinutes?: number | undefined; outlet: AlertOutletConfig }
+/** What the alert pump may read of the scheduler (the scheduling pump's own status), and how often that pump ticks. */
+export interface SchedulingProbe { status(): { state: string; lastTickAt: string | null; lastError: string | null }; intervalMs: number }
+/** Silence of the scheduler allowed before an alert when nothing is configured: the larger of two of its own tick intervals and this many minutes. */
+export const DEFAULT_SCHEDULING_STALL_MINUTES = 5;
 
 /** A message that cannot be delivered is retried with a growing wait (30 s, 1 min, 2 min … at most 30 min) and given up after this many tries; the row keeps the last error. */
 export const MAX_DELIVERY_ATTEMPTS = 12;
@@ -29,7 +34,8 @@ export class OpsAlertPump {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private busy: Promise<void> | null = null;
   private stopped = true;
-  constructor(private readonly deps: { pool: Pool; settings: () => Promise<AlertSettings | null>; projects: () => Promise<string[]>; canWrite: () => boolean;
+  private readonly createdAt = new Date();
+  constructor(private readonly deps: { pool: Pool; scheduling?: SchedulingProbe; startedAt?: Date; settings: () => Promise<AlertSettings | null>; projects: () => Promise<string[]>; canWrite: () => boolean;
     now?: () => Date; send?: (outlet: AlertOutletConfig, message: AlertMessage) => Promise<OutletResult>; onError?: (error: unknown) => void; onGiveUp?: (line: string) => void }) {}
   start(): void { if (!this.stopped) return; this.stopped = false; this.schedule(1000); }
   stop(): void { this.stopped = true; if (this.timer) clearTimeout(this.timer); this.timer = null; }
@@ -51,7 +57,7 @@ export class OpsAlertPump {
     for (const projectId of new Set(await this.deps.projects())) {
       if (!this.deps.canWrite()) return;
       // Each step is separate: a fault in one never keeps the others, or delivery, from running.
-      for (const step of [() => this.reconcileHolds(projectId), () => this.reconcileStall(projectId, settings), () => this.deliver(projectId, settings)])
+      for (const step of [() => this.reconcileHolds(projectId), () => this.reconcileStall(projectId, settings), () => this.reconcileScheduling(projectId, settings), () => this.deliver(projectId, settings)])
         try { await step(); } catch (error) { this.deps.onError?.(error); }
     }
   }
@@ -60,18 +66,35 @@ export class OpsAlertPump {
    * Who is affected and how much waits, read now. A delivery waits for acceptance only while nobody has observed it: one with a `notUsed` (or `failed`) observation was
    * sent back to its author, and one with a `used` observation is accepted, so neither is work waiting on the organisation to run.
    */
-  private async pending(projectId: string): Promise<PendingWork> {
+  private async pending(projectId: string, excludePaused = false): Promise<PendingWork> {
+    // With a provider pause open, work that only a paused Session can do is explained by the pause and left out; everything else still counts.
+    // A ready Task is explained when its owner Role has Sessions and every one of them is on a held provider; a queued item when its own Session is;
+    // a delivery waiting for acceptance when its consumer's Sessions (by actor) all are. No held provider: nothing is left out.
+    const held = "(SELECT provider FROM runtime_provider_hold WHERE project_id=$1 AND state='held')";
+    const everySessionPaused = (where: string) => `(EXISTS(SELECT 1 FROM runtime_session s WHERE s.project_id=$1 AND s.state<>'closed' AND ${where})
+      AND NOT EXISTS(SELECT 1 FROM runtime_session s WHERE s.project_id=$1 AND s.state<>'closed' AND ${where} AND s.runtime_provider NOT IN ${held}))`;
+    const readyFilter = excludePaused ? `AND NOT ${everySessionPaused("s.role_id=t.owner")}` : "";
+    const lineFilter = excludePaused ? `AND NOT EXISTS(SELECT 1 FROM runtime_session s WHERE s.project_id=l.project_id AND s.session_id=l.session_id AND s.runtime_provider IN ${held})` : "";
+    const residentFilter = excludePaused ? `AND NOT EXISTS(SELECT 1 FROM runtime_session s WHERE s.project_id=e.project_id AND s.session_id=e.session_id AND s.runtime_provider IN ${held})` : "";
+    const awaitingFilter = excludePaused ? `AND NOT ${everySessionPaused("s.actor_id=(SELECT p.consumer FROM task_proposal p WHERE p.project_id=d.project_id AND p.task_id=d.task_id AND p.task_revision_id=d.task_revision_id)")}` : "";
     const r = (await this.deps.pool.query(`SELECT
-      (SELECT count(*)::int FROM task t WHERE t.project_id=$1 AND t.state='todo'
+      (SELECT count(*)::int FROM task t WHERE t.project_id=$1 AND t.state='todo' ${readyFilter}
         AND NOT EXISTS(SELECT 1 FROM resident_queue_entry e WHERE e.project_id=t.project_id AND e.task_id=t.task_id AND e.state IN ('queued','held','claimed'))
         AND NOT EXISTS(SELECT 1 FROM session_line_entry l WHERE l.project_id=t.project_id AND l.task_id=t.task_id AND l.state IN ('queued','suspended','starting'))
         AND NOT EXISTS(SELECT 1 FROM task_session_assignment a WHERE a.project_id=t.project_id AND a.task_id=t.task_id AND a.state IN ('assigned','accepted'))) AS ready,
-      (SELECT count(*)::int FROM session_line_entry l WHERE l.project_id=$1 AND l.state IN ('queued','suspended','starting'))
-        + (SELECT count(*)::int FROM resident_queue_entry e WHERE e.project_id=$1 AND e.state IN ('queued','held','claimed')) AS queued,
+      (SELECT count(*)::int FROM session_line_entry l WHERE l.project_id=$1 AND l.state IN ('queued','suspended','starting') ${lineFilter})
+        + (SELECT count(*)::int FROM resident_queue_entry e WHERE e.project_id=$1 AND e.state IN ('queued','held','claimed') ${residentFilter}) AS queued,
       (SELECT count(DISTINCT d.task_id)::int FROM delivery d JOIN task t ON t.project_id=d.project_id AND t.task_id=d.task_id
-        WHERE d.project_id=$1 AND t.state='in_progress' AND d.task_revision_id=t.current_revision_id AND d.technical_result='passed'
+        WHERE d.project_id=$1 AND t.state='in_progress' AND d.task_revision_id=t.current_revision_id AND d.technical_result='passed' ${awaitingFilter}
           AND NOT EXISTS(SELECT 1 FROM consumer_observation o WHERE o.project_id=d.project_id AND o.delivery_id=d.delivery_id)) AS awaiting`, [projectId])).rows[0];
     return { ready: r.ready, queued: r.queued, awaitingAcceptance: r.awaiting };
+  }
+
+  /** Non-closed Sessions on a provider whose pause is open, by provider: what the stall alert says it left out. */
+  private async pausedSessions(projectId: string): Promise<{ provider: string; sessions: number }[]> {
+    return (await this.deps.pool.query(`SELECT s.runtime_provider AS provider, count(*)::int AS sessions FROM runtime_session s WHERE s.project_id=$1 AND s.state<>'closed'
+      AND s.runtime_provider IN (SELECT provider FROM runtime_provider_hold WHERE project_id=$1 AND state='held') GROUP BY s.runtime_provider ORDER BY s.runtime_provider`, [projectId])).rows
+      .map(r => ({ provider: String(r.provider), sessions: Number(r.sessions) }));
   }
 
   private async holdDetails(projectId: string, hold: { provider: string; category: string; reason: string; opened_at: unknown }): Promise<AlertDetails> {
@@ -105,7 +128,7 @@ export class OpsAlertPump {
   }
 
   /**
-   * Stall: no new Run for `stallMinutes`, no Run running now, no provider pause that explains it, and work waits. The clock starts at the last Run, or at the last
+   * Stall: no new Run for `stallMinutes`, no Run running now, and work waits that no provider pause explains (a pause explains only the Sessions on that provider). The clock starts at the last Run, or at the last
    * release of a provider pause (work only resumes after it), or at the project's creation. Ordinary message Turns are not Runs and count for nothing here, in either
    * direction: they neither keep a stall from being announced (a periodic request shorter than the time would otherwise silence it for ever) nor end one that was
    * announced (it would send a recovery and then a second alert for the same stillness). A stall ends only when a Run that really STARTED (see STARTED) is created after it
@@ -118,15 +141,16 @@ export class OpsAlertPump {
           COALESCE((SELECT max(created_at) FROM runtime_run WHERE project_id=$1 AND ${STARTED}),'-infinity'),
           COALESCE((SELECT max(released_at) FROM runtime_provider_hold WHERE project_id=$1),'-infinity')) AS quiet_since,
         (SELECT max(created_at) FROM runtime_run WHERE project_id=$1 AND ${STARTED}) AS last_run,
-        EXISTS(SELECT 1 FROM runtime_run WHERE project_id=$1 AND ${RUNNING}) AS active,
-        EXISTS(SELECT 1 FROM runtime_provider_hold WHERE project_id=$1 AND state='held') AS held`, [projectId])).rows[0];
+        EXISTS(SELECT 1 FROM runtime_run WHERE project_id=$1 AND ${RUNNING}) AS active`, [projectId])).rows[0];
     const open = (await pool.query("SELECT alert_key,opened_at FROM ops_alert WHERE project_id=$1 AND kind='stall' AND state='open'", [projectId])).rows[0];
     if (!open) {
       const quietMs = this.now().getTime() - new Date(facts.quiet_since).getTime();
-      if (quietMs < settings.stallMinutes * 60_000 || facts.active || facts.held) return;
-      const pending = await this.pending(projectId);
+      if (quietMs < settings.stallMinutes * 60_000 || facts.active) return;
+      // A provider pause explains only the work of the Sessions on it; the rest of the organisation is still judged (Task 70da6d67).
+      const pending = await this.pending(projectId, true);
       if (pending.ready + pending.queued + pending.awaitingAcceptance === 0) return;
-      const details: AlertDetails = { pending, lastRunAt: iso(facts.last_run), stallMinutes: settings.stallMinutes };
+      const pausedSessions = await this.pausedSessions(projectId);
+      const details: AlertDetails = { pending, lastRunAt: iso(facts.last_run), stallMinutes: settings.stallMinutes, ...(pausedSessions.length ? { pausedSessions } : {}) };
       await pool.query(`INSERT INTO ops_alert(project_id,alert_key,kind,state,opened_at,details) VALUES($1,$2,'stall','open',$3,$4::jsonb) ON CONFLICT DO NOTHING`,
         [projectId, `stall:${this.now().toISOString()}`, this.now().toISOString(), JSON.stringify(details)]);
       return;
@@ -134,10 +158,36 @@ export class OpsAlertPump {
     // Over when a Run was created after the stall began, or when nothing waits any more. A pause that opens meanwhile does not end it.
     const newRun = facts.last_run && new Date(facts.last_run).getTime() > new Date(open.opened_at).getTime();
     if (!newRun) {
-      const pending = await this.pending(projectId);
+      const pending = await this.pending(projectId, true);
       if (pending.ready + pending.queued + pending.awaitingAcceptance > 0) return;
     }
     await pool.query("UPDATE ops_alert SET state='resolved',resolved_at=$3,updated_at=now() WHERE project_id=$1 AND alert_key=$2 AND state='open'", [projectId, open.alert_key, this.now().toISOString()]);
+  }
+
+  /**
+   * Scheduling stall (Task 70da6d67): the scheduler's own status is `error`, or its last tick is older than the threshold. Read from the scheduling pump's status, not
+   * from a schedule, so a stopped scheduler cannot hide itself. A healthy scheduler with nothing due keeps ticking, so "no schedule due" never counts as a stall. One open
+   * alert per project (key `scheduling:<time>`); it resolves when the scheduler is healthy again. A disabled or stopped scheduler, or one this instance may not write for, is not a stall.
+   */
+  private async reconcileScheduling(projectId: string, settings: AlertSettings): Promise<void> {
+    const probe = this.deps.scheduling;
+    if (!probe) return;
+    const { pool } = this.deps;
+    const status = probe.status();
+    const now = this.now();
+    const thresholdMs = settings.schedulingStallMinutes !== undefined ? settings.schedulingStallMinutes * 60_000
+      : Math.max(2 * probe.intervalMs, DEFAULT_SCHEDULING_STALL_MINUTES * 60_000);
+    const watched = !["disabled", "stopped", "unavailable"].includes(status.state);
+    const since = status.lastTickAt ? new Date(status.lastTickAt) : (this.deps.startedAt ?? this.createdAt);
+    const stalled = watched && (status.state === "error" || now.getTime() - since.getTime() > thresholdMs);
+    const open = (await pool.query("SELECT alert_key FROM ops_alert WHERE project_id=$1 AND kind='scheduling_stall' AND state='open'", [projectId])).rows[0];
+    if (stalled && !open) {
+      const details: AlertDetails = { schedulingState: status.state, lastError: status.lastError ? redact(status.lastError).slice(0, 200) : null, lastTickAt: status.lastTickAt, thresholdMinutes: Math.round(thresholdMs / 60_000) };
+      await pool.query(`INSERT INTO ops_alert(project_id,alert_key,kind,state,opened_at,details) VALUES($1,$2,'scheduling_stall','open',$3,$4::jsonb) ON CONFLICT DO NOTHING`,
+        [projectId, `scheduling:${now.toISOString()}`, now.toISOString(), JSON.stringify(details)]);
+    } else if (!stalled && open) {
+      await pool.query("UPDATE ops_alert SET state='resolved',resolved_at=$3,updated_at=now() WHERE project_id=$1 AND alert_key=$2 AND state='open'", [projectId, open.alert_key, now.toISOString()]);
+    }
   }
 
   /** Sends what has not got through yet, the opening message first. A failure is recorded and retried later; it changes nothing else. */

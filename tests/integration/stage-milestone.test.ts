@@ -132,7 +132,7 @@ test("migration 118 over existing data: old tables unchanged, ladder keys and ow
   await f.applied(f.decider, { type: "task.cancel", taskId: cancelled, expectedVersion: 1, reason: "no longer needed" });
   await f.applied(f.decider, { type: "stage.review", stageId: a, expectedVersion: 2, adopted: "a", rejected: "r", gap: "g", nextChoice: "continue", evidence: "e", reason: "review" });
   // Put the database back to how it was before 118: drop its tables and forget it ran.
-  await f.pool.query("DROP TABLE task_stage_history; DROP TABLE task_stage; DROP TABLE stage_milestone_history; DROP TABLE stage_milestone; DELETE FROM pgmigrations WHERE name LIKE '118%'");
+  await f.pool.query("DROP TABLE task_stage_history; DROP TABLE task_stage; DROP TABLE stage_milestone_history; DROP TABLE stage_milestone; DELETE FROM pgmigrations WHERE name >= '118'");
   const watched = ["project_stage", "stage_revision", "stage_review", "stage_phase_key", "task", "task_revision", "task_proposal", "task_revision"];
   const before = await Promise.all(watched.map(table => f.pool.query(`SELECT md5(string_agg(t::text, '|' ORDER BY t::text)) AS h, count(*) AS n FROM ${table} t`).then(r => `${r.rows[0].n}:${r.rows[0].h}`)));
   await migrate(database!, f.schema);
