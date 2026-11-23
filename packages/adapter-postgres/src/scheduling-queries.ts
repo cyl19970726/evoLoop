@@ -1,5 +1,5 @@
 import type { PoolClient } from "pg";
-import type { Occurrence, ScheduleDefinition, ScheduleRevision, SchedulingTransaction } from "@evoloop/contracts/scheduling";
+import type { Occurrence, ScheduleDefinition, ScheduleRevision, SchedulingTransaction, TaskScheduleOrigin } from "@evoloop/contracts/scheduling";
 import { DomainError } from "@evoloop/contracts/ports";
 import { rowDefinition, rowOccurrence, rowRevision } from "./scheduling-rows.js";
 import type { Stage } from "@evoloop/contracts";
@@ -38,6 +38,14 @@ export class PgSchedulingQueries implements SchedulingTransaction {
       FROM schedule_definition d JOIN schedule_revision r ON r.project_id=d.project_id AND r.schedule_id=d.schedule_id AND r.revision_id=d.current_revision_id
       WHERE d.project_id=$1 ORDER BY d.schedule_id LIMIT $2`, [this.projectId, maxRows + 1]);
     return bounded(result.rows.map(rowDefinition), "schedules");
+  }
+  async getTaskScheduleOrigin(taskId: string): Promise<TaskScheduleOrigin | null> {
+    const result = await this.client.query(`SELECT o.schedule_id,o.schedule_revision_id,o.planned_at_utc,o.observed_at_utc,r.task_template->>'title' AS title
+      FROM schedule_occurrence o JOIN schedule_revision r ON r.project_id=o.project_id AND r.schedule_id=o.schedule_id AND r.revision_id=o.schedule_revision_id
+      WHERE o.project_id=$1 AND o.task_id=$2 AND o.state='created' ORDER BY o.planned_at_utc LIMIT 1`, [this.projectId, taskId]);
+    const row = result.rows[0];
+    return row ? { scheduleId: row.schedule_id, scheduleName: row.title ?? "", scheduleRevisionId: row.schedule_revision_id,
+      plannedAtUtc: new Date(row.planned_at_utc).toISOString(), observedAtUtc: new Date(row.observed_at_utc).toISOString() } : null;
   }
   async listScheduleRevisions(id: string): Promise<ScheduleRevision[]> {
     const result = await this.client.query("SELECT * FROM schedule_revision WHERE project_id=$1 AND schedule_id=$2 ORDER BY version LIMIT $3", [this.projectId, id, maxRows + 1]);

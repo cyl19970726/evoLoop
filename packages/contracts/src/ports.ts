@@ -26,6 +26,8 @@ export type { UsageReader, UsageTransaction } from "./usage.js";
 // Persistence ports are a separate export; browser clients never import driver or transaction types.
 export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, DocumentPayloadReader, EvaluationReader, ResidentReader {
   taskTiming?: Pick<TaskTimingQueries, "get" | "list">;
+  /** The schedule occurrence that created this Task, if any; absent in adapters that do not store schedules. */
+  getTaskScheduleOrigin?(taskId: string): Promise<import("./scheduling.js").TaskScheduleOrigin | null>;
   /** Read-only scheduled direct-dispatch facts; absent in adapters that do not store them. */
   scheduleDispatch?: import("./schedule-dispatch.js").ScheduleDispatchReader;
   /** The facts behind the schedule page's health table; absent in adapters that do not store schedules. */
