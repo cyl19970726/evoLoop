@@ -64,14 +64,15 @@ export function currentDelivery(detail: TaskDetail) {
 /** The task list's view: filters, sort and (in the table view) the selected row. Kept in the address bar. */
 export type TaskSort = "default" | "priority" | "due" | "progress" | "created" | "phase";
 export const taskSorts: readonly TaskSort[] = ["default", "priority", "due", "progress", "created", "phase"];
-export interface TaskListView { query: string; filter: string; kind: string; scope: string; selected: string; sort: TaskSort }
-export const defaultTaskListView: TaskListView = { query: "", filter: "open", kind: "all", scope: "all", selected: "", sort: "default" };
+/** `phase`: one phase of open work (or a Leader review mark) the list is narrowed to; "" is every phase. */
+export interface TaskListView { query: string; filter: string; kind: string; scope: string; selected: string; sort: TaskSort; phase: string }
+export const defaultTaskListView: TaskListView = { query: "", filter: "open", kind: "all", scope: "all", selected: "", sort: "default", phase: "" };
 export function taskListView(hash: string): TaskListView {
   const query = new URLSearchParams(hash.split("?")[1] ?? "");
   const sort = query.get("sort");
   return { query: query.get("q") ?? "", filter: query.get("state") ?? "open",
     kind: query.get("kind") ?? "all", scope: query.get("scope") === "mine" ? "mine" : "all",
-    selected: query.get("selected") ?? "", sort: taskSorts.includes(sort as TaskSort) ? sort as TaskSort : "default" };
+    selected: query.get("selected") ?? "", sort: taskSorts.includes(sort as TaskSort) ? sort as TaskSort : "default", phase: query.get("phase") ?? "" };
 }
 /** Only values that differ from the defaults are written, so a plain list keeps a plain address. */
 export function taskListParams(value: TaskListView): URLSearchParams {
@@ -81,6 +82,7 @@ export function taskListParams(value: TaskListView): URLSearchParams {
   if (value.kind !== "all") query.set("kind", value.kind);
   if (value.scope !== "all") query.set("scope", value.scope);
   if (value.sort !== "default") query.set("sort", value.sort);
+  if (value.phase) query.set("phase", value.phase);
   if (value.selected) query.set("selected", value.selected);
   return query;
 }

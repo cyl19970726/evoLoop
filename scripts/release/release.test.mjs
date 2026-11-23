@@ -529,5 +529,7 @@ test("K2. the skill sync workspaces are config: absolute, outside the repository
   const ok = { ...base("/srv/x"), skillSync: { workspaces: ["/srv/ws/one"] } };
   assert.doesNotThrow(() => loadConfig(JSON.stringify(ok), "/etc/release.json"));
   assert.throws(() => loadConfig(JSON.stringify({ ...ok, skillSync: { workspaces: ["rel/ws"] } }), "/etc/release.json"), /absolute paths/);
+  assert.deepEqual(loadConfig(JSON.stringify({ ...ok, skillSync: { workspaces: ["/srv/ws/one"], sessions: { cli: "/srv/bin/evoloop", project: "P" } } }), "/etc/release.json").skillSync.sessions, { cli: "/srv/bin/evoloop", project: "P" });
+  assert.throws(() => loadConfig(JSON.stringify({ ...ok, skillSync: { workspaces: ["/srv/ws/one"], sessions: { cli: "evoloop", project: "P" } } }), "/etc/release.json"), /skillSync\.sessions/);
   assert.throws(() => loadConfig(JSON.stringify({ ...ok, skillSync: { workspaces: [join(repoRoot, "apps")] } }), "/etc/release.json"), /outside the repository/);
 });

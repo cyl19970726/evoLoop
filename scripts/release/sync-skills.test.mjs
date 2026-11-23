@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { SKILLS_DIR, checkSkillSync, differences, hashTree, processesIn, syncSkills, syncWorkspace } from "./sync-skills.mjs";
+import { SKILLS_DIR, checkSkillSync, differences, hashTree, processesIn, sessionRunCheck, syncSkills, syncWorkspace } from "./sync-skills.mjs";
 
 const git = (cwd, ...args) => {
   const result = spawnSync("git", ["-C", cwd, "-c", "user.name=t", "-c", "user.email=t@example.com", ...args], { encoding: "utf8" });
@@ -50,7 +50,7 @@ test("S2. a workspace with local changes under the skills, or in use, or on a bu
   const want = await skillHashes(repo);
   const edited = clone(root, repo, "edited", c1); write(edited, `${SKILLS_DIR}/a/SKILL.md`, "my own change\n"); write(edited, `${SKILLS_DIR}/mine/SKILL.md`, "new skill\n");
   const busy = clone(root, repo, "busy", c1);
-  const feature = clone(root, repo, "feature", c1); git(feature, "checkout", "-q", "-b", "feat/x");
+  const feature = clone(root, repo, "feature", c1); git(feature, "checkout", "-q", "-b", "feat/x"); write(feature, "own.txt", "unmerged work\n"); git(feature, "add", "-A"); git(feature, "commit", "-q", "-m", "own work"); const featureHead = git(feature, "rev-parse", "HEAD");
   const notRepo = join(root, "plain"); mkdirSync(notRepo);
   const before = { edited: await skillHashes(edited), busy: await skillHashes(busy), feature: await skillHashes(feature) };
   const using = async () => [{ pid: 4242, command: "codex", cwd: join(busy, "apps") }];
@@ -63,12 +63,12 @@ test("S2. a workspace with local changes under the skills, or in use, or on a bu
   };
   assert.equal(results.edited.result, "unsynced"); assert.match(results.edited.reason, /技能目录有本地改动（\d+ 项.*），未动/);
   assert.equal(results.busy.result, "unsynced"); assert.match(results.busy.reason, /正被使用（codex\[4242\].*未切换/);
-  assert.equal(results.feature.result, "unsynced"); assert.match(results.feature.reason, /在业务分支 feat\/x 上，不切换分支也不移动它/);
+  assert.equal(results.feature.result, "unsynced"); assert.match(results.feature.reason, /在业务分支 feat\/x 上，有 1 个提交不在发布提交里（未合并），不切换分支也不移动它/);
   assert.equal(results.missing.reason, "目录不存在"); assert.equal(results.plain.reason, "不是 git 工作区");
   assert.deepEqual(await skillHashes(edited), before.edited, "the local change is still there, byte for byte");
   assert.equal(readFileSync(join(edited, SKILLS_DIR, "a", "SKILL.md"), "utf8"), "my own change\n");
   assert.deepEqual(await skillHashes(busy), before.busy); assert.equal(git(busy, "rev-parse", "HEAD"), c1, "a workspace in use is not switched");
-  assert.deepEqual(await skillHashes(feature), before.feature); assert.equal(git(feature, "branch", "--show-current"), "feat/x"); assert.equal(git(feature, "rev-parse", "HEAD"), c1);
+  assert.deepEqual(await skillHashes(feature), before.feature); assert.equal(git(feature, "branch", "--show-current"), "feat/x"); assert.equal(git(feature, "rev-parse", "HEAD"), featureHead);
   const unlisted = await syncWorkspace({ path: busy, sha: c2, want, lister: async () => { throw new Error("no lsof"); } });
   assert.match(unlisted.reason, /无法列出进程工作目录.*未动/, "when processes cannot be listed nothing is assumed idle");
 });
@@ -133,4 +133,109 @@ test("S6. a workspace written through a symlink is still seen as in use: the pro
   } finally { child.kill(); }
   // a directory that is only similarly named is not inside it
   assert.deepEqual(await processesIn(busy, { lister: async () => [{ pid: 9, command: "x", cwd: `${busy}-other` }] }), []);
+});
+
+test("S7. a clean idle workspace on a business branch already merged into the release (0 ahead) is checked out detached at the release commit, the branch is kept, the record says from which branch", async () => {
+  const { root, repo, c1, c2 } = origin();
+  const want = await skillHashes(repo);
+  const merged = clone(root, repo, "merged", c1); git(merged, "checkout", "-q", "-b", "feat/done");
+  const result = await syncWorkspace({ path: merged, sha: c2, want, lister: none, runActive: async () => null });
+  assert.equal(result.result, "updated"); assert.equal(result.fromBranch, "feat/done"); assert.match(result.mode, /从已合并分支 feat\/done 切到发布提交/);
+  assert.equal(git(merged, "rev-parse", "HEAD"), c2); assert.equal(git(merged, "branch", "--show-current"), "", "detached now");
+  assert.equal(git(merged, "rev-parse", "feat/done"), c1, "the branch itself is not moved or deleted");
+  assert.deepEqual(differences(want, await skillHashes(merged)), []);
+  // through syncSkills: the list for the release record carries the branch, the count says updated
+  const again = clone(root, repo, "merged2", c1); git(again, "checkout", "-q", "-b", "feat/old");
+  const all = await syncSkills({ workspaces: [again], sourceDir: repo, sha: c2, lister: none, runActive: async () => false });
+  assert.equal(all.updated[0].fromBranch, "feat/old"); assert.match(all.summary, /1 个一致（其中本次更新 1 个），0 个未同步/);
+});
+
+test("S8. a merged branch is still left alone when it has commits ahead, a changed work tree (tracked or untracked, outside the skills too), a process in it, or a Session with a Run in progress; the reason names which", async () => {
+  const { root, repo, c1, c2 } = origin();
+  const want = await skillHashes(repo);
+  const branchAt = name => { const dir = clone(root, repo, name, c1); git(dir, "checkout", "-q", "-b", `feat/${name}`); return dir; };
+  const ahead = branchAt("ahead"); write(ahead, "own.txt", "x\n"); git(ahead, "add", "-A"); git(ahead, "commit", "-q", "-m", "own");
+  const tracked = branchAt("tracked"); write(tracked, "app.txt", "edited\n");
+  const untracked = branchAt("untracked"); write(untracked, "notes.txt", "scratch\n");
+  const process_ = branchAt("process");
+  const running = branchAt("running");
+  const heads = Object.fromEntries([ahead, tracked, untracked, process_, running].map(dir => [dir, git(dir, "rev-parse", "HEAD")]));
+  const r = {
+    ahead: await syncWorkspace({ path: ahead, sha: c2, want, lister: none }),
+    tracked: await syncWorkspace({ path: tracked, sha: c2, want, lister: none }),
+    untracked: await syncWorkspace({ path: untracked, sha: c2, want, lister: none }),
+    process: await syncWorkspace({ path: process_, sha: c2, want, lister: async () => [{ pid: 55, command: "claude", cwd: process_ }] }),
+    running: await syncWorkspace({ path: running, sha: c2, want, lister: none, runActive: async () => "Run 199e7f08" }),
+  };
+  for (const [name, item] of Object.entries(r)) assert.equal(item.result, "unsynced", name);
+  assert.match(r.ahead.reason, /有 1 个提交不在发布提交里（未合并）/);
+  assert.match(r.tracked.reason, /分支 feat\/tracked 已合并，但工作树有改动（1 项，如 M app\.txt），未动/);
+  assert.match(r.untracked.reason, /分支 feat\/untracked 已合并，但工作树有改动（1 项，如 \?\? notes\.txt）/);
+  assert.match(r.process.reason, /正被使用（claude\[55\]/);
+  assert.match(r.running.reason, /它的 Session 有进行中的 Run（Run 199e7f08），未切换/);
+  for (const dir of Object.keys(heads)) { assert.equal(git(dir, "rev-parse", "HEAD"), heads[dir], `${dir} did not move`); assert.match(git(dir, "branch", "--show-current"), /^feat\//, `${dir} is still on its branch`); }
+  assert.equal(readFileSync(join(tracked, "app.txt"), "utf8"), "edited\n", "the change is still there");
+  const unknown = await syncWorkspace({ path: running, sha: c2, want, lister: none, runActive: async () => { throw new Error("service down"); } });
+  assert.match(unknown.reason, /无法确认它的 Session 有没有进行中的 Run（service down），未动/);
+});
+
+test("S9. no process in the workspace but a Session there is busy: read from the coordinator (list sessions + work board), the merged branch stays; idle switches; no source or an unreadable one leaves it", async () => {
+  const { root, repo, c1, c2 } = origin();
+  const want = await skillHashes(repo);
+  const dir = (name) => { const d = clone(root, repo, name, c1); git(d, "checkout", "-q", "-b", `feat/${name}`); return d; };
+  const busy = dir("busy"), idle = dir("idle"), noSource = dir("nosource"), unreadable = dir("unreadable");
+  // what the CLI would print: the sessions with their cwd, and the board with what each is doing now
+  const sessions = [{ id: "aaaaaaaa-1", cwd: busy, state: "ready" }, { id: "bbbbbbbb-2", cwd: idle, state: "ready" }, { id: "cccccccc-3", cwd: idle, state: "closed" }];
+  const board = { sessions: [{ sessionId: "aaaaaaaa-1", state: "ready", current: { kind: "run", id: "e35174d8-76cb", taskTitle: "缺陷：技能同步" } }, { sessionId: "bbbbbbbb-2", state: "ready", current: null }] };
+  const calls = [];
+  const exec = async (...argv) => { calls.push(argv.join(" ")); return JSON.stringify(argv.includes("sessions") ? sessions : board); };
+  const check = sessionRunCheck({ cli: "/x/evoloop", project: "P", exec });
+  // no lsof process is listed anywhere: only the coordinator says the first one is busy
+  const a = await syncWorkspace({ path: busy, sha: c2, want, lister: none, runActive: check });
+  assert.equal(a.result, "unsynced"); assert.match(a.reason, /它的 Session 有进行中的 Run（Run e35174d8 · 缺陷：技能同步），未切换/);
+  assert.equal(git(busy, "rev-parse", "HEAD"), c1); assert.equal(git(busy, "branch", "--show-current"), "feat/busy");
+  const b = await syncWorkspace({ path: idle, sha: c2, want, lister: none, runActive: check });
+  assert.equal(b.result, "updated"); assert.equal(b.fromBranch, "feat/idle"); assert.equal(git(idle, "rev-parse", "HEAD"), c2);
+  assert.ok(calls.every(call => call.startsWith("/x/evoloop ") && call.endsWith("--project P")) && calls.some(call => call.includes("list sessions")) && calls.some(call => call.includes("work board")), "only read commands are run");
+  // a Session that is being closed or in another state counts as in use; a message Turn counts like a Run
+  const turn = sessionRunCheck({ cli: "/x/evoloop", project: "P", exec: async (...argv) => JSON.stringify(argv.includes("sessions") ? [{ id: "d", cwd: busy, state: "ready" }] : { sessions: [{ sessionId: "d", state: "ready", current: { kind: "message", id: "1b40b31a-0000" } }] }) });
+  assert.match(await turn(busy), /消息轮次 1b40b31a/);
+  const closing = sessionRunCheck({ cli: "/x/evoloop", project: "P", exec: async (...argv) => JSON.stringify(argv.includes("sessions") ? [{ id: "d", cwd: busy, state: "closing" }] : { sessions: [{ sessionId: "d", state: "closing", current: null }] }) });
+  assert.match(await closing(busy), /状态 closing/);
+  // no source configured: a business branch is not switched; the reason says what is missing
+  const c = await syncWorkspace({ path: noSource, sha: c2, want, lister: none });
+  assert.equal(c.result, "unsynced"); assert.match(c.reason, /没有配置能读出 Session 进行中 Run 的来源（skillSync\.sessions），不能确认没有在使用，未切换/);
+  assert.equal(git(noSource, "rev-parse", "HEAD"), c1);
+  // the source cannot be read (service down, bad answer): cannot confirm, untouched
+  for (const exec2 of [async () => { throw new Error("connect ECONNREFUSED"); }, async () => "not json", async () => JSON.stringify({ sessions: "x" })]) {
+    const d = await syncWorkspace({ path: unreadable, sha: c2, want, lister: none, runActive: sessionRunCheck({ cli: "/x/evoloop", project: "P", exec: exec2 }) });
+    assert.equal(d.result, "unsynced"); assert.match(d.reason, /无法确认它的 Session 有没有进行中的 Run/);
+    assert.equal(git(unreadable, "rev-parse", "HEAD"), c1);
+  }
+  assert.deepEqual(checkSkillSync({ workspaces: ["/srv/a"], sessions: { cli: "/x/evoloop", project: "P" } }).sessions, { cli: "/x/evoloop", project: "P" });
+  assert.throws(() => checkSkillSync({ workspaces: [], sessions: { cli: "evoloop", project: "P" } }), /skillSync\.sessions/);
+});
+
+test("S10. the default reader runs the real CLI executable with read-only commands (a fake `evoloop` script), and the release config accepts skillSync.sessions", async () => {
+  const { root, repo, c1, c2 } = origin();
+  const want = await skillHashes(repo);
+  const busy = clone(root, repo, "cli-busy", c1); git(busy, "checkout", "-q", "-b", "feat/cli-busy");
+  const cli = join(root, "evoloop");
+  writeFileSync(cli, `#!/bin/sh
+echo "$@" >> "${root}/cli.log"
+case "$1 $2" in
+  "list sessions") echo '[{"id":"s1","cwd":"${busy}","state":"ready"}]' ;;
+  "work board") echo '{"sessions":[{"sessionId":"s1","state":"ready","current":{"kind":"run","id":"abcdef12-0000","taskTitle":"T"}}]}' ;;
+  *) echo bad >&2; exit 1 ;;
+esac
+`); chmodSync(cli, 0o755);
+  const result = await syncWorkspace({ path: busy, sha: c2, want, lister: none, runActive: sessionRunCheck({ cli, project: "P" }) });
+  assert.equal(result.result, "unsynced"); assert.match(result.reason, /进行中的 Run（Run abcdef12 · T）/);
+  assert.equal(git(busy, "rev-parse", "HEAD"), c1);
+  const log = readFileSync(join(root, "cli.log"), "utf8").trim().split("\n").sort();
+  assert.deepEqual(log, ["list sessions --project P", "work board --project P"]);
+  // a CLI that fails: cannot confirm
+  writeFileSync(cli, "#!/bin/sh\nexit 1\n");
+  const failed = await syncWorkspace({ path: busy, sha: c2, want, lister: none, runActive: sessionRunCheck({ cli, project: "P" }) });
+  assert.match(failed.reason, /无法确认它的 Session 有没有进行中的 Run/);
 });

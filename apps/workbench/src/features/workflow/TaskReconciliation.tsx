@@ -1,9 +1,10 @@
 // 对账摘要 and 阶段与验收容量 under the table view (tasks.md 表格视图): phase counts with the next responsibility,
 // the project-wide list of open work, and which agents can still take acceptance work.
+import type React from "react";
 import { useQueries } from "@tanstack/react-query";
 import type { LeaderWorkPage, LeaderWorkTask } from "@evoloop/contracts/work-index";
 import type { AcceptanceOverviewView } from "@evoloop/contracts/acceptance-relay";
-import { Badge, CollapsibleRow, StatusTag } from "@evoloop/ui";
+import { Badge, Button, CollapsibleRow, StatusTag, cn } from "@evoloop/ui";
 import { api, errorText } from "../../shared/api";
 import { agentDisplayName, agentNameCollisions, agentNameIsGenerated } from "../../shared/agentNamePresentation";
 import { agentNameKey, readAgent } from "../../shared/agentRead";
@@ -20,13 +21,21 @@ import { sessionHref } from "../sessions";
 import { nameOnly, workItemNextStep, type NameRead } from "../../shared/workPresentation";
 
 /** Phase counts across the project's open work, in the order that needs a decision first. */
-export function PhaseCounts({ counts, label = "对账阶段计数" }: { counts: Record<string, number> | undefined; label?: string }) {
+export function PhaseCounts({ counts, label = "对账阶段计数", selected = "", onSelect }: {
+  counts: Record<string, number> | undefined; label?: string; selected?: string; onSelect?: (phase: string) => void;
+}) {
   if (!counts) return null;
   const shown = phaseOrder.filter(phase => counts[phase]);
-  return <div className="flex flex-wrap items-center gap-1.5" aria-label={label}>
-    {shown.map(phase => <StatusTag key={phase} tone={phaseStatus[phase].tone} label={phaseStatus[phase].label} detail={String(counts[phase])} />)}
-    {!!counts.review_acknowledged && <Badge>Leader 已核对 {counts.review_acknowledged}</Badge>}
-    {!!counts.review_deferred && <Badge>Leader 已暂缓 {counts.review_deferred}</Badge>}
+  // With onSelect every count is a button that narrows the list to that phase (pressed = chosen; press again to clear). The pressed
+  // look is the one every selected item has: a neutral background and weight 600, no capsule.
+  const button = (key: string, content: React.ReactNode) => onSelect
+    ? <Button key={key} size="compact" variant="ghost" aria-pressed={selected === key} data-phase={key} onClick={() => onSelect(selected === key ? "" : key)}
+      className={cn("h-auto px-2 py-0.5 font-normal text-text-secondary", selected === key && "bg-accent font-semibold text-foreground hover:bg-accent")}>{content}</Button>
+    : <span key={key}>{content}</span>;
+  return <div className="flex flex-wrap items-center gap-1" aria-label={label} role="group">
+    {shown.map(phase => button(phase, <StatusTag tone={phaseStatus[phase].tone} label={phaseStatus[phase].label} detail={String(counts[phase])} className={selected === phase ? "font-semibold" : ""} />))}
+    {!!counts.review_acknowledged && button("review_acknowledged", <Badge className={selected === "review_acknowledged" ? "font-semibold" : ""}>Leader 已核对 {counts.review_acknowledged}</Badge>)}
+    {!!counts.review_deferred && button("review_deferred", <Badge className={selected === "review_deferred" ? "font-semibold" : ""}>Leader 已暂缓 {counts.review_deferred}</Badge>)}
     {!shown.length && <span className="text-label text-muted-foreground">当前没有未关闭的工作。</span>}
   </div>;
 }

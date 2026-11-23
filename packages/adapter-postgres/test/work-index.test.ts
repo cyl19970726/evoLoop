@@ -90,6 +90,7 @@ test("leader work index exposes plan, dependency, current version and a stable b
   assert.equal(first.items[0]!.plan?.priority, 2);
   assert.equal(first.items[0]!.dates.businessChangedAt, now);
   assert.equal(first.items[0]!.dates.createdAt, now);
+  assert.equal(first.items[0]!.owner, actor, "the row names the Task owner so the list can show it without a second read");
   assert.equal(first.items[0]!.latestProgress?.entityKind, "dependency");
   assert.equal(first.items[0]!.latestProgress?.eventName, "任务依赖已更新");
   assert.ok(first.items[0]!.latestProgress?.changedAt);

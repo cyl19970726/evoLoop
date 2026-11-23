@@ -26,10 +26,27 @@ export function TaskListNotices({ list, query = "", compact = false }: { list: T
   </>;
 }
 
+/**
+ * The footer of the list (rail and table). The 未完成 list is every open task: it says so when all were read, and when not
+ * ("已读 X 项，未读全") offers to read again instead. Other ranges are read page by page and say how far.
+ */
+export function ListFooter({ list, matched }: { list: TaskListRead; matched: number }) {
+  const open = list.openList;
+  if (!open) return <span className="flex-1">已载入 {list.tasks.length} 项，{list.hasMore ? "后面还有，按编号顺序" : "已全部载入"} · 匹配 {matched} 项</span>;
+  const filtered = matched !== open.read;
+  if (open.complete) return <span className="flex-1" data-list-footer="complete">未完成 {open.read} 项，已全部列出{filtered ? ` · 匹配 ${matched} 项` : ""}</span>;
+  return <span className="flex flex-1 flex-wrap items-center gap-2" data-list-footer="partial" role="status">
+    <span>已读 {open.read} 项，未读全{filtered ? ` · 匹配 ${matched} 项` : ""}</span>
+    {open.truncated ? <Button size="compact" variant="ghost" disabled={open.reading} onClick={list.index.readMore}>{open.reading ? "正在读取…" : "继续读取"}</Button>
+      : <Button size="compact" variant="ghost" disabled={open.reading} onClick={open.retry}>{open.reading ? "正在重试…" : "重试"}</Button>}
+  </span>;
+}
+
 /** Why the visible list is empty: never "no tasks" while unread pages remain or the project has tasks. */
 export function emptyListText(list: TaskListRead, view: TaskListView): { title: string; reason: string } {
   if (list.hasMore) return { title: "已载入范围内没有匹配任务", reason: "仍有后续页面，可继续载入或搜索全部已读取范围。" };
-  const filtered = !!view.query || view.filter !== "open" || view.kind !== "all" || view.scope !== "all";
+  const filtered = !!view.query || view.filter !== "open" || view.kind !== "all" || view.scope !== "all" || !!view.phase;
+  if (list.openList?.complete && !list.tasks.length && !filtered) return { title: "没有未完成的任务", reason: "未完成的工作已全部读取，现在没有待处理项；切换范围可查看已关闭的任务。" };
   if (list.tasks.length || filtered) return { title: "没有匹配项", reason: "可以调整筛选，查看其他状态的工作。" };
   return { title: "还没有任务", reason: "可以创建一项有明确正文与验收条件的工作，或请智能体登记。" };
 }
@@ -77,7 +94,7 @@ export function TaskRail({ list, view, onView, selectedId, linkFor }: {
       </Button>)}
     </div>
     <div className="grid grid-cols-2 gap-1.5">
-      <Select compact aria-label="任务状态筛选" value={view.filter} onChange={event => onView({ filter: event.target.value })}>
+      <Select compact aria-label="任务状态筛选" value={view.filter} onChange={event => onView({ filter: event.target.value, phase: "" })}>
         {Object.entries(stateFilterLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
       </Select>
       <Select compact aria-label="任务类型筛选" value={view.kind} onChange={event => onView({ kind: event.target.value })}>
@@ -88,7 +105,7 @@ export function TaskRail({ list, view, onView, selectedId, linkFor }: {
       {taskSorts.map(sort => <option key={sort} value={sort}>排序：{sortLabels[sort]}</option>)}
     </Select>
     {sorted && <p className="px-1 text-caption text-muted-foreground" data-sort-scope="">
-      按{sortLabels[view.sort]}排序只作用于已载入的 {list.tasks.length} 项{list.hasMore ? "，后续页尚未载入" : ""}；没有这项数据的任务排在最后。</p>}
+      按{sortLabels[view.sort]}排序作用于{list.openList ? "全部未完成的" : "已载入的"} {list.tasks.length} 项{list.hasMore ? "，后续页尚未载入" : ""}；没有这项数据的任务排在最后。</p>}
     <TaskListNotices list={list} query={view.query.trim()} compact />
     {selectedId && !list.loading && list.tasks.some(task => task.id === selectedId) && !list.visible.some(task => task.id === selectedId) &&
       <p className="px-1 text-caption text-muted-foreground">打开的任务不在当前筛选结果中。</p>}
@@ -105,10 +122,10 @@ export function TaskRail({ list, view, onView, selectedId, linkFor }: {
         <ul className="-ml-[18px] -mr-3 flex flex-col gap-0.5">{cognition.map(task => row(task, list.statuses[task.id] ? cognitionSummary(list.statuses[task.id]!).title : task.title))}</ul>
       </CollapsibleRow>}
       {empty && <EmptyState className="px-4 py-3" {...emptyListText(list, view)}
-        action={<Button size="compact" onClick={() => onView({ query: "", filter: "open", kind: "all", scope: "all" })}>清除筛选</Button>} />}
+        action={<Button size="compact" onClick={() => onView({ query: "", filter: "open", kind: "all", scope: "all", phase: "" })}>清除筛选</Button>} />}
     </div>
     {!list.loading && !list.firstError && <div className="flex items-center gap-2 px-1 text-caption text-muted-foreground">
-      <span className="flex-1">已载入 {list.tasks.length} 项 · 匹配 {list.visible.length} 项</span>
+      <ListFooter list={list} matched={list.visible.length} />
       {list.hasMore && <Button size="compact" variant="ghost" disabled={list.loadingMore || list.searching} onClick={() => void list.loadMore()}>{list.loadingMore ? "加载中…" : "加载更多"}</Button>}
     </div>}
   </section>;
