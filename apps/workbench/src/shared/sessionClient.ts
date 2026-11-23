@@ -38,6 +38,9 @@ export function sessionClient(token: string, projectId: string) {
       get<SessionChanges>(`${base}/session-work/changes?${query({ cursor, limit: 100, key })}`, signal),
     activities: (key: string, cursor?: string, signal?: AbortSignal) =>
       get<SessionActivityPage>(`${base}/session-work/${part(key)}/activities?${query({ limit: 50, cursor, importance: "all" })}`, signal),
+    /** The business steps of the Tasks this Session accepted, newest first, from `since` on (Task 13518ac6). */
+    businessNodes: (key: string, since: string | null, cursor?: string, signal?: AbortSignal) =>
+      get<SessionActivityPage>(`${base}/session-work/${part(key)}/activities?${query({ limit: 50, cursor, business: "1", since: since ?? undefined })}`, signal),
     profile: (key: string, signal?: AbortSignal) => get<SessionProfileRecord | null>(`${base}/session-work/${part(key)}/profile`, signal),
     assignment: (taskId: string, signal?: AbortSignal) => requestNullable<TaskSessionAssignment>(token, `${base}/tasks/${part(taskId)}/assignment`, 15000, signal),
     /** Every Session line of the project (DEC-045) with the entries still waiting or starting, in line order. */

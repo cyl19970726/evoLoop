@@ -185,7 +185,15 @@ export function liveStatusText(currentTool: Pick<WorkspaceTool, "name" | "summar
   return `正在${toolStepText(currentTool)}`;
 }
 
-export interface TurnSummaryLine { produced: string; delivered?: string; next?: string }
+/** A delivery the business-node read found, as the turn summary needs it (Task 13518ac6). */
+export interface DeliveryFact { taskId: string; deliveryId: string; number: number; label: string; at: string }
+export interface TurnSummaryLine {
+  produced: string; delivered?: string; next?: string;
+  /** The delivery this turn made, from the records: lets the line link to it. */
+  delivery?: DeliveryFact;
+  /** A work turn that ended with no delivery of its Task inside it, said as such. */
+  noDelivery?: true;
+}
 
 /**
  * The line that closes a finished turn: what its tools did, a delivery the records tie to its task within the turn,
@@ -193,7 +201,7 @@ export interface TurnSummaryLine { produced: string; delivered?: string; next?: 
  * claimed for a turn still running or of unknown outcome. Keyed by the id of the turn's last entry.
  */
 export function turnSummaries(entries: readonly WorkspaceEntry[], turns: readonly WorkspaceTurn[], results: readonly SessionResult[],
-  waitingTurnIds: ReadonlySet<string> = new Set()): Map<string, TurnSummaryLine> {
+  waitingTurnIds: ReadonlySet<string> = new Set(), deliveries: readonly DeliveryFact[] | null = null): Map<string, TurnSummaryLine> {
   const lines = new Map<string, TurnSummaryLine>();
   for (const turn of turns) {
     if (!["completed", "failed", "interrupted"].includes(turn.state)) continue;
@@ -206,15 +214,26 @@ export function turnSummaries(entries: readonly WorkspaceEntry[], turns: readonl
     const taskId = turn.origin?.taskId ?? null;
     // A delivery belongs to this turn only when it was submitted between the turn's start and its end; without both
     // times nothing is claimed (every turn of a task would otherwise "deliver" its latest result).
-    const delivery = taskId && turn.startedAt && turn.completedAt
-      ? results.filter(result => result.taskId === taskId && result.submittedAt >= turn.startedAt! && result.submittedAt <= turn.completedAt!)
-        .sort((a, b) => a.submittedAt.localeCompare(b.submittedAt)).at(-1)
-      : undefined;
+    const timed = !!taskId && !!turn.startedAt && !!turn.completedAt;
+    let delivered: string | undefined, made: DeliveryFact | undefined, noDelivery = false;
+    if (deliveries !== null) {
+      // The business nodes were read: a work turn (one a Run started) says what it delivered, or that it delivered nothing; a reply turn says neither.
+      if (turn.origin?.kind === "run" && timed) {
+        made = deliveries.filter(item => item.taskId === taskId && item.at >= turn.startedAt! && item.at <= turn.completedAt!).sort((a, b) => a.at.localeCompare(b.at)).at(-1);
+        if (made) delivered = `交付了第 ${made.number} 份（${made.label}）`; else { noDelivery = true; delivered = "这一轮没有交付"; }
+      }
+    } else if (timed) {
+      // Not read (or the read failed): the weaker reading from the results on the page, and no claim that nothing was delivered.
+      const result = results.filter(item => item.taskId === taskId && item.submittedAt >= turn.startedAt! && item.submittedAt <= turn.completedAt!)
+        .sort((a, b) => a.submittedAt.localeCompare(b.submittedAt)).at(-1);
+      if (result) delivered = `交付了「${result.taskTitle}」`;
+    }
+    const delivers = made !== undefined || (deliveries === null && delivered !== undefined);
     const next = waitingTurnIds.has(turn.id) ? "下一步等你回答"
       : turn.state === "failed" ? "这一轮失败，等你核对"
         : turn.state === "interrupted" ? "这一轮已中断，等你决定是否继续"
-          : delivery ? "下一步等验收者核对交付与使用" : undefined;
-    lines.set(last.id, { produced, ...(delivery ? { delivered: `交付了「${delivery.taskTitle}」` } : {}), ...(next ? { next } : {}) });
+          : delivers ? "下一步等验收者核对交付与使用" : undefined;
+    lines.set(last.id, { produced, ...(delivered ? { delivered } : {}), ...(made ? { delivery: made } : {}), ...(noDelivery ? { noDelivery: true as const } : {}), ...(next ? { next } : {}) });
   }
   return lines;
 }

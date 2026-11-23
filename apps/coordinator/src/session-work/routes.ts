@@ -43,10 +43,12 @@ export function registerSessionWorkRoutes(app: FastifyInstance, service: Session
   app.get("/api/projects/:projectId/session-work/:key/activities", request => {
     const { projectId, key: sessionKey } = z.strictObject({ projectId: id, key }).parse(request.params);
     const options = z.strictObject({ limit: limit50, cursor: cursor.optional(), taskId: id.optional(),
-      importance: z.enum(["important", "all"]).optional() }).parse(request.query);
+      importance: z.enum(["important", "all"]).optional(), business: z.enum(["1"]).optional(),
+      since: z.iso.datetime().optional() }).parse(request.query);
     return service.history(principalOf(request), projectId, sessionKey, { limit: options.limit,
       ...(options.cursor ? { cursor: options.cursor } : {}), ...(options.taskId ? { taskId: options.taskId } : {}),
-      ...(options.importance ? { importance: options.importance } : {}) });
+      ...(options.importance ? { importance: options.importance } : {}),
+      ...(options.business ? { business: true, ...(options.since ? { since: options.since } : {}) } : {}) });
   });
   app.get("/api/projects/:projectId/session-work/:key/profile/history", request => {
     const { projectId, key: sessionKey } = z.strictObject({ projectId: id, key }).parse(request.params);
