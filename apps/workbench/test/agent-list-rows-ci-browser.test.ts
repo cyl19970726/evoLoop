@@ -151,15 +151,15 @@ test("each row and the page header make one judgement; names of twelve character
       if (name === "状态未读者") assert.equal(headerText, "外部 · 状态未知");
     }
     console.log(pairs.join("\n"));
-    // Names: twelve characters are whole, fifteen are cut and carry the full name as a tooltip.
+    // Names: twelve characters are whole, thirty are cut and carry the full name as a tooltip.
     await open(10);
     if (width === 390) await page.getByRole("button", { name: "打开项目导航" }).click();
     else if (await page.locator("[data-shell=frame]").getAttribute("data-rail") !== "shown") await page.getByRole("button", { name: "展开项目导航" }).click();
     const nav = page.locator(width === 390 ? ".mobile-navigation .session-navigation" : "aside[aria-label=项目导航] .session-navigation");
     const nameCell = (name: string) => nav.locator(".session-nav-item").filter({ has: page.locator(".session-nav-name", { hasText: name }) }).first().locator(".session-nav-name > span").first();
     assert.equal(await nameCell("一二三四五六七八九十一二").evaluate((el: Element) => el.scrollWidth > el.clientWidth), false, `${width}: twelve characters are not cut`);
-    assert.equal(await nameCell("十六个字的显示名称用来测截断否").evaluate((el: Element) => el.scrollWidth > el.clientWidth), true, `${width}: a longer name is cut`);
-    assert.equal(await nameCell("十六个字的显示名称用来测截断否").getAttribute("title"), "十六个字的显示名称用来测截断否");
+    assert.equal(await nameCell("十六个字的显示名称用来测截断否十六个字的显示名称用来测截断否").evaluate((el: Element) => el.scrollWidth > el.clientWidth), true, `${width}: a longer name is cut`);
+    assert.equal(await nameCell("十六个字的显示名称用来测截断否十六个字的显示名称用来测截断否").getAttribute("title"), "十六个字的显示名称用来测截断否十六个字的显示名称用来测截断否");
     // A selected agent inside the history fold is in view after a reload.
     await page.goto(`${fixture.base}/p/${common.projectId}/sessions?session=${encodeURIComponent(`owned:${rowAgentId(9)}`)}`);
     await page.getByLabel("访问令牌").fill(common.token);

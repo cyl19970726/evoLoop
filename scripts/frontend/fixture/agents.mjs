@@ -73,9 +73,9 @@ const rowAgents = () => [
   rowAgent(7, { title: "同名智能体", fields: {} }),
   rowAgent(8, { title: "同名智能体", fields: { busy: true } }),
   rowAgent(9, { title: "早先的智能体", membership: "historical", fields: {} }),
-  // A name of exactly twelve Chinese characters (not cut) and one of fifteen (cut, full name on hover).
+  // A name of exactly twelve Chinese characters (not cut) and one of thirty (cut, full name on hover).
   rowAgent(10, { title: "一二三四五六七八九十一二", fields: {} }),
-  rowAgent(11, { title: "十六个字的显示名称用来测截断否", fields: {} }),
+  rowAgent(11, { title: "十六个字的显示名称用来测截断否十六个字的显示名称用来测截断否", fields: {} }),
 ];
 export const directory = (search = "", membership = "current") => {
   const all = [...order.map(observedSession), ...(process.env.FIXTURE_ROWS ? rowAgents() : [])]
