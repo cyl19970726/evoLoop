@@ -40,23 +40,6 @@ export interface StagePhaseLink {
   review: MilestoneReview | null;
 }
 
-export interface MilestonePhase {
-  id: string; title: string; deliver: string; exit: string;
-  /** The linked stage's status; null when no stage is linked (or more than one is: then `linkedStages` says so and nothing is guessed). */
-  status: MilestoneStatus | null; statusLabel: string | null;
-  stage: { id: string; goalId: string } | null;
-  linkedStages: number;
-  /** The date of the linked stage's latest review (UTC); null when there is none. */
-  reviewedAt: string | null;
-}
-export interface MilestonesView {
-  source: { commit: string | null; roadmap: "read" | "unavailable" };
-  phases: MilestonePhase[];
-  /** The phase of the one linked stage that is active; null when none or more than one is (nothing is guessed). */
-  currentPhaseId: string | null;
-  currentNote: string | null;
-}
-
 export interface VersionInfo { commit: string | null; builtAt: string | null; startedAt: string }
 
 /** One level of a project's verification ladder (`GET /api/projects/:id/ladder`): its roadmap name, the first sentence of its current status, and the stages that supply evidence for it. */

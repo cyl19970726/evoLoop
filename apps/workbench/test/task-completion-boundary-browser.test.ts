@@ -163,7 +163,7 @@ test("ordinary Task row, right-column facts and the full task use current QA res
   assert.equal(await boundary.getAttribute("data-completion-boundary"), "merged");
   assert.equal(await boundary.getAttribute("data-completion-met"), "false");
   assert.match(await boundary.locator("xpath=..").innerText(), /未满足：PR #12 还没有合并进主干[\s\S]*关闭者自报“已合并”无效/);
-  if (process.env.EVOLOOP_COMPLETION_SCREENSHOT_DIR) await fold.scrollIntoViewIfNeeded(); await page.screenshot({ path: `${process.env.EVOLOOP_COMPLETION_SCREENSHOT_DIR}/task-completion-unmet-1440.png` });
+  if (process.env.EVOLOOP_COMPLETION_SCREENSHOT_DIR) { await fold.scrollIntoViewIfNeeded(); await page.screenshot({ path: `${process.env.EVOLOOP_COMPLETION_SCREENSHOT_DIR}/task-completion-unmet-1440.png` }); }
   completionState.met = true;
   await page.reload(); await page.getByLabel("访问令牌").fill("fixture-token"); await page.getByRole("button", { name: "进入", exact: true }).click();
   await page.getByRole("heading", { level: 1, name: title }).waitFor();
@@ -172,7 +172,7 @@ test("ordinary Task row, right-column facts and the full task use current QA res
   await met.waitFor();
   assert.equal(await met.getAttribute("data-completion-met"), "true");
   assert.match(await met.locator("xpath=..").innerText(), /已满足：PR #12 已合并进主干[\s\S]*仓库读到的事实/);
-  if (process.env.EVOLOOP_COMPLETION_SCREENSHOT_DIR) await met.scrollIntoViewIfNeeded(); await page.screenshot({ path: `${process.env.EVOLOOP_COMPLETION_SCREENSHOT_DIR}/task-completion-met-1440.png` });
+  if (process.env.EVOLOOP_COMPLETION_SCREENSHOT_DIR) { await met.scrollIntoViewIfNeeded(); await page.screenshot({ path: `${process.env.EVOLOOP_COMPLETION_SCREENSHOT_DIR}/task-completion-met-1440.png` }); }
   completionState.met = null;
   assert.equal(pageErrors.length, 0, pageErrors.join(" | "));
 });

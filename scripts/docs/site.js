@@ -121,7 +121,15 @@ function relUrl(from, to, fragment = '', query = '') {
   if (!relative) relative = path.posix.basename(to);
   return `${relative.split('/').map(encodeURIComponent).join('/')}${query}${fragment ? `#${fragment}` : ''}`;
 }
+/** A root directory literally named `undefined` or `null` is what a path built from an unset variable leaves behind (`${dir}/file.png`). */
+async function assertNoStrayRootDirectories(root) {
+  for (const name of ['undefined', 'null']) {
+    const stat = await fs.lstat(path.join(root, name)).catch(() => null);
+    if (stat?.isDirectory()) fail(`${name}/: a root directory named "${name}" is most likely written through an undefined path variable (a test or script built a path from an unset value). Find what wrote it and guard that path, then delete the directory.`);
+  }
+}
 export async function check(root) {
+  await assertNoStrayRootDirectories(root);
   const manifestFile = await regularFile(root, 'docs/site.json', 'manifest');
   let manifest;
   try { manifest = JSON.parse(await fs.readFile(manifestFile, 'utf8')); }

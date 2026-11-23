@@ -23,7 +23,7 @@ import { FullIdentifiers } from "../../shared/ui/FullIdentifiers";
 import { ResponsibleName, RoleName } from "../../shared/ui/RecordName";
 import { ReturnLink } from "../../shared/ui/ReturnLink";
 import { date, href } from "../../shared/ui/shared";
-import { StagesSection, useStageProjection, useStageStatusOf } from "../stages";
+import { StageLabel, StagesSection, useStageLabelOf, useStageProjection, useStageStatusOf } from "../stages";
 import { CreateTaskView } from "./CreateTaskPage";
 import { DraftsContext, GoalCreateForm, GoalReviseForm, StageAcceptForm, StageCorrectForm, StageProposeForm, StageReviewForm, goalFieldLabels, type Drafts } from "./JourneyForms";
 import { defaultSelection, goalTree, groupByStage, nextChoiceLabel, orderReviews, orderStageTasks, phaseCounts, reviewStanding, stageNextStep } from "./journeyPresentation";
@@ -67,6 +67,7 @@ export function JourneyPage({ context, active, propose }: { context: MutationCon
   const workRead = useStageWork(projectId);
   const projectionRead = useStageProjection(projectId, active);
   const statusOf = useStageStatusOf(projectId);
+  const labelOf = useStageLabelOf(projectId, active);
   const goals = goalsRead.data?.items ?? [];
   const stages = stagesRead.data ?? [];
   const work = workRead.data;
@@ -116,12 +117,12 @@ export function JourneyPage({ context, active, propose }: { context: MutationCon
       {tree.items.map(({ goal: item, stages: owned }) => <div key={item.id} className="flex flex-col gap-0.5">
         <ListRow href={goalHref(item.id)} selected={!stage && goal?.id === item.id} title={<span title={item.outcome}>{item.outcome}</span>} meta={stagesKnown ? `目标 · ${owned.length} 个阶段` : `目标 · ${stagesUnknown}`} />
         {owned.length > 0 && <ul aria-label={`${item.outcome}的阶段`} className="flex flex-col gap-0.5 pl-3">{owned.map(entry => <li key={entry.id}>
-          <ListRow href={stageHref(entry.id)} selected={stage?.id === entry.id} title={<span title={entry.deliverable}>{entry.deliverable}</span>}
+          <ListRow href={stageHref(entry.id)} selected={stage?.id === entry.id} title={<span title={entry.deliverable} className="block min-w-0"><StageLabel {...labelOf(entry)} /></span>}
             meta={stageMeta(entry)} trailing={<StatusTag tone={statusOf(entry).tone} label={statusOf(entry).label} />} />
         </li>)}</ul>}
       </div>)}
       {tree.orphans.length > 0 && <div className="mt-2 flex flex-col gap-0.5"><span className={cn(muted, "px-3")}>所属目标未读到的阶段</span>
-        {tree.orphans.map(entry => <ListRow key={entry.id} href={stageHref(entry.id)} selected={stage?.id === entry.id} title={entry.deliverable} meta={stageMeta(entry)} />)}</div>}
+        {tree.orphans.map(entry => <ListRow key={entry.id} href={stageHref(entry.id)} selected={stage?.id === entry.id} title={<span title={entry.deliverable} className="block min-w-0"><StageLabel {...labelOf(entry)} /></span>} meta={stageMeta(entry)} />)}</div>}
       {goalsRead.data && !goalsRead.data.complete && <p className={cn(muted, "px-3")}>目标只列出了已读的部分。</p>}
     </nav>
   </div></ContextRailContent>;
