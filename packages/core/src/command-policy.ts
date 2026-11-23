@@ -92,6 +92,7 @@ export const commandPermissionPolicy = {
   "leader.noticePacket.observe": task(),
   "leader.noticePacket.recover": task(true),
   "leader.noticePacket.sent": task(),
+  "leader.noticePacket.steered": task(),
 
   "schedule.create": management(),
   "schedule.revise": management(),

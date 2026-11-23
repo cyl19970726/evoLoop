@@ -19,7 +19,7 @@ const pool=new pg.Pool({connectionString:url,options:`-c search_path=${schema}`}
 const store=new PgDirectInputs(pool);
 const projectId=randomUUID(),sessionId=randomUUID(),otherSessionId=randomUUID(),httpSessionId=randomUUID(),
   recoverySessionId=randomUUID(),noticeSessionId=randomUUID(),raceSessionId=randomUUID(),
-  contentionSessionId=randomUUID(),queueSessionId=randomUUID(),changedSessionId=randomUUID(),orderSessionId=randomUUID(),firstSessionId=randomUUID(),roleId=randomUUID();
+  contentionSessionId=randomUUID(),queueSessionId=randomUUID(),changedSessionId=randomUUID(),orderSessionId=randomUUID(),firstSessionId=randomUUID(),w2SessionId=randomUUID(),roleId=randomUUID();
 const grant=(id=sessionId,maxTurns=2)=>({projectId,sessionId:id,senderActorId:"user",receiverRoleId:roleId,
   receiverActorId:"agent",cwd:"/tmp/direct-test",maxTurns,enabled:true,canSteer:true,canStart:true});
 const input=(expectedTurnId:string|null=null)=>({inputId:randomUUID(),operationId:randomUUID(),content:"Additional authorized detail",expectedTurnId});
@@ -32,7 +32,7 @@ const assertQueued=async(pending:Promise<{record:{state:string;queuedMessageId?:
 before(async()=>{
   await migrate(url!,schema);
   await pool.query("INSERT INTO project(project_id,title,created_at) VALUES($1,'Direct test',now())",[projectId]);
-  for(const id of [sessionId,otherSessionId,httpSessionId,recoverySessionId,noticeSessionId,raceSessionId,contentionSessionId,queueSessionId,changedSessionId,orderSessionId,firstSessionId])await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,
+  for(const id of [sessionId,otherSessionId,httpSessionId,recoverySessionId,noticeSessionId,raceSessionId,contentionSessionId,queueSessionId,changedSessionId,orderSessionId,firstSessionId,w2SessionId])await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,
     authorization_scope,sandbox,approval_policy,state,version,native_thread_id,native_session_id,operation_id,actor_id,
     created_at,updated_at) VALUES($1,$2,$3,'/tmp/direct-test','project','danger-full-access','never',
     'ready',1,$4,$5,$6,'agent',now(),now())`,[projectId,id,roleId,`thread-${id}`,`native-${id}`,randomUUID()]);
@@ -646,4 +646,28 @@ test("defect 52eb5ecf: an idle start is recorded as message.started only — nev
   await pool.query("ALTER TABLE session_message DISABLE TRIGGER USER");
   await pool.query("UPDATE session_message SET state='replied' WHERE project_id=$1 AND message_id=$2",[projectId,id]);
   await pool.query("ALTER TABLE session_message ENABLE TRIGGER USER");
+});
+
+test("a platform notice: refused with nothing saved when the Turn ended or changed; added to a message-started Turn it names; never queued as a message",async()=>{
+  const notice={...grant(w2SessionId),canStart:false};
+  // Idle: a notice never starts a Turn, and nothing is reserved or queued.
+  const idle=input(null);
+  await assert.rejects(()=>store.reserve(projectId,w2SessionId,"user",idle,notice,"",{notice:true}),(error:unknown)=>(error as {code?:string}).code==="TURN_ENDED");
+  assert.equal(await store.get(projectId,idle.inputId),null);
+  assert.equal((await pool.query("SELECT 1 FROM session_message WHERE project_id=$1 AND message_id=$2",[projectId,idle.inputId])).rowCount,0);
+  const messageId=randomUUID(),processingId=randomUUID();
+  await pool.query(`INSERT INTO session_message(project_id,message_id,operation_id,target_kind,session_id,sender_actor_id,content,state,version,created_at,updated_at)
+    VALUES($1,$2,$3,'owned',$4,'person','A message','processing',1,now(),now())`,[projectId,messageId,randomUUID(),w2SessionId]);
+  await pool.query(`INSERT INTO session_message_processing(project_id,processing_id,message_id,session_id,operation_id,receiver_actor_id,state,native_turn_id,read_only_policy_fingerprint,version,started_at,updated_at)
+    VALUES($1,$2,$3,$4,$5,'agent','running','w2-turn',$6,1,now(),now())`,[projectId,processingId,messageId,w2SessionId,randomUUID(),hash]);
+  assert.equal(await store.primaryKind(projectId,w2SessionId),"message");
+  const wrong=input("another-turn");
+  await assert.rejects(()=>store.reserve(projectId,w2SessionId,"user",wrong,notice,"",{notice:true}),(error:unknown)=>(error as {code?:string}).code==="TURN_CHANGED");
+  assert.equal(await store.get(projectId,wrong.inputId),null,"nothing reserved");
+  assert.equal((await pool.query("SELECT 1 FROM session_message WHERE project_id=$1 AND message_id=$2",[projectId,wrong.inputId])).rowCount,0,"not saved as a queued message");
+  const right=input("w2-turn");
+  const reserved=await store.reserve(projectId,w2SessionId,"user",right,notice,"",{notice:true});
+  assert.equal(reserved.record.mode,"steer"); assert.deepEqual(reserved.record.source,{kind:"message",id:messageId,processingId});
+  // Without the notice option a person's changed Turn is still queued as before.
+  await assertQueued(store.reserve(projectId,w2SessionId,"user",input("another-turn"),grant(w2SessionId),""));
 });
