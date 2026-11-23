@@ -1,4 +1,4 @@
-// View state of the overview that belongs in the address (?stage= for the chosen stage, ?milestones=open for the unfolded milestone block), so back,
+// View state of the overview that belongs in the address (?stage= for the chosen stage), so back,
 // reload and a shared link bring it back. Written with replaceQuietly: a choice is not a page visit.
 import { appHistory, replaceQuietly } from "../../shared/navigation";
 

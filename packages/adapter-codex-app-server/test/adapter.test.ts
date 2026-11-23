@@ -879,6 +879,19 @@ test("owned archive requires exact native readback; empty and lost acknowledgeme
   }
 });
 
+test("the unarchived listing says whether the exact owned thread is still listed", async t => {
+  const live = await open(); t.after(() => live.close());
+  const binding = await live.create(spec);
+  assert.equal(await live.isThreadListed(binding), true);
+  assert.equal(await live.isThreadArchived(binding), false);
+  await live.archiveThread(binding);
+  assert.equal(await live.isThreadListed(binding), false, "an archived thread is not in the unarchived listing");
+  const gone = await open("thread-gone"); t.after(() => gone.close());
+  const lost = await gone.create(spec);
+  assert.equal(await gone.isThreadListed(lost), false);
+  assert.equal(await gone.isThreadArchived(lost), false);
+});
+
 test("actual App Server child receives only explicit login and transport environment", async t => {
   const adapter = testAdapter({ executable: process.execPath,
     spawnArgs: [fixture, "env-observe"], requestTimeoutMs: 500,

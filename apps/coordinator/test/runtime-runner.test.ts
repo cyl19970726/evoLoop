@@ -525,6 +525,51 @@ test("failed archive precheck stops before durable attempt or native write", asy
   } finally { await runner.stop(); }
 });
 
+test("a closing session whose native thread is gone closes as native_absent; every other unreadable case stays closing with its fault", async t => {
+  const unreadable = () => new RuntimeServerError("thread/read", 4, -32600, "failed to read thread: thread not loaded; path=/private/x");
+  const samples: Array<{ name: string; absent: boolean; archived?: () => Promise<boolean>; listed?: () => Promise<boolean>; inspect?: () => Promise<unknown> }> = [
+    { name: "positive: unreadable and in neither listing", absent: true },
+    { name: "positive: rollout not found and in neither listing", absent: true, inspect: async () => { throw new RuntimeServerError("thread/read", 4, -32600, "no rollout found for thread id x"); } },
+    { name: "read times out", absent: false, inspect: async () => { throw new RuntimeUnknownError("thread/read", 4, "reply unavailable"); } },
+    { name: "connection dropped before the read was sent", absent: false, inspect: async () => { throw new RuntimeProtocolError("native connection closed"); } },
+    { name: "the child process is not running (archive listing cannot be read)", absent: false, archived: async () => { throw new RuntimeProtocolError("native runtime is not ready"); } },
+    { name: "the unarchived listing cannot be read", absent: false, listed: async () => { throw new RuntimeUnknownError("thread/list", 9, "reply unavailable"); } },
+    { name: "the thread is in the unarchived listing but the read fails", absent: false, listed: async () => true },
+    { name: "another server error on the read", absent: false, inspect: async () => { throw new RuntimeServerError("thread/read", 4, -32603, "internal error"); } },
+    { name: "a thread-unavailable answer to a different method", absent: false, inspect: async () => { throw new RuntimeServerError("thread/list", 4, -32600, "failed to read thread"); } },
+  ];
+  for (const sample of samples) await t.test(sample.name, async () => {
+    const closing: RuntimeSessionRecord = { ...session, state: "closing", closeOperationId: randomUUID(), closeAttemptedAt: null };
+    let archives = 0, marks = 0, confirms = 0, absents = 0;
+    class GoneRuntime extends FakeRuntime {
+      async isThreadArchived() { return sample.archived ? sample.archived() : false; }
+      async isThreadListed() { return sample.listed ? sample.listed() : false; }
+      async archiveThread() { archives++; }
+      override async inspect(_binding: RuntimeBinding): Promise<unknown> { if (sample.inspect) return sample.inspect(); throw unreadable(); }
+    }
+    const native = new GoneRuntime();
+    const workflow = { getProject: async () => ({ id: projectId }), listRuntimeSessions: async () => [closing], listRuntimeRuns: async () => [] } as unknown as WorkflowService;
+    const trusted = { recoverDispatching: async () => ({ sessions: [], runs: [] }),
+      markSessionArchiveAttempt: async () => { marks++; },
+      confirmSessionClosed: async () => { confirms++; },
+      confirmSessionNativeAbsent: async () => { absents++; closing.state = "closed"; } } as unknown as RuntimeWorkflowService;
+    const runner = new RuntimeRunner({ runtimeFactory: () => native as unknown as RuntimePort & GoneRuntime,
+      workflow, trusted, principals: [{ actorId, projectIds: [projectId], permissions: ["task", "document", "session", "management"], decisions: true }],
+      canWrite: () => true, allowedCwd: async () => true, hasGrant: () => true });
+    try {
+      await runner.start();
+      assert.equal(archives, 0, "nothing is written to the native side"); assert.equal(marks, 0); assert.equal(confirms, 0);
+      if (sample.absent) {
+        assert.equal(absents, 1); assert.equal(closing.state, "closed");
+        assert.equal(runner.status(projectId).faults.length, 0, "the fault is cleared");
+      } else {
+        assert.equal(absents, 0); assert.equal(closing.state, "closing");
+        assert.equal(runner.status(projectId).faults.filter(fault => fault.sessionId === closing.id && fault.phase === "session_close").length, 1, "the fault stays");
+      }
+    } finally { await runner.stop(); }
+  });
+});
+
 test("archive failure keeps a redacted rejection or unknown timeout category without replay", async t => {
   for (const sample of [
     { name: "explicit native rejection", error: new RuntimeServerError("thread/archive", 7, -32600,

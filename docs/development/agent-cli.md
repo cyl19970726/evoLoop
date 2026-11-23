@@ -458,6 +458,10 @@ Leader 用 `evoloop command run` 提交 `line.append`（sessionId、taskId、exp
 
 业务 Session 收到“执行确认请求”消息后，只做确认，不开始改文件：读固定 Task 修订，然后提交 `task.assignment.acknowledge`，`verdict=confirm`（`plan` 简短计划、`expectedRevisionId`）或 `verdict=return`（`missing` 列出缺什么）。确认后系统自动开 Run；退回的 Task 退出队伍、保持未开始。需要的私有配置：队伍调度程序随运行时启用而运行，Session 的业务身份取自 `residentQueue.roleActors`（没有则该项挂起为 `RECIPIENT_UNAVAILABLE`）。
 
+## 按编号跳到对象（只读）
+
+`evoloop get '/api/projects/P/jump?q=<文字>'`（CLI 暂无专门命令，通用 `get` 即可）按完整编号、8 位以上十六进制前缀或 PR 号（`#527` / `527`）在本项目内找任务、文档、智能体（owned 会话）、阶段、日程和交付，最多返回 10 条 `{kind, id, title, href}`，超出时 `truncated: true`。不足 8 位且不是 PR 号、没有匹配、含引号或 `%`、`_`、`;` 的文字都返回空 `matches`，不报错；需要项目成员身份，否则 403/401。前缀按主键范围查（`id BETWEEN 前缀补0 AND 前缀补f ORDER BY id LIMIT 11`，走主键索引）；PR 号按交付地址里的 `/pull/N` 在本项目的交付行里匹配，不走索引，落到所属任务的“交付与使用”。外部（非 owned）智能体不在范围内。
+
 ## 调度板与调度事件流
 
 `work board --project P [--brief]` 读调度板：每个 Session 现在做的（Run，或由消息、即时输入开的这一轮，带开始时间和已用时长）、队伍里排着的项（Session 队伍 `session_line_entry` 与旧的批量队伍合在一起；顺序、状态 queued / held（挂起）/ claimed（轮到、正在启动）、来源、追加时间、已等待多久；“就绪但不在任何队伍里”同样排除 Session 队伍里的 Task）、排队中的普通消息数、恢复门阶段和模型服务暂停；还有就绪但不在任何队伍里的 Task，以及等 Leader 决定的事项（已送入或已看到、尚未处置的通知项，受阻的通知包，开放的决定请求，处于 `blocked`、超过 30 分钟且后面有排队消息的恢复门——`kind` 为 `recovery_gate`，排在这个列表最前、`--brief` 里也不会被截掉，`waitingOn` 写最近决定过这个门的身份，没有则任一复核身份可以 `runtime.session.recovery.resume`）。`--brief` 只留安排工作用的字段，不超过 6 KB，通常不到完整输出的一半；ID 保持完整，标题截短，没有内容的字段省略；超出时从各列表尾部丢项并写明省略了几项。Leader 每轮先读 `--brief`，要看某一项的全部字段再读不带 `--brief` 的完整输出。两种输出都带 `eventSeq`：这份快照读取时事件流的最新序号。

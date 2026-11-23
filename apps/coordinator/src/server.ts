@@ -56,6 +56,7 @@ import type { AcceptanceRelayService } from "./acceptance-relay/service.js";
 import type { LeaderWorkIndexReader } from "./work-management/work-index.js";
 import { registerLeaderNoticeRoutes, type LeaderNoticeReader } from "./work-management/leader-notice-routes.js";
 import { registerTaskAttentionRoutes } from "./task-attention/routes.js";
+import { registerObjectJumpRoutes } from "./object-jump/routes.js";
 import type { Pool } from "pg";
 import { registerEvaluationRoutes, type ReadEvaluationPacket } from "./evaluation/routes.js";
 import { OrchestrationError } from "@evoloop/core/orchestration";
@@ -187,7 +188,7 @@ export async function buildServer(options: {
   /** Whether each Session can start work now: shown on `list sessions`, the Session directory and snapshot, and the work board. Without it nothing is judged and nothing claims usable. */
   sessionUsability?: (projectId: string, sessionIds: string[]) => Promise<Map<string, { usable: boolean; reasons: Array<{ code: string; reason: string }> }>>;
   acceptanceRelay?: AcceptanceRelayService;
-  /** The deployed checkout: serves GET /api/version (public) and GET /api/projects/:id/milestones from its build-info.json and docs/roadmap.md. */
+  /** The deployed checkout: serves GET /api/version (public) and the project version and ladder reads from its build-info.json. */
   milestones?: { repoRoot: string; startedAt?: string; repositories?: () => ReadonlyArray<{ projectId: string; root: string }> };
   /** Drain mode (docs/architecture/deployment.md §2): the control and who counts as an instance maintainer. */
   drain?: { control: DrainControl; isMaintainer(principal: Principal): Promise<boolean> };
@@ -195,6 +196,8 @@ export async function buildServer(options: {
   /** 待我决定: what waits for the caller to decide (Role and stage proposals, named questions, decision requests addressed to them). */
   decisionsForMe?: (projectId: string, actorId: string, canDecide: boolean) => Promise<unknown>;
   taskAttentionPool?: Pool;
+  /** Enables `GET /api/projects/:projectId/jump` (Task 5eb93990). */
+  objectJumpPool?: Pool;
   planningSources?: PlanningSourcesReader;
   workers?: { authenticate(header: string | undefined): Promise<WorkerIdentity | null>; facts(identity: WorkerIdentity): WorkerGuardFacts };
   ordinarySubmissions?: OrdinaryRunSubmissionRoutes;
@@ -941,6 +944,7 @@ export async function buildServer(options: {
   if (options.milestones) registerMilestoneRoutes(app, { service: options.service, ...options.milestones });
   if (options.leaderNotices) registerLeaderNoticeRoutes(app, options.service, options.leaderNotices);
   if (options.taskAttentionPool) registerTaskAttentionRoutes(app, options.service, options.taskAttentionPool);
+  if (options.objectJumpPool) registerObjectJumpRoutes(app, options.service, options.objectJumpPool);
   registerEvaluationRoutes(app, options.service, options.readEvaluationPacket);
   registerProjectConfigurationRoutes(app, options.service, options.projectConfiguration);
   if (options.knowledge) registerKnowledgeRoutes(app, { workflow: options.service, ...options.knowledge });

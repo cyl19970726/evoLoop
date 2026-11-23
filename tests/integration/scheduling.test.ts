@@ -49,6 +49,10 @@ test("real PG schedule reservation creates one todo Task and survives replay", a
   assert.equal((await store.materialize(definition, created.plannedAtUtc, now, "created", "replayed")).taskId, created.taskId);
   assert.equal((await pool.query("SELECT count(*)::int AS n FROM task WHERE project_id=$1", [projectId])).rows[0]?.n, 1);
   const workflow = new WorkflowService({ uow: new PostgresUnitOfWork(pool), clock: { now: () => "2026-10-20T12:01:00.000Z" }, ids: { next: randomUUID }, hasher: { hash: value => createHash("sha256").update(value).digest("hex") } });
+  // Task 0b60a377: the Task read says which schedule and which occurrence made it, from schedule_occurrence.task_id (no text guessing).
+  assert.deepEqual(await workflow.getTaskOrigin(principal, projectId, created.taskId!), {
+    scheduleId, scheduleName: "Inspect a result", scheduleRevisionId: revisionId, plannedAtUtc: created.plannedAtUtc, observedAtUtc: created.observedAtUtc });
+  await assert.rejects(workflow.getTaskOrigin(principal, projectId, randomUUID()), /Task/);
   const cancelled = await workflow.execute(principal, { type: "task.cancel", projectId, taskId: created.taskId!, expectedVersion: 1, reason: "fixture work closed", operationId: randomUUID() });
   assert.equal(cancelled.status, "applied");
   const drained = await service.tick(principal, projectId, now, ["scope:test"]);

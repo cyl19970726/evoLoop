@@ -198,6 +198,18 @@ export class RuntimeWorkflowService {
   }
 
   async confirmSessionClosed(projectId: string, binding: RuntimeBinding, closeOperationId: string): Promise<RuntimeSessionRecord> {
+    return this.closeVerified(projectId, binding, closeOperationId, "Exact owned native thread verified in archived listing");
+  }
+
+  /**
+   * Close basis native_absent: the native side answered that the thread cannot be read and lists it neither archived nor unarchived. It is
+   * recorded apart from a normal archive (its own event text) so a reader can tell "archived" from "gone".
+   */
+  async confirmSessionNativeAbsent(projectId: string, binding: RuntimeBinding, closeOperationId: string): Promise<RuntimeSessionRecord> {
+    return this.closeVerified(projectId, binding, closeOperationId, "native_absent: native thread read was refused as unavailable and the thread is in neither the archived nor the unarchived listing");
+  }
+
+  private async closeVerified(projectId: string, binding: RuntimeBinding, closeOperationId: string, detail: string): Promise<RuntimeSessionRecord> {
     return this.deps.uow.transaction(projectId, async tx => {
       const current = required(await tx.getRuntimeSession(binding.sessionId), "runtime session");
       if (current.state !== "closing" || current.closeOperationId !== closeOperationId ||
@@ -208,7 +220,7 @@ export class RuntimeWorkflowService {
       const now = this.deps.clock.now();
       const next = { ...current, state: "closed" as const, version: current.version + 1, closeVerifiedAt: now, updatedAt: now };
       await tx.updateRuntimeSession(next, current.version);
-      await this.emit(tx, null, current.id, "session.closed", "Exact owned native thread verified in archived listing", null, projectId);
+      await this.emit(tx, null, current.id, "session.closed", detail, null, projectId);
       return next;
     });
   }

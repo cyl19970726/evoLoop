@@ -26,6 +26,8 @@ export type { UsageReader, UsageTransaction } from "./usage.js";
 // Persistence ports are a separate export; browser clients never import driver or transaction types.
 export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, DocumentPayloadReader, EvaluationReader, ResidentReader {
   taskTiming?: Pick<TaskTimingQueries, "get" | "list">;
+  /** The schedule occurrence that created this Task, if any; absent in adapters that do not store schedules. */
+  getTaskScheduleOrigin?(taskId: string): Promise<import("./scheduling.js").TaskScheduleOrigin | null>;
   /** Read-only scheduled direct-dispatch facts; absent in adapters that do not store them. */
   scheduleDispatch?: import("./schedule-dispatch.js").ScheduleDispatchReader;
   /** The facts behind the schedule page's health table; absent in adapters that do not store schedules. */
@@ -65,7 +67,6 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
   getStage(id: string): Promise<Stage | null>;
   listStages(goalId?: string): Promise<Stage[]>;
   /** Stages linked to a roadmap phase with their latest review. */
-  listStagePhaseLinks?(): Promise<import("./milestones.js").StagePhaseLink[]>;
   listStageRevisions(stageId: string): Promise<StageRevision[]>;
   /** Milestone fields of a stage (migration 118); null when the stage has no row. */
   getStageMilestone?(stageId: string): Promise<import("./workflow.js").StageMilestone | null>;

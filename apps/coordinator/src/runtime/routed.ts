@@ -5,7 +5,7 @@ import type { ManagedRuntime } from "./runner.js";
 
 /** Binding-scoped optional methods: present when any runtime has them, unsupported for a binding whose runtime lacks them. */
 const routedOptional = ["compactThread", "observeCompaction", "readThreadName", "setThreadName", "readWorkPage", "readWorkspaceHistory",
-  "archiveThread", "isThreadArchived", "startConversationTurn", "qualifyConversationThread", "activateExecutionProfile",
+  "archiveThread", "isThreadArchived", "isThreadListed", "startConversationTurn", "qualifyConversationThread", "activateExecutionProfile",
   "inspectExecutionProfileActivation", "steerTurn", "qualifyConnectorReceiver", "startConnectorTurn", "observeTurnEffort"] as const;
 type Subscription = { subscribe: (child: ManagedRuntime) => (() => void) | undefined; codexOnly: boolean;
   active: Map<RuntimeProvider, () => void> };
@@ -29,6 +29,7 @@ export class ProviderRoutedRuntime implements ManagedRuntime {
   readonly readWorkspaceHistory?: NonNullable<ManagedRuntime["readWorkspaceHistory"]>;
   readonly archiveThread?: NonNullable<ManagedRuntime["archiveThread"]>;
   readonly isThreadArchived?: NonNullable<ManagedRuntime["isThreadArchived"]>;
+  readonly isThreadListed?: NonNullable<ManagedRuntime["isThreadListed"]>;
   readonly startConversationTurn?: NonNullable<ManagedRuntime["startConversationTurn"]>;
   readonly qualifyConversationThread?: NonNullable<ManagedRuntime["qualifyConversationThread"]>;
   readonly activateExecutionProfile?: NonNullable<ManagedRuntime["activateExecutionProfile"]>;

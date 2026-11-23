@@ -1,7 +1,7 @@
 // Reads behind the stage views. Their query keys start with "journey" so a reread of 目标与阶段 (or any write in the project) refreshes them with the rest.
 import type { StatusTone } from "@evoloop/ui";
 import { api } from "../../shared/api";
-import { statusTone } from "./stagesPresentation";
+import { stageLabel, statusTone } from "./stagesPresentation";
 import { useProjectQuery } from "../../shared/query";
 
 const key = "journey";
@@ -29,4 +29,10 @@ export function useStageStatusOf(projectId: string): (stage: { id: string; state
     if (read) return { tone: statusTone[read.status], label: read.statusLabel };
     return projection ? { tone: "unknown", label: "状态未读到" } : { tone: "unknown", label: "读取中" };
   };
+}
+
+/** The left-column label of a stage: "短名 · 到期日", from the stage projection (an old stage without a short name keeps the first line of its text). */
+export function useStageLabelOf(projectId: string, active = true): (stage: { id: string; deliverable: string }) => ReturnType<typeof stageLabel> {
+  const projection = useStageProjection(projectId, active).data;
+  return stage => stageLabel(projection?.stages.find(item => item.id === stage.id), stage);
 }

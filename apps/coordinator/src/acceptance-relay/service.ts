@@ -480,6 +480,8 @@ export class AcceptanceRelayService {
       throw new DomainError("FORBIDDEN","Project read authority required");
     const result=await this.deps.pool.query(`SELECT s.session_id,s.role_id,s.cwd,s.version,s.state,
       s.native_thread_id,s.close_operation_id,s.close_verified_at,p.tenure,
+      (SELECT (e.detail LIKE 'native_absent:%') FROM runtime_record_event e WHERE e.project_id=s.project_id AND e.session_id=s.session_id
+        AND e.kind='session.closed' ORDER BY e.sequence DESC LIMIT 1) AS closed_native_absent,
       (SELECT count(*)::int FROM runtime_run r WHERE r.project_id=s.project_id AND r.session_id=s.session_id
         AND r.state IN ('requested','dispatching','running','unknown')) AS active_runs,
       (SELECT count(*)::int FROM session_message m WHERE m.project_id=s.project_id AND m.session_id=s.session_id
@@ -508,9 +510,12 @@ export class AcceptanceRelayService {
     return {sessionId:x.session_id,roleId:x.role_id,cwd:x.cwd,version:x.version,state:x.state,
       nativeThreadId:x.native_thread_id,tenure:x.tenure??"unknown",closeOperationId:x.close_operation_id,
       closeVerifiedAt:x.close_verified_at ? new Date(x.close_verified_at).toISOString() : null,
-      nativeArchiveVerified:!!x.close_verified_at,
+      // A close verified by "the native side has no such thread" is not an archive: the two are told apart here (and in the event text).
+      closeBasis:!x.close_verified_at ? null : x.closed_native_absent ? "native_absent" : "archived",
+      nativeArchiveVerified:!!x.close_verified_at && !x.closed_native_absent,
       blockers,
-      nextAction:x.state==="closed" ? "closed and native archive verified; keep history and dependent resources"
+      nextAction:x.state==="closed" ? (x.closed_native_absent ? "closed because the native thread no longer exists (not archived); keep history and dependent resources"
+          : "closed and native archive verified; keep history and dependent resources")
         :x.state==="closing" ? "closing; reconcile the original close operation before retrying archive"
         :!idle ? "settle the listed Run, message, queue, assignment or acceptance responsibility first"
         :x.tenure!=="temporary" ? "resident or unknown tenure stays reusable; retirement is not automatic"

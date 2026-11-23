@@ -1128,6 +1128,13 @@ export class WorkflowService {
       return { task, revision, basis, links: await reader.listLinks(taskId), impacts: await reader.listImpacts(taskId), decisions: await reader.listBasisDecisions(taskId), proposal: await reader.getTaskProposal(taskId), judgements: await reader.listTaskJudgements(taskId), deliveries: await reader.listDeliveries(taskId), observations: await reader.listObservations(taskId), closures: await reader.listTaskClosures(taskId) };
     });
   }
+  /** Which schedule occurrence created the Task (null when none); read from the occurrence row, not from revision text. */
+  getTaskOrigin(principal: Principal, projectId: string, taskId: string): Promise<import("@evoloop/contracts/scheduling").TaskScheduleOrigin | null> {
+    return this.read(principal, projectId, async reader => {
+      required(await reader.getTask(taskId), "Task");
+      return await reader.getTaskScheduleOrigin?.(taskId) ?? null;
+    });
+  }
   getTaskTiming(principal: Principal, projectId: string, taskId: string): Promise<import("@evoloop/contracts/task-timing").TaskTimingView | null> {
     return this.read(principal, projectId, async reader => {
       required(await reader.getTask(taskId), "Task");
@@ -1226,9 +1233,6 @@ export class WorkflowService {
   listGoalRevisions(principal: Principal, projectId: string, goalId: string) { return this.read(principal, projectId, async reader => { required(await reader.getGoal(goalId),"Goal"); return reader.listGoalRevisions(goalId); }); }
   getStage(principal: Principal, projectId: string, stageId: string) { return this.read(principal, projectId, reader => Promise.resolve(reader.getStage(stageId)).then(stage => required(stage,"Stage"))); }
   /** The stages linked to a roadmap phase, each with its latest review (the overview's milestones read these). */
-  listStagePhaseLinks(principal: Principal, projectId: string) {
-    return this.read(principal, projectId, reader => reader.listStagePhaseLinks?.() ?? Promise.resolve([]));
-  }
   /** The stage's milestone fields (null: not registered) with every change made to them, newest last. */
   getStageMilestone(principal: Principal, projectId: string, stageId: string) {
     return this.read(principal, projectId, async reader => { required(await reader.getStage(stageId), "Stage");

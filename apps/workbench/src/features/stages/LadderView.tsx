@@ -5,7 +5,8 @@ import { ChevronRight } from "lucide-react";
 import { errorText } from "../../shared/api";
 import { href } from "../../shared/ui/shared";
 import { useLadder } from "./stagesRead";
-import { LADDER_UNREADABLE, ladderLines, ladderSummary } from "./stagesPresentation";
+import { StatusTag } from "@evoloop/ui";
+import { LADDER_UNREADABLE, NOT_REGISTERED, ladderHeading, ladderLines, ladderMarks } from "./stagesPresentation";
 
 const muted = "text-caption text-muted-foreground";
 
@@ -34,7 +35,14 @@ export function LadderRow({ projectId, enabled, section = false }: { projectId: 
   return <details className="group min-w-0 text-small" data-ladder="">
     <summary className="flex min-w-0 cursor-pointer list-none items-center gap-1 text-text-secondary outline-none focus-visible:shadow-[var(--focus-ring)] [&::-webkit-details-marker]:hidden">
       <ChevronRight aria-hidden="true" className="size-3.5 shrink-0 transition-transform duration-150 group-open:rotate-90 motion-reduce:transition-none" />
-      <span className="shrink-0">验证阶梯</span><span className="min-w-0 truncate text-caption text-muted-foreground" data-ladder-summary="">{ladderSummary(view)}</span></summary>
+      <span className="shrink-0 text-caption compact:text-small">{ladderHeading(view)}</span>
+      <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5" data-ladder-summary="">
+        {ladderMarks(view).map(mark => <span key={mark.key} className="inline-flex shrink-0 items-center gap-px" data-ladder-mark={mark.key} title={`${mark.key}：${mark.full}`}>
+          <span className="text-caption font-medium text-foreground">{mark.key}</span>
+          {!mark.registered && <StatusTag tone="unknown" label={NOT_REGISTERED} className="gap-0.5 py-0" />}
+        </span>)}
+      </span>
+    </summary>
     <div className="mt-2 pl-5"><Levels projectId={projectId} levels={view.levels} />{commit && <p className={`mt-1 ${muted}`}>{commit}</p>}</div>
   </details>;
 }
