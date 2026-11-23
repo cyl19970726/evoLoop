@@ -254,3 +254,19 @@ export const stageRecord = key => { const s = stages[key]; return { projectId, i
 export const stageReviews = { [stages.s2.id]: [{ projectId, id: id(720), stageId: stages.s2.id, stageVersion: 3, supersedesReviewId: null,
   adopted: "每天打开工作台的人变多", rejected: "提醒能代替使用", gap: "缺少周末数据", nextChoice: "stop", evidence: "试用反馈汇总",
   reason: "阶段目标已达成", actorId: "leader-actor", createdAt: ago(60 * 30) }] };
+
+// ---------- the stage projection and the verification ladder ----------
+const zero = { inProgress: 0, blocked: 0, notStarted: 0, closed: 0, total: 0 };
+export function stageProjection() {
+  const entry = (key, extra) => ({ ...stageRecord(key), shortName: null, dueOn: null, checkMethod: null, ladderKeys: [], latestReview: null, tasks: zero, inMainTable: true, ...extra });
+  const s1 = entry("s1", { shortName: "首个可用版本", dueOn: "2026-12-02", checkMethod: "使用者自己沿三条路径用一遍工作台：打开总览、处理待办、交付一项任务；任何一条卡住就算没到。由验收者写结论。",
+    ladderKeys: ["M1"], status: "in_progress", statusLabel: "进行中", tasks: { inProgress: 4, blocked: 1, notStarted: 0, closed: 0, total: 5 } });
+  const s2 = entry("s2", { inMainTable: false, status: "partially_achieved", statusLabel: "部分达成", tasks: { inProgress: 0, blocked: 0, notStarted: 0, closed: 1, total: 1 },
+    latestReview: { id: id(720), adopted: "每天打开工作台的人变多", rejected: "提醒能代替使用", gap: "缺少周末数据", nextChoice: "stop", createdAt: ago(60 * 30) } });
+  const s3 = entry("s3", { shortName: "团队试用", dueOn: "2026-12-09", checkMethod: "接入第二个项目并跑通第一个任务。", status: "not_accepted", statusLabel: "未接受" });
+  return { asOf: ago(0), today: "2026-11-23", timeZone: "UTC", stages: [s1, s2, s3], tasksNoStage: { unowned: 1, declared: 1 }, currentStageId: s1.id, currentNote: null };
+}
+export const ladder = () => ({ available: true, source: { commit: "0000000000000000000000000000000000000000" }, levels: [
+  { key: "M0", name: "最小闭环", status: "已完成：任务、交付、验收各有记录", evidenceStages: [] },
+  { key: "M0.5", name: "可观测", status: null, evidenceStages: [] },
+  { key: "M1", name: "可用工作台", status: "进行中", evidenceStages: [{ id: stages.s1.id, shortName: "首个可用版本" }] }] });
