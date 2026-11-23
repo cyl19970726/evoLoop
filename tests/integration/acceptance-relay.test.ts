@@ -412,6 +412,26 @@ test("Leader acceptance, capability gaps, blocked handoff notice and verified re
   assert.equal(retired.state,"closed");
   assert.equal(retired.nativeArchiveVerified,true);
   assert.match(String(retired.nextAction),/closed and native archive verified/);
+  assert.equal(retired.closeBasis,"archived");
+
+  // A second temporary Session whose native thread is gone: closed by native_absent, and said so, not as an archive.
+  const goneSession=randomUUID(),goneDecision=randomUUID(),goneClose=randomUUID();
+  await pool.query(`INSERT INTO runtime_session(project_id,session_id,role_id,cwd,authorization_scope,sandbox,approval_policy,state,version,operation_id,native_thread_id,native_session_id,actor_id,created_at,updated_at)
+    VALUES($1,$2,$3,'/tmp/relay-qa-3','project','danger-full-access','never','ready',1,$4,$5,$6,'qa-recipient',now(),now())`,
+    [projectId,goneSession,qaRole,randomUUID(),randomUUID(),randomUUID()]);
+  await pool.query(`UPDATE session_profile SET version=version+1,display_name='Gone QA',purpose='Retirement test',membership='current',tenure='temporary',actor_id='reviewer',
+    reason='fixture',updated_at=now() WHERE project_id=$1 AND target_kind='owned' AND target_id=$2`,[projectId,goneSession]);
+  await relay.approveRetirement(reviewer,{projectId,sessionId:goneSession,decisionId:goneDecision,closeOperationId:goneClose,expectedSessionVersion:1,
+    reason:"All work handed off",handoffEvidence:"No remaining acceptance"});
+  assert.equal((await workflow.execute(reviewer,{type:"runtime.session.close",projectId,operationId:goneClose,sessionId:goneSession,expectedVersion:1,reason:"Retire"})).status,"applied");
+  const goneRow=await workflow.getRuntimeSession(reviewer,projectId,goneSession);
+  await trusted.confirmSessionNativeAbsent(projectId,{sessionId:goneRow.id,roleId:goneRow.roleId,projectId,nativeThreadId:goneRow.nativeThreadId!,nativeSessionId:goneRow.nativeSessionId!,
+    cwd:goneRow.cwd,authorizationScope:goneRow.authorizationScope,owner:"evoloop-codex-app-server"},goneRow.closeOperationId!);
+  const absent=await relay.retirementStatus(reviewer,projectId,goneSession) as Record<string,unknown>;
+  assert.equal(absent.state,"closed"); assert.equal(absent.closeBasis,"native_absent"); assert.equal(absent.nativeArchiveVerified,false);
+  assert.match(String(absent.nextAction),/native thread no longer exists/);
+  const events=await pool.query("SELECT detail FROM runtime_record_event WHERE project_id=$1 AND session_id=$2 AND kind='session.closed'",[projectId,goneSession]);
+  assert.equal(events.rows.length,1); assert.match(events.rows[0].detail,/^native_absent:/);
 });
 
 test("acceptance relay migration upgrades a schema already at released 059 without renumbering history",async t=>{

@@ -484,6 +484,8 @@ export interface RuntimePort {
   archiveThread?(binding: RuntimeBinding): Promise<void>;
   /** True only after the exact owned identity appears in native archived history. */
   isThreadArchived?(binding: RuntimeBinding): Promise<boolean>;
+  /** True only when the exact owned identity appears in the native unarchived listing (the counterpart of isThreadArchived; used to tell "gone" from "unreadable"). */
+  isThreadListed?(binding: RuntimeBinding): Promise<boolean>;
   onEvent(listener: (event: RuntimeEvent) => void): () => void;
   onApprovalRequest(listener: (request: RuntimeApprovalRequest) => void | Promise<void>): () => void;
   close(): Promise<void>;

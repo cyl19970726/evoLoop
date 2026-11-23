@@ -1818,12 +1818,17 @@ export class CodexAppServerAdapter implements RuntimePort {
     await this.request("thread/archive", { threadId: binding.nativeThreadId });
   }
 
-  async isThreadArchived(binding: RuntimeBinding): Promise<boolean> {
+  async isThreadArchived(binding: RuntimeBinding): Promise<boolean> { return this.threadInListing(binding, true); }
+
+  /** The unarchived counterpart: true only when the exact owned identity is in the native active listing. */
+  async isThreadListed(binding: RuntimeBinding): Promise<boolean> { return this.threadInListing(binding, false); }
+
+  private async threadInListing(binding: RuntimeBinding, archived: boolean): Promise<boolean> {
     this.owned(binding);
     let cursor: string | undefined;
     const seen = new Set<string>();
     for (let pageNumber = 0; pageNumber < 20; pageNumber++) {
-      const result = object(await this.request("thread/list", { archived: true, cwd: binding.cwd,
+      const result = object(await this.request("thread/list", { archived, cwd: binding.cwd,
         useStateDbOnly: true, limit: 100, ...(cursor ? { cursor } : {}) }));
       if (!result || !Array.isArray(result.data)) throw new RuntimeProtocolError("invalid archived thread page");
       for (const entry of result.data) {
@@ -1831,7 +1836,7 @@ export class CodexAppServerAdapter implements RuntimePort {
         if (!thread || !nonempty(thread.id)) throw new RuntimeProtocolError("invalid archived thread identity");
         if (thread.id === binding.nativeThreadId) {
           if (thread.sessionId !== binding.nativeSessionId || thread.cwd !== binding.cwd)
-            throw new RuntimeProtocolError("archived thread does not match owned binding");
+            throw new RuntimeProtocolError(`${archived ? "archived" : "listed"} thread does not match owned binding`);
           return true;
         }
       }

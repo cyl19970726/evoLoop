@@ -291,13 +291,14 @@ for await (const line of lines) {
     continue;
   }
   if (method === "thread/list") {
-    if (params.archived !== true || params.cwd !== thread.cwd || params.sourceKinds !== undefined ||
+    if (typeof params.archived !== "boolean" || params.cwd !== thread.cwd || params.sourceKinds !== undefined ||
       params.useStateDbOnly !== true || params.limit !== 100) {
       send({ id, error: { code: -32602, message: "unsafe listing" } }); continue;
     }
     const foreign = { id: "other-thread", sessionId: "other-session", cwd: thread.cwd, source: "vscode" };
     const owned = { ...thread, source: mode === "vscode-archive" ? "vscode" : "appServer",
       ...(mode === "foreign-archive" ? { sessionId: "different-session" } : {}) };
+    if (params.archived === false) { send({ id, result: { data: archived || mode === "thread-gone" ? [] : [{ ...thread, source: "appServer" }], nextCursor: null } }); continue; }
     send({ id, result: { data: archived ? mode === "foreign-only" ? [foreign] :
       mode === "foreign-samecwd" ? [foreign, owned] : [owned] : [], nextCursor: null } }); continue;
   }
