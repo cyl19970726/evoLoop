@@ -905,3 +905,21 @@ test("work events and updates keep their requested long-poll wait open", async (
     assert.equal(updates.code, 0, updates.stderr);
   } finally { fetch.mock.restore(); }
 });
+
+test("staffing check reads the project's staffing check and takes no other option", async () => {
+  const project = "00000000-0000-4000-8000-000000000001";
+  const urls: string[] = [];
+  const fetch = mock.method(globalThis, "fetch", async (url: string | URL | Request) => {
+    urls.push(String(url)); return new Response(JSON.stringify({ projectId: project, blockers: [] }), { status: 200 });
+  });
+  const env = { EVOLOOP_TOKEN: "fixture", EVOLOOP_PROJECT: project };
+  try {
+    const read = await run(["staffing", "check"], env);
+    assert.equal(read.code, 0, read.stderr);
+    assert.deepEqual(JSON.parse(read.stdout), { projectId: project, blockers: [] });
+    assert.deepEqual(urls.map(value => new URL(value).pathname + new URL(value).search), [`/api/projects/${project}/staffing-check`]);
+    assert.notEqual((await run(["staffing"], env)).code, 0, "the only staffing read is check");
+    assert.notEqual((await run(["staffing", "check", "--limit", "5"], env)).code, 0, "an option the command does not take is refused");
+    assert.equal(urls.length, 1);
+  } finally { fetch.mock.restore(); }
+});

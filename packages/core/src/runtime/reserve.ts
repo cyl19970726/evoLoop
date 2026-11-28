@@ -134,7 +134,9 @@ export async function reserveRuntime({ tx, command, principal, now, nextId, hash
       ...(provider !== "codex" ? { runtimeProvider: provider } : {}),
     };
     await tx.insertRuntimeSession(session);
-    await tx.appendRuntimeEvent(event(command.projectId, nextId(), null, session.id, "session.reserved", "Session reserved before external creation", null, principal.actorId, now));
+    await tx.appendRuntimeEvent(event(command.projectId, nextId(), null, session.id, "session.reserved",
+      command.staffingException ? `Session reserved before external creation; staffing exception: ${command.staffingException}` : "Session reserved before external creation",
+      null, principal.actorId, now));
     const effects: Effect[] = [{ kind: "runtime.session.reserved", entityId: session.id, version: 1 }];
     if (resolved.bound) effects.push({ kind: "role.runtime", entityId: resolved.bound.roleId, version: resolved.bound.revision });
     return { result: applied(command.operationId, session.id, 1), effects };

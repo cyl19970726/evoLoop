@@ -146,6 +146,17 @@ const integrationSchema = z.strictObject({
       z.strictObject({ kind: z.literal("command"), argv: z.array(z.string().min(1).max(4096)).min(1).max(32).refine(value => value[0]!.startsWith("/"), "The alert command must be an absolute executable path"), timeoutMs: z.number().int().min(500).max(120000).default(10000) }),
     ]),
   }).optional(),
+  /**
+   * The team growth rules (DEC-038, DEC-055). With `enabled`, a new business Session in one of `projectIds` is refused while a trial Role is past its
+   * review date or the last addition has no accepted delivery, unless the request states its exception. `idleDays` is the staffing check's idle threshold.
+   * `reviewTasks` names, per project, who creates and which Role owns the review Task made when a trial reaches its review date, and who accepts it.
+   */
+  staffing: z.strictObject({
+    enabled: z.boolean(), projectIds: z.array(z.uuid()).max(200).default([]),
+    idleDays: z.number().int().min(1).max(90).default(3),
+    pollIntervalMs: z.number().int().min(5000).max(3600000).default(300000),
+    reviewTasks: z.array(z.strictObject({ projectId: z.uuid(), actorId: z.string().min(1).max(100), owner: z.uuid(), consumer: z.string().min(1).max(512) })).max(200).default([]),
+  }).optional(),
   leaderResultNotices: z.strictObject({
     enabled: z.boolean(), pollIntervalMs: z.number().int().min(500).max(60000).default(2000),
     /** DEC-045 W1: notices created from now on travel in Leader notice packets. Default off: new notices keep the one-notice-one-message path. */
@@ -388,6 +399,6 @@ export async function loadIntegrations(path?: string, options: { allowedRoots?: 
     messageConnectors: configuration.messageConnectors, leaderResultNotices: configuration.leaderResultNotices, alerts: configuration.alerts,
     residentQueue: configuration.residentQueue, orchestration: configuration.orchestration,
     repositories: configuration.repositories, feishu: configuration.feishu, knowledge: configuration.knowledge,
-    scheduling: configuration.scheduling, allowedRuntimeCwds, allowedRuntimeCwd, hasRuntimeGrant,
+    scheduling: configuration.scheduling, staffing: configuration.staffing, allowedRuntimeCwds, allowedRuntimeCwd, hasRuntimeGrant,
     getDelegationTemplate };
 }

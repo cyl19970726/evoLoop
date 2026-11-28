@@ -4,6 +4,7 @@ import type { EvaluationFixedRef } from "./evaluation.js";
 import type { ExecutionProfileSnapshot, SessionExecutionProfile } from "./session-recovery.js";
 import type { NativeInputEvent } from "./native-input.js";
 import type { NativeWorkspacePage, NativeWorkspaceReadOptions, WorkspaceRuntimeUpdate } from "./session-timeline.js";
+import { staffingExceptionSchema } from "./staffing.js";
 
 export const runtimeReconcileSchema = z.strictObject({ expectedVersion: z.number().int().positive(), reason: z.string().trim().min(1).max(4000), turnCursor: z.string().min(1).max(2048).optional() });
 export const runtimeCompactionIntentSchema = z.strictObject({
@@ -36,7 +37,9 @@ const text = z.string().trim().min(1).max(4000);
 const common = { projectId: id, operationId: id };
 export const runtimeCommands = [
   z.strictObject({ ...common, type:z.literal("runtime.handoff.record"),runId:id,stage:z.enum(["received","read","adopted","effect"]),evidence:text }),
-  z.strictObject({ ...common, type: z.literal("runtime.session.reserve"), sessionId: id, roleId: text, cwd: z.string().min(1).max(1024).regex(/^\//), authorizationScope: text, model: text.optional(), sandbox: z.literal("danger-full-access").default("danger-full-access"), approvalPolicy: z.literal("never").default("never") }),
+  z.strictObject({ ...common, type: z.literal("runtime.session.reserve"), sessionId: id, roleId: text, cwd: z.string().min(1).max(1024).regex(/^\//), authorizationScope: text, model: text.optional(), sandbox: z.literal("danger-full-access").default("danger-full-access"), approvalPolicy: z.literal("never").default("never"),
+    /** The written reason for adding this Session although the staffing check has blockers (DEC-038, DEC-055); kept in the reservation event. */
+    staffingException: staffingExceptionSchema.optional() }),
   z.strictObject({ ...common, type: z.literal("runtime.session.close"), sessionId: id, expectedVersion: z.number().int().positive(), reason: text }),
   z.strictObject({ ...common, type: z.literal("runtime.run.reserve"), runId: id, taskId: id, sessionId: id, expectedVersion: z.number().int().positive(), input: text,
     evaluation: z.strictObject({ evaluationId: id, revisionId: id, caseId: id, conditionId: id }).optional() }),

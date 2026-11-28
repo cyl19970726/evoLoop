@@ -15,6 +15,13 @@ export async function isBoundDynamicSession(pool: Pick<Pool, "query">, projectId
   return result.rows.some(row => loopIntentId(row.dispatch_id as string,"session") === sessionId);
 }
 
+/** Every Session a managed loop created for itself in this project (the staffing rules do not cover them). */
+export async function boundDynamicSessionIds(pool: Pick<Pool, "query">, projectId: string): Promise<string[]> {
+  const result = await pool.query(`SELECT dispatch_id FROM orchestration_dispatch
+    WHERE project_id=$1 AND binding_id IS NOT NULL`, [projectId]);
+  return result.rows.map(row => loopIntentId(row.dispatch_id as string,"session"));
+}
+
 /** Current start/read authority never falls back to static grants for a persisted dynamic origin. */
 export async function currentSessionGrant(pool: Pick<Pool, "query">,
   session: Pick<RuntimeSessionRecord,"projectId"|"id">,

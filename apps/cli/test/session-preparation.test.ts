@@ -204,3 +204,24 @@ test("a blocked preparation says what to fix, from the service's details or, for
     assert.deepEqual(local.missingDetails[0]!.example.residentQueue.roleActors[0],{projectId,roleId,actorId:"<该 Role 的业务身份 actorId>"});
   } finally {await rm(dir,{recursive:true,force:true});}
 });
+
+test("a staffing exception in the specification travels with the reservation, and a plain specification sends none",async()=>{
+  const dir=await mkdtemp(join(tmpdir(),"evoloop-prepare-"));
+  try {
+    const reserve=async(input:Record<string,unknown>,store:string)=>{
+      let view=snapshot(null);const posts:Record<string,unknown>[]=[];
+      const api={get:async()=>view,post:async(_path:string,body:unknown)=>{
+        const command=body as Record<string,unknown>;posts.push(command);
+        view=snapshot({state:"reserved",operationId:command.operationId,roleId,actorId:"lead",model:spec.model});
+        return {status:"applied",operationId:command.operationId,entityId:sessionId,version:1};
+      }} as ApiClient;
+      const result=await prepareSession(input,api,new ReceiptStore(join(dir,store)),origin,token,actor,()=>{});
+      assert.equal(result.status,"waiting_for_native_thread");
+      assert.deepEqual(posts.map(value=>value.type),["runtime.session.reserve"]);
+      return posts[0]!;
+    };
+    assert.equal((await reserve({...spec,operationId:id(7),staffingException:"起步配置：产品、架构、开发各一个"},"a")).staffingException,"起步配置：产品、架构、开发各一个");
+    assert.equal("staffingException" in await reserve({...spec,operationId:id(8)},"b"),false);
+    await assert.rejects(prepareSession({...spec,operationId:id(9),staffingException:"   "},{} as ApiClient,new ReceiptStore(join(dir,"c")),origin,token,actor,()=>{}));
+  } finally {await rm(dir,{recursive:true,force:true});}
+});
