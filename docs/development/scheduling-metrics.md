@@ -92,3 +92,35 @@ GROUP BY tr.task_id;
 - Session 空转与“新情况纳入”在调度事件流上线前只能用 Run、消息与通知近似；报告必须保留这个标记。
 - 服务停机没有数据库内的权威区间；基线若没有提供停机清单，应写“未提供”，不能推断为没有停机。
 - 工作是否经普通消息派发目前只能识别候选；正式工作仍以 Task、assignment、Run 与 Delivery 为主证据。
+
+## 分工账（按职责）
+
+`scripts/duty-ledger.mjs` 回答另一个问题：现在的分工合不合理，每个职责的效果和效率怎样。它按职责汇总一段时间里的承接、交付、验收结果、占用和花费，并标出需要处理的项，供复盘的每日 BP 和 Leader 的每日评估读取（[DEC-056](../decisions.md)，做法仍是提议 PROP-012）。它同样只读：在 `BEGIN TRANSACTION READ ONLY` 中执行，只跑 `SELECT`/`WITH`，只读取这段时间需要的行。
+
+```bash
+EVOLOOP_METRICS_DATABASE_URL='postgres://READONLY_USER@HOST:PORT/evoloop' \
+  node scripts/duty-ledger.mjs \
+  --project PROJECT_UUID \
+  --days 7 \
+  --markdown-out /private/duty-ledger.md
+```
+
+默认取“昨天”之前的 7 个完整日窗口，日窗口与上文相同；`--start` 与 `--end` 指定连续区间，最长 31 天。`--format text|json|markdown` 选终端输出，默认 Markdown；`--out FILE` 另写完整 JSON。
+
+**职责怎样归类。** Role 绑定运行时（DEC-035），同一职责会分在几个 Role 里，验收的 Session 又挂在开发 Role 下，所以这里不按 Role 汇总。归类顺序是：`--duty-map FILE` 里的显式对照（`{"sessions":{"SESSION_ID":"职责"},"roles":{"ROLE_ID":"职责"}}`）；标为临时的 Session 归“临时专项”；显示名按项目已有的“职责 · 实例”约定取前半；没有显示名的按 Role 标题去掉末尾标运行时的括号。没有显示名的 Session 可能被归错，例如挂在开发 Role 下的旧验收 Session，用对照文件纠正。
+
+| 列 | 计算方式 | 当前边界 |
+| --- | --- | --- |
+| 就绪会话 | 读取时状态仍为 `ready`、且在这段时间结束前已建立的 Session 数 | 是读取时的快照，不是这段时间结束时的历史状态 |
+| 跑过的 | 这段时间里至少开过一个 Run 的 Session 数 | 含之后已关闭的 Session |
+| Run、任务 | 这段时间里开始的 Run 数，及它们涉及的 Task 数 | 消息轮次不计入 |
+| 交付、被接受、打回 | 这段时间里登记的交付，经其 Run 归到 Session；有“已使用”观察的算被接受，有“未使用”或“失败”观察的算打回 | 同一份交付两种观察都有时两边都计；没有 Run 的交付不归任何职责，在表下另报数量 |
+| 打回率 | 打回数除以已有观察的交付数 | 没有观察时不给比例 |
+| 忙碌占比 | 各 Session 的 Run 时长（同一 Session 内重叠只算一次）除以它在这段时间里存在的时长 | 近似值；停机和恢复门关闭的时间没有扣除 |
+| 距上次 Run | 这段时间结束时，该职责最近一次 Run 结束到现在的整天数 | 从未跑过写“从未” |
+| 花费 | `session_usage_daily.cost_usd` 在这些日期里的合计 | 是已记到的下限：`cost_reported=false` 或 `cost_scope=runs_only` 的行只记了一部分，运行时不报费用的记为 0；这两种情况在表里带＊并在表下列出 |
+| 每件被接受 | 花费除以被接受的交付数 | 只在该职责的花费全部记全时给出 |
+
+**越线提示。** 四种，阈值是初值，可用 `--idle-days` 和 `--rework-rate` 调整：试行 Role 过了回看日还没有回看记录；就绪的 Session 从未跑过 Run；就绪的 Session 连续 3 天以上没有 Run；打回率不低于 30% 且已有观察的交付不少于 5 份。它们只提示该看哪里，不代替判断：打回率高先查方法和输入，不直接推出要加人或减人。
+
+**已知缺口。** 主要产出是观察的职责（如验收）在这张表里会被低估，因为观察登记的是业务身份，库里没有它到 Session 的对应；Leader 的工作主要是消息轮次，同样看不全；需求 Session 和代班不是受管 Session，不在账本里。越线阈值还没有用两周以上的真实数据校准。

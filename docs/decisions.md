@@ -83,7 +83,7 @@
 | PROP-009 | **已由 DEC-036 采纳**：同源 React/TS/Vite 工作台，Router + Query 曾作为导航和读取的目标建议；共用协调 API | 见[前端架构](frontend/architecture.md)；当前仍用 hash 路由与直接请求，本轮已授权按需采用 Tailwind/shadcn/ui；Router/Query 未安装，已由 DEC-036 选为目标；远程手机访问需登录/常在线部署 |
 | PROP-010 | 采用固定 Task/Document 修订、类型化关系和来源桥接，连接 PG、Git 与外置 Wiki | 见[存储](architecture/storage.md)与[知识关联](architecture/knowledge-flow.md)；需实测约束、纠正传播、权限变化和跨系统恢复 |
 | PROP-011 | 经共同 API 改造知识阅读/关系/Review，按固定来源接 OpenViking 与 PG/Git；原型覆盖六条产品路径 | [集成方案](architecture/wiki-integration.md)和[原型审阅](research/workbench-prototype-review.md)说明切片；待验证代码移植、许可安排、发布恢复和真实效果 |
-| PROP-012 | 复盘每日 BP：日程每天生成一个任务，负责人是复盘，消费者是使用者本人，产物是简报类过程文档；固定栏目里有分工一栏，数据来自按职责的只读统计（扩展 `scripts/scheduling-metrics.mjs`）。重型复盘降为每周一次或事件触发；试行到期自动生成回看任务（对应 DEC-056） | 受管 Session 能否承担每周深度复盘的并行取证；使用者是否实际阅读并回应每日 BP；分工栏的建议有多少被执行；容量的评价归复盘、执行归 Leader 是否成立 |
+| PROP-012 | 复盘每日 BP：日程每天生成一个任务，负责人是复盘，消费者是使用者本人，产物是简报类过程文档；固定栏目里有分工一栏，数据来自按职责的只读统计（扩展 `scripts/scheduling-metrics.mjs`）。重型复盘降为每周一次或事件触发；试行到期自动生成回看任务（对应 DEC-056） | 受管 Session 能否承担每周深度复盘的并行取证；使用者是否实际阅读并回应每日 BP；分工栏的建议有多少被执行；容量的评价归复盘、执行归 Leader 是否成立。其中分工栏要读的按职责统计已有脚本（[分工账](development/scheduling-metrics.md#分工账按职责)），还没有接到任何日程 |
 
 ## 仍未选定或未实施
 
