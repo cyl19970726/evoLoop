@@ -11,6 +11,7 @@
     "./task-input": "./dist/task-input.js",
     "./required-lines": "./dist/required-lines.js",
     "./roles": "./dist/roles/index.js",
+    "./staffing": "./dist/staffing/index.js",
     "./delivery": "./dist/delivery/index.js",
     "./references": "./dist/references/index.js",
     "./orchestration": "./dist/orchestration/index.js",

@@ -6,7 +6,10 @@ import { initialRoleTemplates } from "@evoloop/contracts/roles";
 import type { LeaderWorkIndexReader } from "./work-index.js";
 import { registerLeaderWorkRoutes } from "./leader-routes.js";
 
-export async function registerWorkManagementRoutes(app: FastifyInstance, service: WorkflowService, workIndex?: LeaderWorkIndexReader) {
+/** What the staffing check reads besides the store: the configured idle threshold and the Sessions the rules do not cover. */
+export interface StaffingReadOptions { options(projectId: string): Promise<{ idleDays?: number; excludeSessionIds?: string[] }> }
+
+export async function registerWorkManagementRoutes(app: FastifyInstance, service: WorkflowService, workIndex?: LeaderWorkIndexReader, staffing?: StaffingReadOptions) {
   const params = (value: unknown) => z.object({ projectId: z.uuid(), id: z.uuid().optional() }).parse(value);
   const principal = (request: { principal: import("@evoloop/contracts").Principal | null }) => {
     if (!request.principal) throw new DomainError("FORBIDDEN", "Authentication required");
@@ -52,6 +55,12 @@ export async function registerWorkManagementRoutes(app: FastifyInstance, service
   }
   app.get("/api/projects/:projectId/schedules", request => service.listSchedules(principal(request), params(request.params).projectId));
   app.get("/api/projects/:projectId/routine-health", request => service.getRoutineHealth(principal(request), params(request.params).projectId));
+  // 分工检查: read-only. The Sessions a managed loop created for itself are left out when the host can name them.
+  app.get("/api/projects/:projectId/staffing-check", async request => {
+    const p = params(request.params);
+    const options = await staffing?.options(p.projectId);
+    return service.getStaffingCheck(principal(request), p.projectId, options ?? {});
+  });
   app.get("/api/projects/:projectId/task-timings", request => {
     const q = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50), cursor: z.string().min(1).max(512).optional() }).parse(request.query);
     return service.listTaskTimings(principal(request), params(request.params).projectId, q.limit, q.cursor);

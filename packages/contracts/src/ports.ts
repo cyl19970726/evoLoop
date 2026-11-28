@@ -32,6 +32,8 @@ export interface Reader extends ReferenceReader, RoleReader, SchedulingReader, D
   scheduleDispatch?: import("./schedule-dispatch.js").ScheduleDispatchReader;
   /** The facts behind the schedule page's health table; absent in adapters that do not store schedules. */
   scheduleHealth?: import("./routine-health.js").ScheduleHealthReader;
+  /** The facts behind the staffing check (分工检查); absent in adapters that do not store Sessions and Runs. */
+  staffing?: import("./staffing.js").StaffingFactsReader;
   recovery?: import('./session-recovery.js').SessionRecoveryReader;
   /** Queue capability is optional for legacy in-memory adapters; commands reject its absence. */
   queue?: QueueReader;

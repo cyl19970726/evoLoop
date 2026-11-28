@@ -109,6 +109,7 @@ const help = {
     "work attention task TASK_UUID --project UUID (follow-up and Task attention history)",
     "work attention item ITEM_UUID --project UUID (one attention item and its events)",
     "work attention thresholds --project UUID [--stage STAGE_UUID --phase PHASE]",
+    "staffing check --project UUID (分工检查: the team in two layers, trial Roles past their review date, whether the last added business Session has an accepted delivery, ready Sessions idle for days, and why a new business Session would be refused now)",
     "work board --project UUID [--brief] (every Session's current work, line, health; ready Tasks in no line; what waits for the Leader; --brief: arranging fields only, at most 6 KB, what the Leader reads each round)",
     "work events --project UUID [--after SEQ --limit 1..500 --wait 0..30 | --from ISO --to ISO] [--category notice|task|message|acceptance] (scheduling events by sequence; --wait long-polls for the next one; resetRequired:true means read work board again; the browser stream is GET /api/projects/UUID/work-board/stream)",
     "work metrics --project UUID [--from ISO --to ISO] (queue wait by source, Session idle with work waiting, notice intake time; worked out from the events, window at most 30 days)",
@@ -584,6 +585,11 @@ async function dispatch(args: Args, env: Environment, io: IO): Promise<unknown> 
     // work task: the Task, plus the arrangements that are current for it (a second small read; its failure leaves the Task brief intact).
     const relays = await client.get(`${prefix}/tasks/${args.words[2]}/acceptance-relay`).catch(() => null);
     return briefTaskWithRelays(read as Record<string, any>, relays as Record<string, any> | null);
+  }
+  if (action === "staffing") {
+    if (args.words[1] !== "check") throw new UsageError("Use: staffing check --project UUID");
+    check(args, 2, ["project"]);
+    return client.get(`${prefix}/staffing-check`);
   }
   if (action === "allocations") {
     check(args, 1, ["project", "role", "session", "discussion", "limit", "cursor"]);

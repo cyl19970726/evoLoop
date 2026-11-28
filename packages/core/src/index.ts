@@ -34,6 +34,7 @@ import type { SessionAssignmentCommand } from "@evoloop/contracts/session-assign
 import type { DomainRoute, HostLink } from "@evoloop/contracts/resident-hosts";
 import { applySchedule } from "./scheduling/commands.js";
 import { buildRoutineHealth } from "./scheduling/health.js";
+import { buildStaffingCheck } from "./staffing/index.js";
 import { applyScheduleDispatch } from "./scheduling/dispatch.js";
 import { applyDiscussion } from "./discussions.js";
 import { applyTaskCollaboration, taskAnswerInputBlock } from "./task-collaboration.js";
@@ -1448,6 +1449,16 @@ export class WorkflowService {
         cursor = read.nextCursor;
       }
       return buildRoutineHealth({ projectId, schedules, facts, series, now: new Date().toISOString(), complete });
+    });
+  }
+  /**
+   * 分工检查: the team's records against the growth rules (DEC-038, DEC-055) in one read; read-only and derived. `excludeSessionIds` names the
+   * Sessions a managed loop created for itself, which the rules do not cover.
+   */
+  getStaffingCheck(principal: Principal, projectId: string, options: { idleDays?: number; excludeSessionIds?: Iterable<string> } = {}): Promise<import("@evoloop/contracts/staffing").StaffingCheck> {
+    return this.read(principal, projectId, async reader => {
+      if (!reader.staffing) throw new DomainError("CAPABILITY_UNAVAILABLE", "Staffing reads are not configured");
+      return buildStaffingCheck({ projectId, facts: await reader.staffing.staffingFacts(), now: new Date().toISOString(), ...options });
     });
   }
   getScheduleDispatchPolicy(principal: Principal, projectId: string, scheduleId: string) {

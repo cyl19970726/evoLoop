@@ -137,6 +137,10 @@ export async function buildServer(options: {
   allowedRuntimeCwd?: (projectId: string, cwd: string) => Promise<boolean>;
   hasRuntimeGrant?: (scope: RuntimeGrant) => boolean | Promise<boolean>;
   isDynamicSession?: (projectId: string, sessionId: string) => Promise<boolean>;
+  /** The team growth rules (DEC-038, DEC-055): throws the refusal for a new business Session, returns otherwise; must not write. */
+  staffingGate?: (principal: Principal, command: Extract<Command,{type:"runtime.session.reserve"}>) => Promise<void>;
+  /** The idle threshold and the Sessions left out of the staffing check; absent: the defaults, nothing left out. */
+  staffingRead?: import("./work-management/routes.js").StaffingReadOptions;
   authorizeDynamicSession?: (principal: Principal, command: Extract<Command,{type:"runtime.session.reserve"}>) => Promise<boolean>;
   authorizeDynamicRun?: (principal: Principal, command: Extract<Command,{type:"runtime.run.reserve"}>, session: RuntimeSessionRecord) => Promise<boolean>;
   /** Refuses a Run reservation whose fixed recipient the preflight would reject later; must not write. */
@@ -393,6 +397,9 @@ export async function buildServer(options: {
         }
         if(!dynamic)await requireActiveModel(command.model!,
           await options.service.roleRuntimeProvider(principal,command.projectId,command.roleId));
+        // Judged last, after authorization, and only for a new request: a replay of a journalled reservation was decided when it was first made.
+        if(!dynamic&&options.staffingGate&&!await options.service.getOperation(principal,command.projectId,command.operationId))
+          await options.staffingGate(principal,command);
       }
       // Closing is a reviewer request; the runner archives under the original Session grant.
       if (command.type === "runtime.session.executionProfile.revise" && command.reasoningEffort &&
@@ -940,7 +947,7 @@ export async function buildServer(options: {
   if (workStatuses) registerWorkStatusRoute(app, workStatuses);
   if (options.planningSources) registerPlanningSourcesRoute(app, options.planningSources);
   if (options.collaboration) registerCollaborationRoutes(app, { ...options.collaboration, workflow: options.service });
-  await registerWorkManagementRoutes(app, options.service, options.workIndex);
+  await registerWorkManagementRoutes(app, options.service, options.workIndex, options.staffingRead);
   if (options.workBoard) registerWorkBoardRoutes(app, { service: options.service, ...options.workBoard });
   if (options.drain) registerDrainRoutes(app, { ...options.drain, projectAccess: (principal, projectId) => options.service.getProject(principal, projectId) });
   if (options.acceptanceRelay) registerAcceptanceRelayRoutes(app, options.service, options.acceptanceRelay, options.workIndex);

@@ -367,6 +367,14 @@ Evocation 在授权范围内对照任务负荷、结果、User Session 亲用和
 
 每个新 Session 引用当前职责说明或临时任务约定，补充实例目标、输入修订、首项任务、操作范围和交接/退出条件。新 Role 另附缺口证据、替代办法、独立责任与工作流程、试行基线和回看条件；换窗口仅更新实例关联。撤回 Role 时交接未完任务与知识、停止相应触发并核对在途实例，不能仅更改登记状态。流程见[动态多 session](../product/agent-loop.md)。
 
+### 分工检查与加人规则
+
+两层 Session（DEC-055）里，系统层随项目存在，业务层凭此前的真实工作一次增减一处。下面三项让服务按记录执行这条，而不只把它写在文档里。实现已在代码里，默认关闭；启用和配置见[运行接线手册](../development/runtime-operations.md#8-加人规则与试行回看任务)。
+
+- 分工检查读取：`GET /api/projects/:projectId/staffing-check`（项目成员只读，契约 `@evoloop/contracts/staffing`）一次返回两层队伍（`team`）、已过回看日的试行职责（`trialsDue`）、最近加入的业务 Session 是否已有被接受的交付（`lastAddition`）、连续多天没有 Run 的就绪业务 Session（`idle`，建议收回），以及此刻新加业务 Session 会被拒绝的原因（`blockers`）。由 `PgStaffing` 的两条查询和 `buildStaffingCheck` 推算，不落库、不新增迁移。口径：系统层是 `roleClass` 为 `system` 的职责，没有记录类别的职责和没有对应 Role 记录的 Session 都算业务层；“被接受”指这个 Session 的 Run 所产生的交付有一条 `used` 观察；已关闭和关闭中的 Session 不参与；受管循环自己创建的 Session 不参与。
+- 加人规则（DEC-038、DEC-055）：私有配置 `staffing` 对某个项目启用后，`POST /api/commands` 收到非受管循环的 `runtime.session.reserve`，在授权核对之后按同一份分工检查判断。目标职责属于业务层且 `blockers` 不为空时拒绝，错误码取第一条（`TRIAL_REVIEW_OVERDUE` 或 `LAST_ADDITION_UNPROVEN`），不写入任何记录。请求带 `staffingException`（1 至 4000 字的原因）时放行，原因随命令进入操作日志，并写进该 Session 的 `session.reserved` 事件。系统层职责不受限；已入日志的原操作重放不再判断。未启用时命令行为与此前相同，`staffingException` 仍会被记录。
+- 试行回看任务：同一配置里的 `reviewTasks` 为项目指定创建者、负责职责和验收身份后，协调服务每轮读分工检查，为每个到期的试行职责用真实的 `task.create` 建一个回看任务。任务与操作的编号由项目、职责和回看日推出，所以重启或多轮只会有一个；继续试行到新的回看日后，到期时会有新的一个。
+
 ### 具体承接与职责分开
 
 `TaskSessionAssignment` 固定 Task 修订、具体 owned Session／external HostLink、指定接手 actor 和版本；reviewer 通过 `task.assignment.set/release` 安排与交接，不自动创建 Run。接手由指定 actor 用 `acknowledge` 亲签；Lead 只有人工通信观察时使用 `observeAcceptance`，记录 observer、来源及 `lead-observed`，实际接手 actor 留空，不能冒称执行者签名或原生送达。人工承接窗口只用于筛选关联任务记录；其中的交付仍保留原登记者和产物来源，不据时间窗口推定该会话独立制作了成果。

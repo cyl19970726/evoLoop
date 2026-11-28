@@ -80,7 +80,9 @@ import { createLeaderWorkIndexReader } from "./work-management/work-index.js";
 import { readPlanningSources } from "./orchestration/planning-sources.js";
 import { managedRuntimeAdmission } from "./orchestration/admission.js";
 import { workerGuardFacts } from "./workers/facts.js";
-import { currentSessionGrant, dynamicRuntimeAdmission, isBoundDynamicSession } from "./orchestration/dynamic-admission.js";
+import { boundDynamicSessionIds, currentSessionGrant, dynamicRuntimeAdmission, isBoundDynamicSession } from "./orchestration/dynamic-admission.js";
+import { assertStaffingAllows, staffingReadOptions, type StaffingGateDeps } from "./staffing/gate.js";
+import { TrialReviewPump } from "./staffing/review-pump.js";
 import { staticRunSessionAvailable } from "./references/source-run.js";
 import { BrowserReadBridge, createPlaywrightBrowserBackend, matchesBrowserRun, readerTokenForScope } from "./runtime/browser-read.js";
 import type { BrowserReadScope } from "./runtime/browser-read.js";
@@ -926,6 +928,31 @@ const sessionLinePump = new SessionLinePump({workflow:service,canWrite:lease.can
   pollIntervalMs:integrations.residentQueue?.pollIntervalMs??2000,
   recipientActorId:lineRecipient,
   onError:()=>console.error("Session line tick failed; inspect the persisted line entry and its Run before retrying.")});
+// The team growth rules (DEC-038, DEC-055): one set of reads for the 分工检查 route, the door on new business Sessions and the review-Task pump.
+const staffingConfiguration = async () => (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).staffing;
+const staffingDeps: StaffingGateDeps = {
+  configuration: staffingConfiguration,
+  check: (principal, projectId, options) => service.getStaffingCheck(principal, projectId, options),
+  dynamicSessionIds: projectId => boundDynamicSessionIds(pool, projectId),
+};
+// A trial Role past its review date gets one review Task, created as the actor and for the owner the staffing section names.
+const trialReviewPump = new TrialReviewPump({ canWrite: lease.canWrite,
+  grants: async () => { const staffing = await staffingConfiguration(); return staffing?.enabled ? staffing.reviewTasks.filter(grant => staffing.projectIds.includes(grant.projectId)) : []; },
+  principal: async grant => {
+    const item = (await currentIdentity()).find(value => value.actorId === grant.actorId && value.projectIds.includes(grant.projectId));
+    return item ? { actorId: item.actorId, projectIds: [...item.projectIds], permissions: [...item.permissions],
+      ...(item.decisions === undefined ? {} : { decisions: item.decisions }), identityKind: item.identityKind ?? "agent" } : null;
+  },
+  check: async (principal, projectId) => service.getStaffingCheck(principal, projectId, await staffingReadOptions(staffingDeps)(projectId)),
+  taskExists: async (principal, projectId, taskId) => {
+    try { await service.getTask(principal, projectId, taskId); return true; }
+    catch (error) { if (error instanceof DomainError && error.code === "NOT_FOUND") return false; throw error; }
+  },
+  createTask: (principal, command) => service.execute(principal, command),
+  onCreated: (projectId, taskId, due) => console.log(`Trial review Task ${taskId} created for Role ${due.roleId} in project ${projectId}.`),
+  onRefused: (projectId, taskId, code) => console.error(`Trial review Task ${taskId} in project ${projectId} was refused (${code}); check the staffing reviewTasks actor and owner.`),
+  onError: () => console.error("Trial review round failed; due trials stay listed in the staffing check and are tried again next round.") },
+  integrations.staffing?.pollIntervalMs ?? 300000);
 // Repeated same-cause start failures or refusals (migration 111): the Leader gets the notice through the notice path; the requirements Sessions get a message here.
 const sessionAttentionPump = new SessionAttentionPump({ store: pgSessionAttentionStore(pool as never), canWrite: lease.canWrite,
   requirementsSessions: async projectId => {
@@ -1120,6 +1147,8 @@ const app = await buildServer({ service, credentials, canWrite: lease.canWrite, 
   allowedRuntimeCwds: integrations.allowedRuntimeCwds,
   hasRuntimeGrant: async scope => (await loadIntegrations(process.env.EVOLOOP_INTEGRATIONS_FILE)).hasRuntimeGrant(scope),
   isDynamicSession: sessionOrigin.isDynamicSession,
+  staffingGate: (principal, command) => assertStaffingAllows(staffingDeps, principal, command),
+  staffingRead: { options: staffingReadOptions(staffingDeps) },
   authorizeDynamicSession: async (principal,command) => hasDecisionAuthority(principal,command.projectId,"session") &&
     await dynamicAdmission?.canReserveSession({projectId:command.projectId,sessionId:command.sessionId,
       actorId:principal.actorId,roleId:command.roleId,authorizationScope:command.authorizationScope,
@@ -1196,7 +1225,7 @@ let shuttingDown = false;
 async function shutdown() {
   if (shuttingDown) return; shuttingDown = true;
   try { await hubConnector.stop(); clearInterval(acceptanceTimer); connectorIngress?.stop(); taskAttentionPump.stop(); opsAlertPump.stop(); leaderResultNoticePump.stop();
-    messagePump?.stop(); residentQueue.stop(); sessionLinePump.stop(); sessionAttentionPump.stop(); ordinarySealPump.stop(); await managed?.stop();
+    messagePump?.stop(); residentQueue.stop(); sessionLinePump.stop(); sessionAttentionPump.stop(); trialReviewPump.stop(); ordinarySealPump.stop(); await managed?.stop();
     await collaboration.stop(); await scheduling.stop(); await app.close(); sessionTimeline.close(); }
   finally {
     // Keep the coordinator lease while a native child may still be alive.
@@ -1207,7 +1236,7 @@ async function shutdown() {
 }
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
-try { await app.listen({ host: "127.0.0.1", port }); managed?.start(); hubConnector.start(); ordinarySealPump.start(); residentQueue.start(); sessionLinePump.start(); sessionAttentionPump.start(); messagePump?.start(); connectorIngress?.start(); leaderResultNoticePump.start(); taskAttentionPump.start(); opsAlertPump.start(); console.log(`evoLoop local workbench: http://127.0.0.1:${port}`); }
+try { await app.listen({ host: "127.0.0.1", port }); managed?.start(); hubConnector.start(); ordinarySealPump.start(); residentQueue.start(); sessionLinePump.start(); sessionAttentionPump.start(); trialReviewPump.start(); messagePump?.start(); connectorIngress?.start(); leaderResultNoticePump.start(); taskAttentionPump.start(); opsAlertPump.start(); console.log(`evoLoop local workbench: http://127.0.0.1:${port}`); }
 catch (error) { await shutdown(); throw error; }
 // Started with the other pumps, once everything above is declared. Its first tick used to run in the middle of this file and threw
 // "Cannot access 'lineRecipient' before initialization" whenever a direct dispatch was pending; with no timer set after that failure,

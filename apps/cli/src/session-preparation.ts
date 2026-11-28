@@ -12,6 +12,8 @@ const specificationSchema=z.strictObject({
   mode:z.enum(["create","reuse"]),cwd:z.string().regex(/^\//).optional(),
   authorizationScope:z.string().min(1).optional(),model:z.string().min(1).optional(),
   displayName:z.string().trim().min(1).max(240).optional(),purpose:z.string().trim().max(4000).optional(),
+  /** Why this Session is added although the staffing check has blockers (DEC-038, DEC-055); sent with the reservation and kept in its event. */
+  staffingException:z.string().trim().min(1).max(4000).optional(),
 }).superRefine((value,ctx)=>{
   if(value.mode==="create"&&(!value.cwd||!value.authorizationScope||!value.displayName))
     ctx.addIssue({code:"custom",message:"Create needs cwd, authorizationScope and displayName"});
@@ -127,7 +129,8 @@ export async function prepareSession(input:unknown,client:ApiClient,store:Receip
   if(!session){
     await mutate({type:"runtime.session.reserve",projectId:spec.projectId,operationId:spec.operationId,
       sessionId:spec.sessionId,roleId:spec.roleId,cwd:spec.cwd,authorizationScope:spec.authorizationScope,
-      ...(spec.model?{model:spec.model}:{}),sandbox:"danger-full-access",approvalPolicy:"never"});
+      ...(spec.model?{model:spec.model}:{}),sandbox:"danger-full-access",approvalPolicy:"never",
+      ...(spec.staffingException?{staffingException:spec.staffingException}:{})});
     snapshot=await inspect();
     return {status:"waiting_for_native_thread",reserveOperationId:spec.operationId,snapshot};
   }

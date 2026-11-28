@@ -17,6 +17,7 @@
 | [托管压缩](#3-托管压缩) | `runtime.compaction.owned` | `true` | 启动时读，改后重启 | [托管压缩](../architecture/session-runtime.md#4-托管压缩) |
 | [普通 Task 的每日复制](#4-普通-task-的每日复制) | `scheduling.taskTimingGrants` | 空 | 每次创建、改时和物化时重读 | [一次与每日复制](../architecture/contracts.md#普通-task-的一次与每日复制) |
 | [受管 Session 编制](#6-受管-session-编制所需配置) | `residentQueue.roleActors`、`runtime.materialCli`、`runtime.grants` 等 | 无（逐项见该节） | `session prepare` 每次重读；`runtime.enabled`、新增 HTTP 令牌、`runtime.grants` 新增的工作目录或模型要重启 | [准备或复用受管 Session](agent-cli.md#准备或复用受管-session) |
+| [加人规则与试行回看任务](#8-加人规则与试行回看任务) | `staffing` | 不拦、不建任务（未配置或 `enabled:false`） | 每次新建 Session 和每轮回看都重读；`pollIntervalMs` 只在启动时读 | [分工检查与加人规则](../architecture/contracts.md#分工检查与加人规则) |
 | [阶段关注](#5-阶段关注) | 没有开关，门槛用命令修订 | 服务运行就评估，每 30 秒一次 | 不适用 | [阶段等待由事实推导](../architecture/contracts.md#阶段等待由事实推导) |
 | [用量上限与上下文交接](#7-用量上限与上下文交接) | `runtime.dailyBudget`、`runtime.contextBudget` | 都不限 | 上限与开关在每个普通结果通知前重读；账本时区在启动时读 | [长会话的上下文交接](../architecture/session-runtime.md#长会话的上下文交接与每日用量上限) |
 
@@ -481,6 +482,30 @@ DeepSeek 额度已用完四次，没有一次事先预警。有一个只读脚�
 - **警告与暂停。** 达到 `warningRatio` 只显示提示；达到上限后，结果通知消息以 `DAILY_BUDGET_EXHAUSTED` 或 `CONTEXT_HANDOFF_REQUIRED` 留在队列并写阻断原因。业务 Task Run、验收和人工消息仍可执行。要恢复，先处理交接或调整上限，再按原消息记录重试；不要另建一条消息冒充原通知。
 - **交接到新线程。** 用同一 Role 开启新 Session，把原 Session、原生 Thread、固定 Task 与未处理通知写进接手说明；新线程读取固定 Task 和当前工作变化后再决定下一步。`contextHandoffSummary()` 的格式可直接作为交接摘要；它不复制原生对话正文。
 - **基线。** `node scripts/context-baseline.mjs <rollout.jsonl>` 只读 Codex 原生记录，报告每轮最大输入、均值／中位数／p90、累计用量、压缩次数和字节占比。改动前后用同一口径比较，不以单轮或通知数量代替。
+
+## 8. 加人规则与试行回看任务
+
+DEC-038 规定同职责一次只加一个实例，上一个有了被接受的交付再加下一个；DEC-055 把同一条用于业务层的每一次增加。这两条过去只写在文档里：2026-11-26 一次新建了十个 Session，七个到期的试行职责没有一条回看记录。这一节的配置让服务按记录执行它们。
+
+```json
+"staffing": {
+  "enabled": true,
+  "projectIds": ["PROJECT_UUID"],
+  "idleDays": 3,
+  "pollIntervalMs": 300000,
+  "reviewTasks": [
+    { "projectId": "PROJECT_UUID", "actorId": "创建任务的身份", "owner": "负责回看的职责 UUID", "consumer": "验收回看的身份" }
+  ]
+}
+```
+
+- **拦什么。** `projectIds` 里的项目新建业务 Session 时，有试行职责过了回看日还没回看，或最近加入的业务 Session 还没有被接受的交付，请求被拒绝并说明原因。系统层职责不受限，受管循环自己创建的 Session 不受限。
+- **怎样放行。** 写明例外原因：`session prepare` 的 JSON 加 `staffingException`。原因写进这个 Session 的预留事件，之后查得到是谁、为什么在规则之外加的人。起步时一次配齐几个职责属于这种情况。
+- **回看任务。** `reviewTasks` 为项目指定三项：用哪个身份创建（要有本项目的任务写权限）、归哪个职责负责（试行或已转正的职责）、交付由谁验收（不能是作者）。配置后，每个到期的试行职责得到一个标题为“试行回看：职责名（日期 到期）”的任务，不属于任何阶段。没有配置这一项时只拦不建。
+- **读现状。** `staffing check --project PROJECT`，或 `GET /api/projects/PROJECT/staffing-check`。未启用拦截时也能读，`blockers` 说的是“如果启用会因为什么被拒”。
+- **`idleDays`。** 就绪的业务 Session 连续这么多天没有 Run、也没有在途的 Run，就列进 `idle`，含义是建议收回或合并。它只是提示，服务不会自动关闭任何 Session。默认 3 天是初值，没有用实际数据校准。
+- **先关着核对，再打开。** 先读一次分工检查，确认 `trialsDue` 和 `lastAddition` 与实际相符，再把项目写进 `projectIds`。打开后第一次被拒通常是因为积压的回看：先用 `role.review` 逐个记下结论。
+- **已知边界。** “被接受的交付”按 Run 关联的交付计，主要产出是观察的职责（验收）和不走 Run 的工作不会让一个新 Session 变成“已有被接受的交付”，这类 Session 之后再加人需要写例外。空闲只看 Run，不看消息轮次。
 
 ## 已知缺口
 
