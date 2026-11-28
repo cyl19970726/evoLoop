@@ -8,7 +8,7 @@
 
 **人类与 Agent 使用不同入口，接续同一份工作。** 人从工作台观察进展、依据和结果，在既有 Agent 会话中沟通；Agent 按项目业务 skill＋CLI 读取固定依据、执行并核对，人再回看变化。人工直接操作按需保留，权限内工作不要求人逐步确认，也不要求 Agent 点击 GUI。入口与恢复见[日常接力](docs/product/daily-loop.md#人和-agent-怎样在两类入口间接力)及[业务技能与 CLI](docs/development/agent-cli.md)。
 
-当前由一台常驻主机上的实例承接本项目的真实工作：PostgreSQL 保存目标、任务、过程文档、交付、使用观察、职责与日程，协调 API、CLI 和 React 工作台可操作，Leader（Codex）与 Dev（Claude）两个 Role 在试行。哪些能力已在新实例上用过、哪些做好了还没用过（例如即时输入、受管压缩、Task 每日复制），以及外置 Wiki 尚未在新实例部署，见[当前基线](docs/roadmap.md#当前基线)；真人整体体验、飞书真实租户与生产级可靠性未验。部署形态见[部署与迁移](docs/architecture/deployment.md)，运行方式见[本机运行](docs/development/local-run.md)。
+当前由一台常驻主机上的实例承接本项目的真实工作：PostgreSQL 保存目标、任务、过程文档、交付、使用观察、职责与日程，协调 API、CLI 和 React 工作台可操作，登记了九个试行 Role，Leader 是系统职责，其余是业务职责；2026-11-26 起各岗位由 GPT 会话承接，11-27 起这台主机进入排空、准备换机，现状见[当前组织](docs/roadmap.md#当前组织)。哪些能力已在新实例上用过、哪些做好了还没用过（例如即时输入、受管压缩、Task 每日复制），以及外置 Wiki 尚未在新实例部署，见[当前基线](docs/roadmap.md#当前基线)；真人整体体验、飞书真实租户与生产级可靠性未验。部署形态见[部署与迁移](docs/architecture/deployment.md)，运行方式见[本机运行](docs/development/local-run.md)。
 
 ## 从这里开始
 

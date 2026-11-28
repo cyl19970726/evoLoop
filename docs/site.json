@@ -49,7 +49,12 @@
     },
     {
       "path": "docs/frontend/overview-top-design.md",
-      "title": "总览顶部重做设计（待确认）",
+      "title": "总览顶部重做设计（已被取代）",
+      "group": "前端文档"
+    },
+    {
+      "path": "docs/frontend/milestones-design.md",
+      "title": "阶段设计：里程碑改读本项目的阶段",
       "group": "前端文档"
     },
     {
